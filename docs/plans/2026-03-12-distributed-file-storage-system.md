@@ -279,27 +279,27 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 - Create: `deploy/deploy.sh`
 - Create: `deploy/README-deploy.md`
 
-- [ ] Create Dockerfile: multi-stage build (Rust backend compile + frontend build -> minimal runtime image with both)
-- [ ] Create nginx.conf: upstream block with multiple app instances, load balancing (least_conn), proxy_pass to app instances, health check via `/health` endpoint, client_max_body_size for large uploads, proxy_read_timeout for long uploads, TLS termination support (mounted certs or Let's Encrypt via certbot)
-- [ ] Create docker-compose.yml with services:
+- [x] Create Dockerfile: multi-stage build (Rust backend compile + frontend build -> minimal runtime image with both)
+- [x] Create nginx.conf: upstream block with multiple app instances, load balancing (least_conn), proxy_pass to app instances, health check via `/health` endpoint, client_max_body_size for large uploads, proxy_read_timeout for long uploads, TLS termination support (mounted certs or Let's Encrypt via certbot)
+- [x] Create docker-compose.yml with services:
   - `nginx` - load balancer (ports 80/443 exposed)
   - `app` (configurable replicas via `deploy.replicas` or `--scale`) - Innovare Storage instances
   - `postgres` - PostgreSQL + Citus coordinator
   - `postgres-worker-1`, `postgres-worker-2` - Citus workers
-- [ ] GitHub Actions workflow (`.github/workflows/build-push.yml`):
+- [x] GitHub Actions workflow (`.github/workflows/build-push.yml`):
   - Trigger on push to `main` branch
   - Build Docker image, push to GHCR (GitHub Container Registry) with commit SHA and `latest` tags
   - Use GitHub Secrets for GHCR auth (automatic via `GITHUB_TOKEN`)
-- [ ] Cloud-init template (`deploy/cloud-init.yml`): bootstrap script for new Hetzner/DigitalOcean droplets that installs Docker, authenticates to GHCR (using a deploy token stored as user-data or injected via cloud provider metadata), pulls the latest image, and starts the service
-- [ ] Deploy script (`deploy/deploy.sh`):
+- [x] Cloud-init template (`deploy/cloud-init.yml`): bootstrap script for new Hetzner/DigitalOcean droplets that installs Docker, authenticates to GHCR (using a deploy token stored as user-data or injected via cloud provider metadata), pulls the latest image, and starts the service
+- [x] Deploy script (`deploy/deploy.sh`):
   - Accepts `--join <existing-node-ip>` flag to bootstrap from an existing node
   - When `--join` is used: calls `GET /api/system/config-export` on the existing node to fetch current configuration (DB connection, storage configs, HMAC secret), writes it to local config file, then starts the service
   - When run standalone: starts with local config file
   - Handles pulling latest image from GHCR, stopping old container, starting new one
   - Can be used for both initial deploy and updates (rolling restart)
-- [ ] Add `GET /api/system/nodes` endpoint: each node registers itself in DB on startup (node_id, address, started_at, last_heartbeat), background task sends heartbeat every 30s, endpoint returns active nodes list
-- [ ] Document one-click deploy workflow in `deploy/README-deploy.md`: create Hetzner/DO server with cloud-init -> server auto-pulls image from GHCR and joins cluster via `--join` flag
-- [ ] Write tests: docker build succeeds, config-export endpoint returns valid config, node registration and heartbeat
+- [x] Add `GET /api/system/nodes` endpoint: each node registers itself in DB on startup (node_id, address, started_at, last_heartbeat), background task sends heartbeat every 30s, endpoint returns active nodes list
+- [x] Document one-click deploy workflow in `deploy/README-deploy.md`: create Hetzner/DO server with cloud-init -> server auto-pulls image from GHCR and joins cluster via `--join` flag
+- [x] Write tests: docker build succeeds, config-export endpoint returns valid config, node registration and heartbeat
 
 ### Task 17: Verify acceptance criteria
 

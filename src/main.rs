@@ -1,8 +1,10 @@
 use actix_web::{App, HttpServer, web};
 use innovare_storage::config::AppConfig;
+use innovare_storage::db::models::Node;
 use innovare_storage::services::{BulkService, FileService, TierService};
 use innovare_storage::storage::StorageRegistry;
 use innovare_storage::workers::{SyncWorker, TierWorker};
+use sqlx::PgPool;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -68,6 +70,18 @@ async fn main() -> std::io::Result<()> {
         "Tier worker started"
     );
 
+    // Generate a unique node ID and register this instance
+    let node_id = format!("node-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or("unknown"));
+    let node_address = format!("{}:{}", config.server.host, config.server.port);
+    match Node::register(&pool, &node_id, &node_address).await {
+        Ok(node) => tracing::info!(node_id = %node.node_id, address = %node.address, "Node registered"),
+        Err(e) => tracing::warn!("Failed to register node: {}", e),
+    }
+
+    // Spawn heartbeat background task (every 30 seconds)
+    let heartbeat_handle = spawn_heartbeat(pool.clone(), node_id.clone(), cancel_token.clone());
+    tracing::info!(node_id = %node_id, "Heartbeat worker started (30s interval)");
+
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     let config_data = web::Data::new(config);
     let pool_data = web::Data::new(pool);
@@ -98,7 +112,31 @@ async fn main() -> std::io::Result<()> {
         let _ = handle.await;
     }
     let _ = tier_handle.await;
+    let _ = heartbeat_handle.await;
     tracing::info!("All background workers stopped");
 
     result
+}
+
+fn spawn_heartbeat(
+    pool: PgPool,
+    node_id: String,
+    cancel_token: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    tracing::info!(node_id = %node_id, "Heartbeat worker shutting down");
+                    break;
+                }
+                _ = interval.tick() => {
+                    if let Err(e) = Node::heartbeat(&pool, &node_id).await {
+                        tracing::warn!(node_id = %node_id, "Heartbeat failed: {}", e);
+                    }
+                }
+            }
+        }
+    })
 }

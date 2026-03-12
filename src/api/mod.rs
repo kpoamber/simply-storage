@@ -9,7 +9,7 @@ use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::config::AppConfig;
-use crate::db::models::{Project, Storage, SyncTask};
+use crate::db::models::{Node, Project, Storage, SyncTask};
 use crate::error::AppError;
 
 // ─── Common types ───────────────────────────────────────────────────────────────
@@ -103,6 +103,14 @@ async fn config_export(
     }))
 }
 
+// ─── Nodes ──────────────────────────────────────────────────────────────────────
+
+async fn list_nodes(pool: web::Data<PgPool>) -> Result<HttpResponse, AppError> {
+    // Consider nodes active if heartbeat within the last 90 seconds (3x the 30s interval)
+    let nodes = Node::list_active(pool.get_ref(), 90).await?;
+    Ok(HttpResponse::Ok().json(nodes))
+}
+
 // ─── Route configuration ────────────────────────────────────────────────────────
 
 pub fn configure_api_routes(cfg: &mut web::ServiceConfig) {
@@ -114,7 +122,8 @@ pub fn configure_api_routes(cfg: &mut web::ServiceConfig) {
             .configure(bulk::configure)
             .route("/system/stats", web::get().to(system_stats))
             .route("/sync-tasks", web::get().to(list_sync_tasks))
-            .route("/system/config-export", web::get().to(config_export)),
+            .route("/system/config-export", web::get().to(config_export))
+            .route("/system/nodes", web::get().to(list_nodes)),
     );
 }
 
@@ -222,5 +231,62 @@ mod tests {
             per_page: Some(10),
         };
         assert_eq!(params.offset(), 10);
+    }
+
+    #[test]
+    fn test_config_export_contains_required_fields() {
+        let config = AppConfig::load_from("__nonexistent__").unwrap();
+        let export = ConfigExport {
+            config,
+            projects: vec![],
+            storages: vec![],
+        };
+        let json = serde_json::to_value(&export).unwrap();
+
+        // Verify config-export returns valid config with all required sections
+        assert!(json["config"]["server"]["host"].is_string());
+        assert!(json["config"]["server"]["port"].is_number());
+        assert!(json["config"]["database"]["url"].is_string());
+        assert!(json["config"]["database"]["max_connections"].is_number());
+        assert!(json["config"]["storage"]["hmac_secret"].is_string());
+        assert!(json["config"]["storage"]["local_temp_path"].is_string());
+        assert!(json["config"]["sync"]["num_workers"].is_number());
+        assert!(json["config"]["sync"]["max_retries"].is_number());
+    }
+
+    #[test]
+    fn test_config_export_with_projects_and_storages() {
+        let config = AppConfig::load_from("__nonexistent__").unwrap();
+        let now = chrono::Utc::now();
+        let project = Project {
+            id: Uuid::new_v4(),
+            name: "Test".to_string(),
+            slug: "test".to_string(),
+            hot_to_cold_days: Some(7),
+            created_at: now,
+            updated_at: now,
+        };
+        let storage = Storage {
+            id: Uuid::new_v4(),
+            name: "Local".to_string(),
+            storage_type: "local".to_string(),
+            config: serde_json::json!({"path": "/data"}),
+            is_hot: true,
+            project_id: None,
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+        let export = ConfigExport {
+            config,
+            projects: vec![project],
+            storages: vec![storage],
+        };
+        let json = serde_json::to_value(&export).unwrap();
+
+        assert_eq!(json["projects"].as_array().unwrap().len(), 1);
+        assert_eq!(json["storages"].as_array().unwrap().len(), 1);
+        assert_eq!(json["projects"][0]["name"], "Test");
+        assert_eq!(json["storages"][0]["storage_type"], "local");
     }
 }

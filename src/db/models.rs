@@ -734,6 +734,75 @@ impl SyncTask {
     }
 }
 
+// ─── Node ───────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Node {
+    pub id: Uuid,
+    pub node_id: String,
+    pub address: String,
+    pub started_at: DateTime<Utc>,
+    pub last_heartbeat: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl Node {
+    /// Register or update a node. Uses upsert to handle restarts.
+    pub async fn register(
+        pool: &PgPool,
+        node_id: &str,
+        address: &str,
+    ) -> AppResult<Node> {
+        let row = sqlx::query_as::<_, Node>(
+            r#"INSERT INTO nodes (node_id, address, started_at, last_heartbeat)
+               VALUES ($1, $2, NOW(), NOW())
+               ON CONFLICT (node_id)
+               DO UPDATE SET address = $2, started_at = NOW(), last_heartbeat = NOW()
+               RETURNING *"#,
+        )
+        .bind(node_id)
+        .bind(address)
+        .fetch_one(pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    /// Update the heartbeat timestamp for a node.
+    pub async fn heartbeat(pool: &PgPool, node_id: &str) -> AppResult<()> {
+        sqlx::query("UPDATE nodes SET last_heartbeat = NOW() WHERE node_id = $1")
+            .bind(node_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    /// List nodes that have sent a heartbeat within the given threshold (seconds).
+    pub async fn list_active(pool: &PgPool, heartbeat_threshold_secs: i64) -> AppResult<Vec<Node>> {
+        let rows = sqlx::query_as::<_, Node>(
+            r#"SELECT * FROM nodes
+               WHERE last_heartbeat > NOW() - make_interval(secs => $1::double precision)
+               ORDER BY started_at DESC"#,
+        )
+        .bind(heartbeat_threshold_secs as f64)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// List all registered nodes.
+    pub async fn list_all(pool: &PgPool) -> AppResult<Vec<Node>> {
+        let rows = sqlx::query_as::<_, Node>(
+            "SELECT * FROM nodes ORDER BY started_at DESC",
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 fn is_unique_violation(e: &sqlx::Error) -> bool {
@@ -971,6 +1040,25 @@ mod tests {
         assert!(input.enabled.is_none());
     }
 
+    #[test]
+    fn test_node_serialization() {
+        let now = Utc::now();
+        let node = Node {
+            id: Uuid::new_v4(),
+            node_id: "node-abc-123".to_string(),
+            address: "10.0.0.1:8080".to_string(),
+            started_at: now,
+            last_heartbeat: now,
+            created_at: now,
+        };
+
+        let json = serde_json::to_value(&node).unwrap();
+        assert_eq!(json["node_id"], "node-abc-123");
+        assert_eq!(json["address"], "10.0.0.1:8080");
+        assert!(!json["started_at"].is_null());
+        assert!(!json["last_heartbeat"].is_null());
+    }
+
     // ─── Integration tests that require a running PostgreSQL ───────────────────
     // Run with: DATABASE_URL=postgres://... cargo test -- --ignored
 
@@ -998,6 +1086,7 @@ mod tests {
         assert!(table_names.contains(&"file_references"));
         assert!(table_names.contains(&"file_locations"));
         assert!(table_names.contains(&"sync_tasks"));
+        assert!(table_names.contains(&"nodes"));
     }
 
     #[ignore]
@@ -1078,5 +1167,55 @@ mod tests {
         let (found, is_new) = File::create_or_find(&pool, &file_input).await.unwrap();
         assert!(!is_new);
         assert_eq!(found.hash_sha256.trim(), hash);
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_node_registration() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        let node_id = format!("test-node-{}", Uuid::new_v4());
+        let address = "10.0.0.1:8080";
+
+        // Register a new node
+        let node = Node::register(&pool, &node_id, address).await.unwrap();
+        assert_eq!(node.node_id, node_id);
+        assert_eq!(node.address, address);
+
+        // Re-register should upsert (update started_at and last_heartbeat)
+        let node2 = Node::register(&pool, &node_id, "10.0.0.2:8080").await.unwrap();
+        assert_eq!(node2.node_id, node_id);
+        assert_eq!(node2.address, "10.0.0.2:8080");
+        assert_eq!(node2.id, node.id); // Same row, updated
+
+        // List active nodes (should include our node)
+        let active = Node::list_active(&pool, 90).await.unwrap();
+        assert!(active.iter().any(|n| n.node_id == node_id));
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_node_heartbeat() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        let node_id = format!("heartbeat-test-{}", Uuid::new_v4());
+
+        // Register
+        Node::register(&pool, &node_id, "10.0.0.5:8080").await.unwrap();
+
+        // Heartbeat should succeed
+        Node::heartbeat(&pool, &node_id).await.unwrap();
+
+        // Verify the node is in the active list
+        let active = Node::list_active(&pool, 90).await.unwrap();
+        assert!(active.iter().any(|n| n.node_id == node_id));
+
+        // List all should also include it
+        let all = Node::list_all(&pool).await.unwrap();
+        assert!(all.iter().any(|n| n.node_id == node_id));
     }
 }

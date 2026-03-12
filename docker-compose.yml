@@ -1,0 +1,121 @@
+version: "3.8"
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # Uncomment to mount TLS certificates:
+      # - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - innovare
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - APP_SERVER__HOST=0.0.0.0
+      - APP_SERVER__PORT=8080
+      - APP_DATABASE__URL=postgres://innovare:innovare@postgres:5432/innovare_storage
+      - APP_DATABASE__MAX_CONNECTIONS=10
+      - APP_STORAGE__LOCAL_TEMP_PATH=/app/data/temp
+      - APP_STORAGE__HMAC_SECRET=${HMAC_SECRET:-change-me-in-production}
+      - APP_SYNC__NUM_WORKERS=4
+      - APP_SYNC__MAX_RETRIES=5
+      - APP_SYNC__POLL_INTERVAL_SECS=5
+      - APP_SYNC__TIER_SCAN_INTERVAL_SECS=300
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      - app_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      replicas: ${APP_REPLICAS:-2}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - innovare
+
+  postgres:
+    image: citusdata/citus:12.1
+    environment:
+      - POSTGRES_USER=innovare
+      - POSTGRES_PASSWORD=innovare
+      - POSTGRES_DB=innovare_storage
+    volumes:
+      - postgres_coordinator_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U innovare -d innovare_storage"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - innovare
+
+  postgres-worker-1:
+    image: citusdata/citus:12.1
+    environment:
+      - POSTGRES_USER=innovare
+      - POSTGRES_PASSWORD=innovare
+      - POSTGRES_DB=innovare_storage
+    volumes:
+      - postgres_worker1_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U innovare -d innovare_storage"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - innovare
+
+  postgres-worker-2:
+    image: citusdata/citus:12.1
+    environment:
+      - POSTGRES_USER=innovare
+      - POSTGRES_PASSWORD=innovare
+      - POSTGRES_DB=innovare_storage
+    volumes:
+      - postgres_worker2_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U innovare -d innovare_storage"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - innovare
+
+volumes:
+  app_data:
+  postgres_coordinator_data:
+  postgres_worker1_data:
+  postgres_worker2_data:
+
+networks:
+  innovare:
+    driver: bridge
