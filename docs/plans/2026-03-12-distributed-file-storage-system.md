@@ -303,20 +303,20 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 
 ### Task 17: Verify acceptance criteria
 
-- [ ] Manual test: upload file via API, verify deduplication with second identical upload
-- [ ] Manual test: download file via temp link, verify link expiry
-- [ ] Manual test: register new S3 storage, run sync-all, verify files appear
-- [ ] Manual test: configure hot_to_cold_days on project, verify archival after expiry
-- [ ] Manual test: restore archived file
-- [ ] Manual test: add DigitalOcean Spaces storage via admin UI, upload file, verify sync
-- [ ] Manual test: admin dashboard shows correct stats
-- [ ] Manual test: docker-compose up with 2 app instances, verify requests balanced across both
-- [ ] Manual test: deploy new node using `deploy.sh --join <existing-ip>`, verify it picks up config and starts serving
-- [ ] Run full test suite (`cargo test`)
-- [ ] Run linter (`cargo clippy -- -D warnings`)
-- [ ] Run frontend tests (`cd frontend && npm test`)
-- [ ] Run frontend lint (`cd frontend && npm run lint`)
-- [ ] Verify test coverage meets 80%+ (`cargo tarpaulin`)
+- [x] Manual test: upload file via API, verify deduplication with second identical upload
+- [x] Manual test: download file via temp link, verify link expiry
+- [x] Manual test: register new S3 storage, run sync-all, verify files appear
+- [x] Manual test: configure hot_to_cold_days on project, verify archival after expiry
+- [x] Manual test: restore archived file
+- [x] Manual test: add DigitalOcean Spaces storage via admin UI, upload file, verify sync
+- [x] Manual test: admin dashboard shows correct stats
+- [x] Manual test: docker-compose up with 2 app instances, verify requests balanced across both
+- [x] Manual test: deploy new node using `deploy.sh --join <existing-ip>`, verify it picks up config and starts serving
+- [x] Run full test suite (`cargo test`)
+- [x] Run linter (`cargo clippy -- -D warnings`)
+- [x] Run frontend tests (`cd frontend && npm test`)
+- [x] Run frontend lint (`cd frontend && npm run lint`)
+- [x] Verify test coverage meets 80%+ (`cargo tarpaulin`)
 
 ### Task 18: Update documentation
 
