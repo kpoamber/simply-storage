@@ -136,6 +136,16 @@ pub struct CreateStorage {
     pub enabled: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateStorage {
+    pub name: Option<String>,
+    pub storage_type: Option<String>,
+    pub config: Option<serde_json::Value>,
+    pub is_hot: Option<bool>,
+    pub project_id: Option<Option<Uuid>>,
+    pub enabled: Option<bool>,
+}
+
 impl Storage {
     pub async fn create(pool: &PgPool, input: &CreateStorage) -> AppResult<Storage> {
         let row = sqlx::query_as::<_, Storage>(
@@ -205,6 +215,38 @@ impl Storage {
         .fetch_optional(pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Storage {} not found", id)))?;
+
+        Ok(row)
+    }
+
+    pub async fn update(pool: &PgPool, id: Uuid, input: &UpdateStorage) -> AppResult<Storage> {
+        let current = Self::find_by_id(pool, id).await?;
+
+        let name = input.name.as_deref().unwrap_or(&current.name);
+        let storage_type = input.storage_type.as_deref().unwrap_or(&current.storage_type);
+        let config = input.config.as_ref().unwrap_or(&current.config);
+        let is_hot = input.is_hot.unwrap_or(current.is_hot);
+        let project_id = match &input.project_id {
+            Some(val) => *val,
+            None => current.project_id,
+        };
+        let enabled = input.enabled.unwrap_or(current.enabled);
+
+        let row = sqlx::query_as::<_, Storage>(
+            r#"UPDATE storages
+               SET name = $1, storage_type = $2, config = $3, is_hot = $4, project_id = $5, enabled = $6
+               WHERE id = $7
+               RETURNING *"#,
+        )
+        .bind(name)
+        .bind(storage_type)
+        .bind(config)
+        .bind(is_hot)
+        .bind(project_id)
+        .bind(enabled)
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
 
         Ok(row)
     }
@@ -374,6 +416,27 @@ impl FileReference {
         }
         Ok(())
     }
+
+    pub async fn delete_by_file_and_project(
+        pool: &PgPool,
+        file_id: Uuid,
+        project_id: Uuid,
+    ) -> AppResult<()> {
+        let result = sqlx::query(
+            "DELETE FROM file_references WHERE file_id = $1 AND project_id = $2",
+        )
+        .bind(file_id)
+        .bind(project_id)
+        .execute(pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(
+                "File reference not found for this file and project".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 // ─── FileLocation ──────────────────────────────────────────────────────────────
@@ -529,6 +592,106 @@ impl SyncTask {
                RETURNING *"#,
         )
         .bind(status)
+        .bind(error_msg)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Sync task {} not found", id)))?;
+
+        Ok(row)
+    }
+
+    /// Claim a batch of pending sync tasks using PostgreSQL advisory locks.
+    /// Only returns tasks that this worker successfully locked.
+    /// Tasks with retries >= max_retries are skipped and marked as 'failed'.
+    pub async fn claim_pending(
+        pool: &PgPool,
+        limit: i64,
+        max_retries: i32,
+    ) -> AppResult<Vec<SyncTask>> {
+        // Mark permanently failed tasks first
+        sqlx::query(
+            r#"UPDATE sync_tasks SET status = 'failed', error_msg = 'Max retries exceeded'
+               WHERE status = 'pending' AND retries >= $1"#,
+        )
+        .bind(max_retries)
+        .execute(pool)
+        .await?;
+
+        // Fetch pending tasks and try to lock each one with advisory lock
+        // We use the UUID's first 8 bytes as the lock key
+        let tasks = sqlx::query_as::<_, SyncTask>(
+            r#"SELECT * FROM sync_tasks
+               WHERE status = 'pending' AND retries < $1
+               ORDER BY created_at ASC
+               LIMIT $2"#,
+        )
+        .bind(max_retries)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+
+        let mut claimed = Vec::new();
+        for task in tasks {
+            // Use task UUID bytes as advisory lock key (two i32s from first 8 bytes)
+            let id_bytes = task.id.as_bytes();
+            let key1 = i32::from_le_bytes([id_bytes[0], id_bytes[1], id_bytes[2], id_bytes[3]]);
+            let key2 = i32::from_le_bytes([id_bytes[4], id_bytes[5], id_bytes[6], id_bytes[7]]);
+
+            let locked: (bool,) = sqlx::query_as(
+                "SELECT pg_try_advisory_lock($1, $2)",
+            )
+            .bind(key1)
+            .bind(key2)
+            .fetch_one(pool)
+            .await?;
+
+            if locked.0 {
+                // Mark as in_progress
+                sqlx::query(
+                    "UPDATE sync_tasks SET status = 'in_progress' WHERE id = $1",
+                )
+                .bind(task.id)
+                .execute(pool)
+                .await?;
+
+                claimed.push(SyncTask {
+                    status: "in_progress".to_string(),
+                    ..task
+                });
+            }
+        }
+
+        Ok(claimed)
+    }
+
+    /// Release the advisory lock for a sync task.
+    pub async fn release_lock(pool: &PgPool, task_id: Uuid) -> AppResult<()> {
+        let id_bytes = task_id.as_bytes();
+        let key1 = i32::from_le_bytes([id_bytes[0], id_bytes[1], id_bytes[2], id_bytes[3]]);
+        let key2 = i32::from_le_bytes([id_bytes[4], id_bytes[5], id_bytes[6], id_bytes[7]]);
+
+        sqlx::query("SELECT pg_advisory_unlock($1, $2)")
+            .bind(key1)
+            .bind(key2)
+            .execute(pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Re-queue a failed task back to pending for retry.
+    pub async fn requeue_for_retry(
+        pool: &PgPool,
+        id: Uuid,
+        error_msg: &str,
+    ) -> AppResult<SyncTask> {
+        let row = sqlx::query_as::<_, SyncTask>(
+            r#"UPDATE sync_tasks
+               SET status = 'pending', error_msg = $1, retries = retries + 1
+               WHERE id = $2
+               RETURNING *"#,
+        )
         .bind(error_msg)
         .bind(id)
         .fetch_optional(pool)

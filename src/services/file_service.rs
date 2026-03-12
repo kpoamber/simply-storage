@@ -184,6 +184,37 @@ impl FileService {
         )))
     }
 
+    /// Generate a temporary download link for a file.
+    pub async fn generate_temp_link(
+        &self,
+        file_id: Uuid,
+        expires_in: std::time::Duration,
+    ) -> AppResult<String> {
+        let _file = File::find_by_id(&self.pool, file_id).await?;
+        let locations = FileLocation::find_for_file(&self.pool, file_id).await?;
+
+        for location in &locations {
+            if let Ok(backend) = self.registry.get(&location.storage_id).await {
+                match backend
+                    .generate_temp_url(&location.storage_path, expires_in)
+                    .await
+                {
+                    Ok(Some(url)) => {
+                        let _ = FileLocation::touch_accessed(&self.pool, location.id).await;
+                        return Ok(url);
+                    }
+                    Ok(None) => continue,
+                    Err(_) => continue,
+                }
+            }
+        }
+
+        Err(AppError::NotFound(format!(
+            "No temp URL available for file {}",
+            file_id
+        )))
+    }
+
     /// Find the primary storage for uploading: first hot, enabled storage
     /// that has a registered backend in the registry.
     async fn find_primary_storage(&self, storages: &[Storage]) -> AppResult<Storage> {

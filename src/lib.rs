@@ -1,8 +1,10 @@
+pub mod api;
 pub mod config;
 pub mod db;
 pub mod error;
 pub mod services;
 pub mod storage;
+pub mod workers;
 
 use actix_web::{web, HttpResponse};
 use serde_json::json;
@@ -17,6 +19,7 @@ pub async fn health_check() -> HttpResponse {
 /// Configure routes for the application.
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.route("/health", web::get().to(health_check));
+    api::configure_api_routes(cfg);
 }
 
 /// Initialize tracing/logging with tracing-subscriber.

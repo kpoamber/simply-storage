@@ -1,6 +1,6 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
     #[serde(default = "default_server")]
     pub server: ServerConfig,
@@ -12,7 +12,7 @@ pub struct AppConfig {
     pub sync: SyncConfig,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerConfig {
     #[serde(default = "default_host")]
     pub host: String,
@@ -20,7 +20,7 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DatabaseConfig {
     #[serde(default = "default_database_url")]
     pub url: String,
@@ -28,7 +28,7 @@ pub struct DatabaseConfig {
     pub max_connections: u32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StorageConfig {
     #[serde(default = "default_local_temp_path")]
     pub local_temp_path: String,
@@ -36,10 +36,16 @@ pub struct StorageConfig {
     pub hmac_secret: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SyncConfig {
     #[serde(default = "default_num_workers")]
     pub num_workers: usize,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: i32,
+    #[serde(default = "default_poll_interval_secs")]
+    pub poll_interval_secs: u64,
+    #[serde(default = "default_tier_scan_interval_secs")]
+    pub tier_scan_interval_secs: u64,
 }
 
 fn default_server() -> ServerConfig {
@@ -66,6 +72,9 @@ fn default_storage() -> StorageConfig {
 fn default_sync() -> SyncConfig {
     SyncConfig {
         num_workers: default_num_workers(),
+        max_retries: default_max_retries(),
+        poll_interval_secs: default_poll_interval_secs(),
+        tier_scan_interval_secs: default_tier_scan_interval_secs(),
     }
 }
 
@@ -95,6 +104,18 @@ fn default_hmac_secret() -> String {
 
 fn default_num_workers() -> usize {
     4
+}
+
+fn default_max_retries() -> i32 {
+    5
+}
+
+fn default_poll_interval_secs() -> u64 {
+    5
+}
+
+fn default_tier_scan_interval_secs() -> u64 {
+    300
 }
 
 impl AppConfig {
@@ -145,6 +166,9 @@ mod tests {
         assert_eq!(cfg.server.port, 8080);
         assert_eq!(cfg.database.max_connections, 10);
         assert_eq!(cfg.sync.num_workers, 4);
+        assert_eq!(cfg.sync.max_retries, 5);
+        assert_eq!(cfg.sync.poll_interval_secs, 5);
+        assert_eq!(cfg.sync.tier_scan_interval_secs, 300);
         assert_eq!(cfg.storage.local_temp_path, "./data/temp");
     }
 

@@ -109,43 +109,43 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 - Create: `src/api/projects.rs`
 - Create: `src/api/storages.rs`
 
-- [ ] Project endpoints:
+- [x] Project endpoints:
   - `POST /api/projects` - create project
   - `GET /api/projects` - list projects
   - `GET /api/projects/{id}` - get project with file stats
   - `PUT /api/projects/{id}` - update project settings (including hot_to_cold_days)
   - `DELETE /api/projects/{id}` - soft-delete project
-- [ ] File endpoints:
+- [x] File endpoints:
   - `POST /api/projects/{project_id}/files` - upload file (multipart/form-data)
   - `GET /api/projects/{project_id}/files` - list project files (with pagination)
   - `GET /api/files/{id}` - get file metadata with all locations and references
   - `GET /api/files/{id}/download` - download file (stream from backend or redirect to temp URL)
   - `GET /api/files/{id}/link` - get temporary preview/download link with configurable expiry
   - `DELETE /api/files/{id}` - delete file reference from project
-- [ ] Storage endpoints:
+- [x] Storage endpoints:
   - `POST /api/storages` - register new storage backend
   - `GET /api/storages` - list storages with usage stats
   - `GET /api/storages/{id}` - get storage details and stats
   - `PUT /api/storages/{id}` - update storage config
   - `DELETE /api/storages/{id}` - soft-disable storage
-- [ ] System endpoints:
+- [x] System endpoints:
   - `GET /api/system/stats` - aggregate stats (total files, storage usage, sync task queue)
   - `GET /api/sync-tasks` - list sync tasks with filtering (status, storage_id)
-- [ ] Node config sync endpoint:
+- [x] Node config sync endpoint:
   - `GET /api/system/config-export` - export current node config (storages, projects, settings) as JSON for bootstrapping new nodes
-- [ ] Write integration tests for all endpoints using actix-web::test
+- [x] Write integration tests for all endpoints using actix-web::test
 
 ### Task 6: S3-compatible storage backend (AWS S3 + DigitalOcean Spaces)
 
 **Files:**
 - Create: `src/storage/s3.rs`
 
-- [ ] Implement `StorageBackend` trait for S3 using `aws-sdk-s3` crate
-- [ ] Support configurable: endpoint_url (custom for DO Spaces and other S3-compatible services), region, bucket, prefix, access_key_id/secret_access_key (or IAM role)
-- [ ] DigitalOcean Spaces is S3-compatible - same backend with custom endpoint (e.g. `https://ams3.digitaloceanspaces.com`)
-- [ ] Implement presigned URL generation via S3 SDK for temp download links
-- [ ] Handle multipart upload for files larger than configurable threshold (default 100MB)
-- [ ] Write tests with LocalStack or mock (feature-gated integration tests)
+- [x] Implement `StorageBackend` trait for S3 using `aws-sdk-s3` crate
+- [x] Support configurable: endpoint_url (custom for DO Spaces and other S3-compatible services), region, bucket, prefix, access_key_id/secret_access_key (or IAM role)
+- [x] DigitalOcean Spaces is S3-compatible - same backend with custom endpoint (e.g. `https://ams3.digitaloceanspaces.com`)
+- [x] Implement presigned URL generation via S3 SDK for temp download links
+- [x] Handle multipart upload for files larger than configurable threshold (default 100MB)
+- [x] Write tests with LocalStack or mock (feature-gated integration tests)
 
 ### Task 7: Azure Blob and Google Cloud Storage backends
 
@@ -153,10 +153,10 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 - Create: `src/storage/azure.rs`
 - Create: `src/storage/gcs.rs`
 
-- [ ] Implement Azure Blob Storage backend using `azure_storage_blobs` crate with SAS URL generation
-- [ ] Implement GCS backend using `google-cloud-storage` crate with signed URL generation
-- [ ] Both: configurable container/bucket, prefix, credentials
-- [ ] Write tests for both backends (feature-gated integration tests)
+- [x] Implement Azure Blob Storage backend using `azure_storage_blobs` crate with SAS URL generation
+- [x] Implement GCS backend using `google-cloud-storage` crate with signed URL generation
+- [x] Both: configurable container/bucket, prefix, credentials
+- [x] Write tests for both backends (feature-gated integration tests)
 
 ### Task 8: FTP, SFTP, and Samba backends
 
@@ -165,22 +165,22 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 - Create: `src/storage/sftp.rs`
 - Create: `src/storage/samba.rs`
 
-- [ ] Implement FTP backend using `suppaftp` crate (async mode)
-- [ ] Implement SFTP backend using `russh-sftp` crate
-- [ ] Implement Samba/SMB backend using `pavao` crate
-- [ ] These backends return `None` from `generate_temp_url()` - temp access is proxied through the web service
-- [ ] Write tests for each backend (feature-gated integration tests)
+- [x] Implement FTP backend using `suppaftp` crate (async mode)
+- [x] Implement SFTP backend using `russh-sftp` crate
+- [x] Implement Samba/SMB backend using `pavao` crate
+- [x] These backends return `None` from `generate_temp_url()` - temp access is proxied through the web service
+- [x] Write tests for each backend (feature-gated integration tests)
 
 ### Task 9: Hetzner StorageBox backend
 
 **Files:**
 - Create: `src/storage/hetzner.rs`
 
-- [ ] Implement Hetzner StorageBox backend via WebDAV protocol using `reqwest` with DAV methods (PUT, GET, DELETE, PROPFIND, MKCOL)
-- [ ] Support configurable: host (e.g. `uXXXXXX.your-storagebox.de`), username, password, sub-account, port, base_path
-- [ ] Auto-create directory structure for content-addressable paths using MKCOL
-- [ ] Returns `None` from `generate_temp_url()` - access is proxied through the web service
-- [ ] Write tests (feature-gated integration tests)
+- [x] Implement Hetzner StorageBox backend via WebDAV protocol using `reqwest` with DAV methods (PUT, GET, DELETE, PROPFIND, MKCOL)
+- [x] Support configurable: host (e.g. `uXXXXXX.your-storagebox.de`), username, password, sub-account, port, base_path
+- [x] Auto-create directory structure for content-addressable paths using MKCOL
+- [x] Returns `None` from `generate_temp_url()` - access is proxied through the web service
+- [x] Write tests (feature-gated integration tests)
 
 ### Task 10: Background sync worker
 
@@ -188,12 +188,12 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 - Create: `src/workers/mod.rs`
 - Create: `src/workers/sync_worker.rs`
 
-- [ ] Implement background task processor as spawned tokio tasks running alongside the web server
-- [ ] Poll `sync_tasks` table for pending tasks using PostgreSQL advisory locks (`pg_try_advisory_xact_lock`) for distributed locking across service instances
-- [ ] Sync flow: download from source storage -> upload to target storage -> update `file_locations` status to 'synced'
-- [ ] Retry logic with exponential backoff, max retries from config, update error_msg on failure
-- [ ] Graceful shutdown via tokio CancellationToken
-- [ ] Write tests: task pickup, sync execution, retry on failure, advisory lock prevents double-processing
+- [x] Implement background task processor as spawned tokio tasks running alongside the web server
+- [x] Poll `sync_tasks` table for pending tasks using PostgreSQL advisory locks (`pg_try_advisory_xact_lock`) for distributed locking across service instances
+- [x] Sync flow: download from source storage -> upload to target storage -> update `file_locations` status to 'synced'
+- [x] Retry logic with exponential backoff, max retries from config, update error_msg on failure
+- [x] Graceful shutdown via tokio CancellationToken
+- [x] Write tests: task pickup, sync execution, retry on failure, advisory lock prevents double-processing
 
 ### Task 11: Hot/cold tier management
 
@@ -201,11 +201,11 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 - Create: `src/workers/tier_worker.rs`
 - Create: `src/services/tier_service.rs`
 
-- [ ] Background worker: periodically scan for files where `last_accessed_at + project.hot_to_cold_days < now()` and file is only on hot storages
-- [ ] Archive flow: create sync_task to cold storage -> on completion, optionally delete from hot storage and update file_location status to 'archived'
-- [ ] API endpoint: `POST /api/files/{id}/restore` - create sync_task from cold to hot storage, return immediately
-- [ ] Ensure `last_accessed_at` is updated on every download and link generation
-- [ ] Write tests: auto-archiving detection logic, restore flow, access timestamp updates
+- [x] Background worker: periodically scan for files where `last_accessed_at + project.hot_to_cold_days < now()` and file is only on hot storages
+- [x] Archive flow: create sync_task to cold storage -> on completion, optionally delete from hot storage and update file_location status to 'archived'
+- [x] API endpoint: `POST /api/files/{id}/restore` - create sync_task from cold to hot storage, return immediately
+- [x] Ensure `last_accessed_at` is updated on every download and link generation
+- [x] Write tests: auto-archiving detection logic, restore flow, access timestamp updates
 
 ### Task 12: Bulk operations
 
@@ -213,11 +213,11 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 - Create: `src/services/bulk_service.rs`
 - Create: `src/api/bulk.rs`
 
-- [ ] `POST /api/storages/{id}/sync-all` - enumerate all files not yet on this storage, create sync_tasks for each
-- [ ] `POST /api/storages/{id}/export` - start background job to produce tar.gz archive of all files on the storage
-- [ ] `GET /api/storages/{id}/export/status` - poll export job progress (percentage, file count)
-- [ ] `GET /api/storages/{id}/export/download` - stream completed archive
-- [ ] Write tests for bulk sync task creation and export lifecycle
+- [x] `POST /api/storages/{id}/sync-all` - enumerate all files not yet on this storage, create sync_tasks for each
+- [x] `POST /api/storages/{id}/export` - start background job to produce tar.gz archive of all files on the storage
+- [x] `GET /api/storages/{id}/export/status` - poll export job progress (percentage, file count)
+- [x] `GET /api/storages/{id}/export/download` - stream completed archive
+- [x] Write tests for bulk sync task creation and export lifecycle
 
 ### Task 13: Admin frontend - project scaffolding and layout
 
