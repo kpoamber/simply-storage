@@ -49,8 +49,20 @@ impl actix_web::ResponseError for AppError {
 
     fn error_response(&self) -> HttpResponse {
         let status = actix_web::ResponseError::status_code(self);
+        let message = match self {
+            // Client errors: safe to expose details
+            AppError::NotFound(msg) => msg.clone(),
+            AppError::BadRequest(msg) => msg.clone(),
+            AppError::Unauthorized(msg) => msg.clone(),
+            AppError::Conflict(msg) => msg.clone(),
+            // Internal errors: log details, return generic message
+            AppError::Internal(_) | AppError::Database(_) | AppError::Io(_) | AppError::Config(_) => {
+                tracing::error!(error = %self, "Internal error");
+                "Internal server error".to_string()
+            }
+        };
         let body = serde_json::json!({
-            "error": format!("{}", self),
+            "error": message,
             "status": status.as_u16(),
         });
         HttpResponse::build(status).json(body)

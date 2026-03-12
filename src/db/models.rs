@@ -126,6 +126,25 @@ pub struct Storage {
     pub updated_at: DateTime<Utc>,
 }
 
+const SENSITIVE_CONFIG_KEYS: &[&str] = &[
+    "secret_access_key", "account_key", "password", "private_key_pem",
+];
+
+impl Storage {
+    /// Return a copy with sensitive credential values redacted from the config JSON.
+    pub fn redacted(&self) -> Storage {
+        let mut s = self.clone();
+        if let serde_json::Value::Object(ref mut map) = s.config {
+            for key in SENSITIVE_CONFIG_KEYS {
+                if map.contains_key(*key) {
+                    map.insert((*key).to_string(), serde_json::Value::String("***".to_string()));
+                }
+            }
+        }
+        s
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateStorage {
     pub name: String,
@@ -498,7 +517,7 @@ impl FileLocation {
         let rows = sqlx::query_as::<_, FileLocation>(
             r#"SELECT fl.* FROM file_locations fl
                JOIN storages s ON s.id = fl.storage_id
-               WHERE fl.file_id = $1 AND s.enabled = TRUE
+               WHERE fl.file_id = $1 AND s.enabled = TRUE AND fl.status = 'synced'
                ORDER BY s.is_hot DESC, fl.last_accessed_at DESC NULLS LAST"#,
         )
         .bind(file_id)
@@ -745,7 +764,7 @@ impl SyncTask {
                 p = param_idx
             ));
         }
-        sql.push_str(" ORDER BY created_at DESC");
+        sql.push_str(" ORDER BY created_at DESC LIMIT 1000");
 
         let mut query = sqlx::query_as::<_, SyncTask>(&sql);
         if let Some(s) = status {

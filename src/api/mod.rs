@@ -96,10 +96,15 @@ async fn config_export(
     let projects = Project::list(pool.get_ref()).await?;
     let storages = Storage::list(pool.get_ref()).await?;
 
+    // Redact sensitive values from config
+    let mut safe_config = config.get_ref().clone();
+    safe_config.storage.hmac_secret = "***".to_string();
+    safe_config.database.url = "***".to_string();
+
     Ok(HttpResponse::Ok().json(ConfigExport {
-        config: config.get_ref().clone(),
+        config: safe_config,
         projects,
-        storages,
+        storages: storages.into_iter().map(|s| s.redacted()).collect(),
     }))
 }
 

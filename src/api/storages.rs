@@ -65,7 +65,7 @@ async fn list_storages(pool: web::Data<PgPool>) -> Result<HttpResponse, AppError
         let used_space: i64 = sqlx::Row::get(&stats_row, 1);
 
         result.push(StorageWithStats {
-            storage,
+            storage: storage.redacted(),
             file_count,
             used_space,
         });
@@ -95,7 +95,7 @@ async fn get_storage(
     let used_space: i64 = sqlx::Row::get(&stats_row, 1);
 
     Ok(HttpResponse::Ok().json(StorageWithStats {
-        storage,
+        storage: storage.redacted(),
         file_count,
         used_space,
     }))
