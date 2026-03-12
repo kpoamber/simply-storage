@@ -75,7 +75,6 @@ describe('StorageDetail', () => {
     mockGet.mockImplementation((url: string) => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
       if (url.includes('/files')) return Promise.resolve({ data: mockFileLocations });
-      if (url.includes('/export/status')) return Promise.resolve({ data: { status: 'none', percentage: 0, file_count: 0 } });
       return Promise.reject(new Error('Unknown URL'));
     });
 
@@ -92,7 +91,6 @@ describe('StorageDetail', () => {
     mockGet.mockImplementation((url: string) => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
       if (url.includes('/files')) return Promise.resolve({ data: mockFileLocations });
-      if (url.includes('/export/status')) return Promise.resolve({ data: { status: 'none', percentage: 0, file_count: 0 } });
       return Promise.reject(new Error('Unknown URL'));
     });
 
@@ -110,7 +108,6 @@ describe('StorageDetail', () => {
     mockGet.mockImplementation((url: string) => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
       if (url.includes('/files')) return Promise.resolve({ data: [] });
-      if (url.includes('/export/status')) return Promise.resolve({ data: { status: 'none', percentage: 0, file_count: 0 } });
       return Promise.reject(new Error('Unknown URL'));
     });
 
@@ -126,7 +123,6 @@ describe('StorageDetail', () => {
     mockGet.mockImplementation((url: string) => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
       if (url.includes('/files')) return Promise.resolve({ data: [] });
-      if (url.includes('/export/status')) return Promise.resolve({ data: { status: 'none', percentage: 0, file_count: 0 } });
       return Promise.reject(new Error('Unknown URL'));
     });
     mockPost.mockResolvedValue({ data: { created: 5 } });
@@ -148,7 +144,6 @@ describe('StorageDetail', () => {
     mockGet.mockImplementation((url: string) => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
       if (url.includes('/files')) return Promise.resolve({ data: [] });
-      if (url.includes('/export/status')) return Promise.resolve({ data: { status: 'none', percentage: 0, file_count: 0 } });
       return Promise.reject(new Error('Unknown URL'));
     });
 
@@ -159,31 +154,53 @@ describe('StorageDetail', () => {
     });
   });
 
-  it('shows export progress when in progress', async () => {
+  it('shows export progress after starting export', async () => {
+    const mockExportStatus = {
+      job_id: 'job-1', storage_id: 's1', status: 'in_progress',
+      total_files: 12, processed_files: 5, total_bytes: 1024, error: null,
+    };
     mockGet.mockImplementation((url: string) => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
       if (url.includes('/files')) return Promise.resolve({ data: [] });
-      if (url.includes('/export/status')) return Promise.resolve({ data: { status: 'in_progress', percentage: 45, file_count: 12 } });
+      if (url.includes('/export/status')) return Promise.resolve({ data: mockExportStatus });
       return Promise.reject(new Error('Unknown URL'));
     });
+    mockPost.mockResolvedValue({ data: { job_id: 'job-1', message: 'Export started' } });
 
     renderStorageDetail();
 
     await waitFor(() => {
+      expect(screen.getByText('Export')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('Export'));
+
+    await waitFor(() => {
       expect(screen.getByText('Export Status')).toBeInTheDocument();
     });
-    expect(screen.getByText('12 files')).toBeInTheDocument();
+    expect(screen.getByText('5/12 files')).toBeInTheDocument();
   });
 
   it('shows download link when export completed', async () => {
+    const mockExportStatus = {
+      job_id: 'job-2', storage_id: 's1', status: 'completed',
+      total_files: 25, processed_files: 25, total_bytes: 51200, error: null,
+    };
     mockGet.mockImplementation((url: string) => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
       if (url.includes('/files')) return Promise.resolve({ data: [] });
-      if (url.includes('/export/status')) return Promise.resolve({ data: { status: 'completed', percentage: 100, file_count: 25 } });
+      if (url.includes('/export/status')) return Promise.resolve({ data: mockExportStatus });
       return Promise.reject(new Error('Unknown URL'));
     });
+    mockPost.mockResolvedValue({ data: { job_id: 'job-2', message: 'Export started' } });
 
     renderStorageDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Export')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('Export'));
 
     await waitFor(() => {
       expect(screen.getByText('Download archive')).toBeInTheDocument();

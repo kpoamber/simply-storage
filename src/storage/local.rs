@@ -132,9 +132,10 @@ impl StorageBackend for LocalDiskBackend {
             + expires_in.as_secs();
 
         let signature = self.sign_token(path, expires_at);
+        let encoded_path = urlencoding::encode(path);
         let url = format!(
             "/download/local?path={}&expires={}&sig={}",
-            path, expires_at, signature
+            encoded_path, expires_at, signature
         );
         Ok(Some(url))
     }

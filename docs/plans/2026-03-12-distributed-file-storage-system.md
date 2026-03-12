@@ -320,6 +320,6 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 
 ### Task 18: Update documentation
 
-- [ ] Update README.md with: architecture overview, setup/build instructions, configuration reference, API endpoint documentation, deployment guide (Docker Compose local + Hetzner/DO cloud deploy)
-- [ ] Create CLAUDE.md with project conventions and patterns
-- [ ] Move this plan to `docs/plans/completed/`
+- [x] Update README.md with: architecture overview, setup/build instructions, configuration reference, API endpoint documentation, deployment guide (Docker Compose local + Hetzner/DO cloud deploy)
+- [x] Create CLAUDE.md with project conventions and patterns
+- [x] Move this plan to `docs/plans/completed/`

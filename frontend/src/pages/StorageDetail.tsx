@@ -9,6 +9,7 @@ export default function StorageDetail() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
+  const [exportJobId, setExportJobId] = useState<string | null>(null);
   const perPage = 20;
 
   const { data: storage, isLoading } = useQuery<StorageBackend>({
@@ -25,9 +26,9 @@ export default function StorageDetail() {
   });
 
   const { data: exportStatus, refetch: refetchExport } = useQuery<ExportStatus>({
-    queryKey: ['storage-export-status', id],
-    queryFn: () => apiClient.get(`/storages/${id}/export/status`).then(r => r.data),
-    enabled: !!id,
+    queryKey: ['storage-export-status', id, exportJobId],
+    queryFn: () => apiClient.get(`/storages/${id}/export/status`, { params: { job_id: exportJobId } }).then(r => r.data),
+    enabled: !!id && !!exportJobId,
     refetchInterval: (query) => {
       const data = query.state.data;
       return data && data.status === 'in_progress' ? 2000 : false;
@@ -43,8 +44,9 @@ export default function StorageDetail() {
   });
 
   const exportMutation = useMutation({
-    mutationFn: () => apiClient.post(`/storages/${id}/export`),
-    onSuccess: () => {
+    mutationFn: () => apiClient.post(`/storages/${id}/export`).then(r => r.data),
+    onSuccess: (data: { job_id: string }) => {
+      setExportJobId(data.job_id);
       refetchExport();
     },
   });
@@ -113,25 +115,28 @@ export default function StorageDetail() {
         <p className="mt-2 text-sm text-green-600">Sync tasks created successfully.</p>
       )}
 
-      {exportStatus && exportStatus.status !== 'none' && (
+      {exportStatus && (
         <div className="mt-3 rounded-lg border border-gray-200 bg-white p-4">
           <h4 className="text-sm font-medium text-gray-700">Export Status</h4>
           <div className="mt-2">
             <div className="flex items-center justify-between text-sm text-gray-600">
               <span>Status: {exportStatus.status}</span>
-              <span>{exportStatus.file_count} files</span>
+              <span>{exportStatus.processed_files}/{exportStatus.total_files} files</span>
             </div>
             {exportStatus.status === 'in_progress' && (
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-gray-200">
                 <div
                   className="h-full rounded-full bg-blue-600 transition-all"
-                  style={{ width: `${exportStatus.percentage}%` }}
+                  style={{ width: `${exportStatus.total_files > 0 ? Math.round((exportStatus.processed_files / exportStatus.total_files) * 100) : 0}%` }}
                 />
               </div>
             )}
-            {exportStatus.status === 'completed' && (
+            {exportStatus.error && (
+              <p className="mt-2 text-sm text-red-600">{exportStatus.error}</p>
+            )}
+            {exportStatus.status === 'completed' && exportJobId && (
               <a
-                href={`/api/storages/${id}/export/download`}
+                href={`/api/storages/${id}/export/download?job_id=${exportJobId}`}
                 className="mt-2 inline-block text-sm text-blue-600 hover:underline"
               >
                 Download archive

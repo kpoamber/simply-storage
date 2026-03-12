@@ -604,6 +604,11 @@ impl SyncTask {
     /// Claim a batch of pending sync tasks using PostgreSQL advisory locks.
     /// Only returns tasks that this worker successfully locked.
     /// Tasks with retries >= max_retries are skipped and marked as 'failed'.
+    ///
+    /// Uses transaction-scoped advisory locks (`pg_try_advisory_xact_lock`) so that
+    /// the lock and status update happen on the same connection. The lock auto-releases
+    /// when the transaction commits, and the 'in_progress' status prevents other workers
+    /// from re-claiming the task.
     pub async fn claim_pending(
         pool: &PgPool,
         limit: i64,
@@ -638,27 +643,36 @@ impl SyncTask {
             let key1 = i32::from_le_bytes([id_bytes[0], id_bytes[1], id_bytes[2], id_bytes[3]]);
             let key2 = i32::from_le_bytes([id_bytes[4], id_bytes[5], id_bytes[6], id_bytes[7]]);
 
+            // Use a transaction so the advisory lock and status update share the
+            // same connection. pg_try_advisory_xact_lock auto-releases on commit.
+            let mut tx = pool.begin().await?;
+
             let locked: (bool,) = sqlx::query_as(
-                "SELECT pg_try_advisory_lock($1, $2)",
+                "SELECT pg_try_advisory_xact_lock($1, $2)",
             )
             .bind(key1)
             .bind(key2)
-            .fetch_one(pool)
+            .fetch_one(&mut *tx)
             .await?;
 
             if locked.0 {
-                // Mark as in_progress
+                // Mark as in_progress within the same transaction
                 sqlx::query(
                     "UPDATE sync_tasks SET status = 'in_progress' WHERE id = $1",
                 )
                 .bind(task.id)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
+
+                tx.commit().await?;
 
                 claimed.push(SyncTask {
                     status: "in_progress".to_string(),
                     ..task
                 });
+            } else {
+                // Another worker claimed this task; rollback (releases xact lock)
+                tx.rollback().await?;
             }
         }
 
@@ -666,17 +680,13 @@ impl SyncTask {
     }
 
     /// Release the advisory lock for a sync task.
-    pub async fn release_lock(pool: &PgPool, task_id: Uuid) -> AppResult<()> {
-        let id_bytes = task_id.as_bytes();
-        let key1 = i32::from_le_bytes([id_bytes[0], id_bytes[1], id_bytes[2], id_bytes[3]]);
-        let key2 = i32::from_le_bytes([id_bytes[4], id_bytes[5], id_bytes[6], id_bytes[7]]);
-
-        sqlx::query("SELECT pg_advisory_unlock($1, $2)")
-            .bind(key1)
-            .bind(key2)
-            .execute(pool)
-            .await?;
-
+    ///
+    /// This is now a no-op because `claim_pending` uses transaction-scoped locks
+    /// (`pg_try_advisory_xact_lock`) that auto-release on commit. The 'in_progress'
+    /// status prevents other workers from re-claiming the task.
+    pub async fn release_lock(_pool: &PgPool, _task_id: Uuid) -> AppResult<()> {
+        // Transaction-scoped advisory locks are automatically released when the
+        // transaction in claim_pending commits. No explicit unlock needed.
         Ok(())
     }
 

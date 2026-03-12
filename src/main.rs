@@ -37,8 +37,18 @@ async fn main() -> std::io::Result<()> {
     // Optionally configure Citus distribution
     innovare_storage::db::configure_citus(&pool).await;
 
-    // Set up storage registry, file service, and tier service
+    // Set up storage registry and load backends from database
     let registry = Arc::new(StorageRegistry::new());
+    if let Err(e) = innovare_storage::storage::registry::load_backends_from_db(
+        &pool,
+        &registry,
+        &config.storage.hmac_secret,
+    )
+    .await
+    {
+        tracing::warn!("Failed to load storage backends from DB: {}", e);
+    }
+
     let file_service = FileService::new(pool.clone(), registry.clone());
     let tier_service = TierService::new(pool.clone(), registry.clone());
     let bulk_service = BulkService::new(pool.clone(), registry.clone());
@@ -85,6 +95,7 @@ async fn main() -> std::io::Result<()> {
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     let config_data = web::Data::new(config);
     let pool_data = web::Data::new(pool);
+    let registry_data = web::Data::new(registry);
     let file_service_data = web::Data::new(file_service);
     let tier_service_data = web::Data::new(tier_service);
     let bulk_service_data = web::Data::new(bulk_service);
@@ -93,6 +104,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(config_data.clone())
             .app_data(pool_data.clone())
+            .app_data(registry_data.clone())
             .app_data(file_service_data.clone())
             .app_data(tier_service_data.clone())
             .app_data(bulk_service_data.clone())

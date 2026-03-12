@@ -38,15 +38,17 @@ describe('StorageForm', () => {
     render(<StorageForm {...defaultProps} />);
     fireEvent.change(screen.getByLabelText('Storage Type'), { target: { value: 'azure' } });
 
+    expect(screen.getByText('Account Name *')).toBeInTheDocument();
+    expect(screen.getByText('Account Key *')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('my-container')).toBeInTheDocument();
-    expect(screen.getByText('Connection String *')).toBeInTheDocument();
   });
 
   it('switches to GCS fields', () => {
     render(<StorageForm {...defaultProps} />);
     fireEvent.change(screen.getByLabelText('Storage Type'), { target: { value: 'gcs' } });
 
-    expect(screen.getByText('Service Account JSON *')).toBeInTheDocument();
+    expect(screen.getByText('Client Email *')).toBeInTheDocument();
+    expect(screen.getByText('Private Key (PEM) *')).toBeInTheDocument();
   });
 
   it('switches to FTP fields', () => {

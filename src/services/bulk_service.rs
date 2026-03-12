@@ -210,7 +210,7 @@ impl BulkService {
             .ok_or_else(|| AppError::NotFound(format!("Export job {} not found", job_id)))
     }
 
-    /// Get the completed export archive data.
+    /// Get the completed export archive data and remove it from memory.
     pub async fn get_export_data(&self, job_id: Uuid) -> AppResult<Vec<u8>> {
         let status = self.get_export_status(job_id).await?;
         if status.status != ExportState::Completed {
@@ -219,10 +219,9 @@ impl BulkService {
             ));
         }
 
-        let data = self.export_data.read().await;
-        data.get(&job_id)
-            .cloned()
-            .ok_or_else(|| AppError::NotFound("Export data not found".to_string()))
+        let mut data = self.export_data.write().await;
+        data.remove(&job_id)
+            .ok_or_else(|| AppError::NotFound("Export data not found or already downloaded".to_string()))
     }
 }
 

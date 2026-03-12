@@ -86,9 +86,13 @@ export interface SyncTask {
 }
 
 export interface ExportStatus {
+  job_id: string;
+  storage_id: string;
   status: string;
-  percentage: number;
-  file_count: number;
+  total_files: number;
+  processed_files: number;
+  total_bytes: number;
+  error: string | null;
 }
 
 export function formatBytes(bytes: number): string {

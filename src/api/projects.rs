@@ -27,11 +27,14 @@ async fn get_project(
 
     // Get file stats for the project
     let stats_row = sqlx::query(
-        r#"SELECT COUNT(DISTINCT fr.file_id)::bigint as file_count,
-                  COALESCE(SUM(DISTINCT f.size), 0)::bigint as total_size
-           FROM file_references fr
-           JOIN files f ON f.id = fr.file_id
-           WHERE fr.project_id = $1"#,
+        r#"SELECT COUNT(*)::bigint as file_count,
+                  COALESCE(SUM(size), 0)::bigint as total_size
+           FROM (
+               SELECT DISTINCT f.id, f.size
+               FROM file_references fr
+               JOIN files f ON f.id = fr.file_id
+               WHERE fr.project_id = $1
+           ) sub"#,
     )
     .bind(project_id)
     .fetch_one(pool.get_ref())
