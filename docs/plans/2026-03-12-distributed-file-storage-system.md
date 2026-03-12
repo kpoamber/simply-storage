@@ -232,13 +232,13 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 - Create: `frontend/src/components/Layout.tsx`
 - Create: `frontend/src/components/Sidebar.tsx`
 
-- [ ] Initialize React + TypeScript project with Vite
-- [ ] Add dependencies: react-router-dom, @tanstack/react-query, tailwindcss, lucide-react (icons), axios
-- [ ] Create API client wrapper (axios instance with base URL configuration)
-- [ ] Create app shell layout: sidebar navigation (Dashboard, Projects, Storages, Sync Tasks, Nodes) + main content area
-- [ ] Set up routing for all admin pages
-- [ ] Configure Vite to build to `frontend/dist/`, configure Actix-Web to serve `frontend/dist/` as static files at root path
-- [ ] Write tests: component renders, routing works
+- [x] Initialize React + TypeScript project with Vite
+- [x] Add dependencies: react-router-dom, @tanstack/react-query, tailwindcss, lucide-react (icons), axios
+- [x] Create API client wrapper (axios instance with base URL configuration)
+- [x] Create app shell layout: sidebar navigation (Dashboard, Projects, Storages, Sync Tasks, Nodes) + main content area
+- [x] Set up routing for all admin pages
+- [x] Configure Vite to build to `frontend/dist/`, configure Actix-Web to serve `frontend/dist/` as static files at root path
+- [x] Write tests: component renders, routing works
 
 ### Task 14: Admin frontend - dashboard and project management
 

@@ -82,7 +82,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(file_service_data.clone())
             .app_data(tier_service_data.clone())
             .app_data(bulk_service_data.clone())
-            .configure(innovare_storage::configure_routes)
+            .configure(innovare_storage::configure_app)
     })
     .bind(&bind_addr)?
     .run();
