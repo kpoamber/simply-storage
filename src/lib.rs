@@ -6,6 +6,18 @@ pub mod services;
 pub mod storage;
 pub mod workers;
 
+/// Constant-time comparison to prevent timing attacks on HMAC signatures.
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 use actix_files::NamedFile;
 use actix_web::{web, HttpResponse};
 use serde_json::json;

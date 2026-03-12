@@ -553,6 +553,41 @@ impl FileLocation {
         Ok(row)
     }
 
+    /// Update a file_location's status by file_id + storage_id (regardless of current status).
+    /// Used by the sync worker when the location already exists (e.g. with 'archived' status).
+    pub async fn update_status_by_file_and_storage(
+        pool: &PgPool,
+        file_id: Uuid,
+        storage_id: Uuid,
+        status: &str,
+    ) -> AppResult<FileLocation> {
+        let synced_clause = if status == "synced" {
+            ", synced_at = NOW()"
+        } else {
+            ""
+        };
+
+        let sql = format!(
+            "UPDATE file_locations SET status = $1{} WHERE file_id = $2 AND storage_id = $3 RETURNING *",
+            synced_clause
+        );
+
+        let row = sqlx::query_as::<_, FileLocation>(&sql)
+            .bind(status)
+            .bind(file_id)
+            .bind(storage_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| {
+                AppError::NotFound(format!(
+                    "File location not found for file {} on storage {}",
+                    file_id, storage_id
+                ))
+            })?;
+
+        Ok(row)
+    }
+
     pub async fn touch_accessed(pool: &PgPool, id: Uuid) -> AppResult<()> {
         sqlx::query("UPDATE file_locations SET last_accessed_at = NOW() WHERE id = $1")
             .bind(id)

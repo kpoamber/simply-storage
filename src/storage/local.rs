@@ -66,20 +66,8 @@ impl LocalDiskBackend {
             return false;
         }
         let expected = self.sign_token(path, expires_at);
-        constant_time_eq(expected.as_bytes(), signature.as_bytes())
+        crate::constant_time_eq(expected.as_bytes(), signature.as_bytes())
     }
-}
-
-/// Constant-time comparison to prevent timing attacks on HMAC signatures.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }
 
 #[async_trait]
@@ -372,6 +360,7 @@ mod tests {
 
     #[test]
     fn test_constant_time_eq() {
+        use crate::constant_time_eq;
         assert!(constant_time_eq(b"hello", b"hello"));
         assert!(!constant_time_eq(b"hello", b"world"));
         assert!(!constant_time_eq(b"hello", b"hell"));

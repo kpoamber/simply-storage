@@ -210,7 +210,7 @@ pub async fn download_local_temp(
     mac.update(message.as_bytes());
     let expected = hex::encode(mac.finalize().into_bytes());
 
-    if !constant_time_eq(expected.as_bytes(), query.sig.as_bytes()) {
+    if !crate::constant_time_eq(expected.as_bytes(), query.sig.as_bytes()) {
         return Err(AppError::Unauthorized(
             "Invalid download link signature".to_string(),
         ));
@@ -241,18 +241,6 @@ pub async fn download_local_temp(
     Ok(HttpResponse::Ok()
         .content_type(file.content_type.as_str())
         .body(data))
-}
-
-/// Constant-time comparison to prevent timing attacks on HMAC signatures.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }
 
 // ─── Route configuration ────────────────────────────────────────────────────────

@@ -43,7 +43,7 @@ async fn create_storage(
         }
     }
 
-    Ok(HttpResponse::Created().json(storage))
+    Ok(HttpResponse::Created().json(storage.redacted()))
 }
 
 async fn list_storages(pool: web::Data<PgPool>) -> Result<HttpResponse, AppError> {
@@ -126,7 +126,7 @@ async fn update_storage(
         registry.unregister(&storage.id).await;
     }
 
-    Ok(HttpResponse::Ok().json(storage))
+    Ok(HttpResponse::Ok().json(storage.redacted()))
 }
 
 async fn disable_storage(

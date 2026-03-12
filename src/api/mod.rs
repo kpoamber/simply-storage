@@ -26,7 +26,11 @@ impl PaginationParams {
     }
 
     pub fn offset(&self) -> i64 {
-        (self.page.unwrap_or(1).max(1) - 1) * self.limit()
+        self.page
+            .unwrap_or(1)
+            .max(1)
+            .saturating_sub(1)
+            .saturating_mul(self.limit())
     }
 }
 

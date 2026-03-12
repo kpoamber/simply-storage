@@ -3,6 +3,15 @@ import { Files, HardDrive, RefreshCw, Server } from 'lucide-react';
 import apiClient from '../api/client';
 import { SystemStats, StorageBackend, formatBytes } from '../api/types';
 
+interface Node {
+  id: string;
+  node_id: string;
+  address: string;
+  started_at: string;
+  last_heartbeat: string;
+  created_at: string;
+}
+
 export default function Dashboard() {
   const { data: stats, isLoading: statsLoading } = useQuery<SystemStats>({
     queryKey: ['system-stats'],
@@ -12,6 +21,12 @@ export default function Dashboard() {
   const { data: storages, isLoading: storagesLoading } = useQuery<StorageBackend[]>({
     queryKey: ['storages'],
     queryFn: () => apiClient.get('/storages').then(r => r.data),
+  });
+
+  const { data: nodes, isLoading: nodesLoading } = useQuery<Node[]>({
+    queryKey: ['nodes'],
+    queryFn: () => apiClient.get('/system/nodes').then(r => r.data),
+    refetchInterval: 30000,
   });
 
   return (
@@ -38,7 +53,7 @@ export default function Dashboard() {
         <StatCard
           icon={<Server className="h-6 w-6 text-purple-600" />}
           label="Active Nodes"
-          value="0"
+          value={nodesLoading ? '...' : String(nodes?.length ?? 0)}
         />
       </div>
 

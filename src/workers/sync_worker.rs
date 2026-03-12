@@ -219,15 +219,15 @@ impl SyncWorker {
         match FileLocation::create(&self.pool, &create_location).await {
             Ok(_) => {}
             Err(crate::error::AppError::Database(ref e)) if is_unique_violation(e) => {
-                // Location already exists, find it and update status
-                let locations =
-                    FileLocation::find_for_file(&self.pool, task.file_id).await?;
-                if let Some(loc) = locations
-                    .iter()
-                    .find(|l| l.storage_id == task.target_storage_id)
-                {
-                    FileLocation::update_status(&self.pool, loc.id, "synced").await?;
-                }
+                // Location already exists (possibly with 'archived' or 'restoring' status),
+                // update it directly by file_id + storage_id to avoid status-filtered queries
+                FileLocation::update_status_by_file_and_storage(
+                    &self.pool,
+                    task.file_id,
+                    task.target_storage_id,
+                    "synced",
+                )
+                .await?;
             }
             Err(e) => return Err(e),
         }

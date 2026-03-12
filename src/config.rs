@@ -32,7 +32,7 @@ pub struct DatabaseConfig {
 pub struct StorageConfig {
     #[serde(default = "default_local_temp_path")]
     pub local_temp_path: String,
-    #[serde(default = "default_hmac_secret")]
+    #[serde(default = "default_hmac_secret", skip_serializing)]
     pub hmac_secret: String,
 }
 
