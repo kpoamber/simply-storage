@@ -1,6 +1,7 @@
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod storage;
 
 use actix_web::{web, HttpResponse};
 use serde_json::json;

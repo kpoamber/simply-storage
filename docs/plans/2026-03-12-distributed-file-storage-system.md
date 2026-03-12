@@ -72,17 +72,17 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 - Create: `src/storage/local.rs`
 - Create: `src/storage/registry.rs`
 
-- [ ] Define `StorageBackend` async trait:
+- [x] Define `StorageBackend` async trait:
   - `upload(path: &str, data: Bytes) -> Result<()>`
   - `download(path: &str) -> Result<Bytes>`
   - `delete(path: &str) -> Result<()>`
   - `exists(path: &str) -> Result<bool>`
   - `generate_temp_url(path: &str, expires_in: Duration) -> Result<Option<String>>`
   - `list(prefix: &str) -> Result<Vec<String>>`
-- [ ] Implement `LocalDiskBackend` with content-addressable storage using hash-based directory structure (`ab/cd/abcdef...`)
-- [ ] For local backend temp URLs: generate HMAC-signed tokens with expiry, verified by dedicated download endpoint
-- [ ] Create `StorageRegistry` to hold and look up backends by storage ID, with dynamic registration/reload
-- [ ] Write tests: upload/download round-trip, delete, exists check, list, temp URL signing and verification
+- [x] Implement `LocalDiskBackend` with content-addressable storage using hash-based directory structure (`ab/cd/abcdef...`)
+- [x] For local backend temp URLs: generate HMAC-signed tokens with expiry, verified by dedicated download endpoint
+- [x] Create `StorageRegistry` to hold and look up backends by storage ID, with dynamic registration/reload
+- [x] Write tests: upload/download round-trip, delete, exists check, list, temp URL signing and verification
 
 ### Task 4: Core file service (upload with deduplication)
 
