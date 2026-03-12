@@ -262,11 +262,11 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 - Create: `frontend/src/pages/SyncTasks.tsx`
 - Create: `frontend/src/components/StorageForm.tsx`
 
-- [ ] Storages list page: table with name, type, hot/cold, enabled status, file count, used space, actions
-- [ ] Add/edit storage form: dynamic fields based on storage_type selection (S3: region, bucket, endpoint, keys; Azure: container, connection string; GCS: bucket, service account; FTP/SFTP: host, port, user, password, path; Samba: share, host, user, password; Hetzner StorageBox: host, user, password, path; DigitalOcean Spaces: region, bucket, keys; Local: path)
-- [ ] Storage detail page: file list on this storage, usage stats, sync-all button, export button with progress
-- [ ] Sync tasks page: table with file info, source/target storage, status, retries, error message, timestamps, filtering by status
-- [ ] Write tests for form validation and storage type switching
+- [x] Storages list page: table with name, type, hot/cold, enabled status, file count, used space, actions
+- [x] Add/edit storage form: dynamic fields based on storage_type selection (S3: region, bucket, endpoint, keys; Azure: container, connection string; GCS: bucket, service account; FTP/SFTP: host, port, user, password, path; Samba: share, host, user, password; Hetzner StorageBox: host, user, password, path; DigitalOcean Spaces: region, bucket, keys; Local: path)
+- [x] Storage detail page: file list on this storage, usage stats, sync-all button, export button with progress
+- [x] Sync tasks page: table with file info, source/target storage, status, retries, error message, timestamps, filtering by status
+- [x] Write tests for form validation and storage type switching
 
 ### Task 16: Docker, CI/CD, and deployment infrastructure
 

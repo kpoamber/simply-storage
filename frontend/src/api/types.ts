@@ -85,6 +85,12 @@ export interface SyncTask {
   updated_at: string;
 }
 
+export interface ExportStatus {
+  status: string;
+  percentage: number;
+  file_count: number;
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
   const k = 1024;

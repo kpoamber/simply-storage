@@ -67,7 +67,7 @@ describe('App', () => {
 
   it('navigates to Storage Detail page', () => {
     renderWithProviders('/storages/abc-def-123');
-    expect(screen.getByText('Storage ID: abc-def-123')).toBeInTheDocument();
+    expect(screen.getByText('Loading storage...')).toBeInTheDocument();
   });
 
   it('shows 404 for unknown routes', () => {
