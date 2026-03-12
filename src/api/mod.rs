@@ -101,8 +101,8 @@ async fn config_export(
     let storages = Storage::list(pool.get_ref()).await?;
 
     // Redact sensitive values from config
+    // Note: hmac_secret has skip_serializing so it's automatically omitted
     let mut safe_config = config.get_ref().clone();
-    safe_config.storage.hmac_secret = "***".to_string();
     safe_config.database.url = "***".to_string();
 
     Ok(HttpResponse::Ok().json(ConfigExport {

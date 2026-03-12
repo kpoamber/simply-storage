@@ -137,7 +137,7 @@ async fn disable_storage(
     let storage_id = path.into_inner();
     let storage = Storage::update_enabled(pool.get_ref(), storage_id, false).await?;
     registry.unregister(&storage_id).await;
-    Ok(HttpResponse::Ok().json(storage))
+    Ok(HttpResponse::Ok().json(storage.redacted()))
 }
 
 async fn list_storage_files(
