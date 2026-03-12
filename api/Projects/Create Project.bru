@@ -1,0 +1,25 @@
+meta {
+  name: Create Project
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/projects
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Demo Project",
+    "slug": "demo",
+    "hot_to_cold_days": 30
+  }
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setVar("projectId", res.body.id);
+  }
+}

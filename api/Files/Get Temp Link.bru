@@ -1,0 +1,11 @@
+meta {
+  name: Get Temp Link
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/files/{{fileId}}/link?expires_in=3600
+  body: none
+  auth: none
+}

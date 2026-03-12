@@ -8,7 +8,8 @@ COPY frontend/ .
 RUN npm run build
 
 # ─── Stage 2: Build Rust backend ───────────────────────────────────────────
-FROM rust:1.82-bookworm AS backend-builder
+FROM rust:latest AS backend-builder
+# Pin the runtime to the same distro as the builder to avoid glibc mismatch
 
 WORKDIR /app
 
@@ -16,7 +17,8 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock* ./
 RUN mkdir src && echo 'fn main() {}' > src/main.rs && echo '' > src/lib.rs
 RUN cargo build --release 2>/dev/null || true
-RUN rm -rf src
+# Remove dummy binary and fingerprints so Cargo rebuilds with real source
+RUN rm -rf src target/release/innovare-storage target/release/deps/innovare_storage* target/release/.fingerprint/innovare-storage-*
 
 # Copy actual source and migrations
 COPY src/ src/
@@ -26,7 +28,7 @@ COPY migrations/ migrations/
 RUN cargo build --release
 
 # ─── Stage 3: Minimal runtime image ───────────────────────────────────────
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \

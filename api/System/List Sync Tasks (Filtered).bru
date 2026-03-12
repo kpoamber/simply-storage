@@ -1,0 +1,11 @@
+meta {
+  name: List Sync Tasks (Filtered)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/sync-tasks?status=pending&storage_id={{storageId}}
+  body: none
+  auth: none
+}

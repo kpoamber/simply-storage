@@ -1,0 +1,11 @@
+meta {
+  name: Download Export
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/storages/{{storageId}}/export/download?job_id={{exportJobId}}
+  body: none
+  auth: none
+}

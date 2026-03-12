@@ -1,0 +1,11 @@
+meta {
+  name: List Project Files
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/projects/{{projectId}}/files?page=1&per_page=50
+  body: none
+  auth: none
+}

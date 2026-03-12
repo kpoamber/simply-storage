@@ -1,0 +1,26 @@
+meta {
+  name: Create Hetzner StorageBox
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/storages
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Hetzner StorageBox",
+    "storage_type": "hetzner",
+    "config": {
+      "host": "uXXXXXX.your-storagebox.de",
+      "username": "uXXXXXX",
+      "password": "your-password",
+      "base_path": "/backups",
+      "port": 443
+    },
+    "is_hot": false
+  }
+}

@@ -1,0 +1,17 @@
+meta {
+  name: Start Export
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/storages/{{storageId}}/export
+  body: none
+  auth: none
+}
+
+script:post-response {
+  if (res.status === 202) {
+    bru.setVar("exportJobId", res.body.job_id);
+  }
+}

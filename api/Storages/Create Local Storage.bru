@@ -1,0 +1,28 @@
+meta {
+  name: Create Local Storage
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/storages
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Local Storage",
+    "storage_type": "local",
+    "config": {
+      "path": "/app/data/local"
+    },
+    "is_hot": true
+  }
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setVar("storageId", res.body.id);
+  }
+}

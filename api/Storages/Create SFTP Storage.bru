@@ -1,0 +1,26 @@
+meta {
+  name: Create SFTP Storage
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/storages
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "SFTP Backup",
+    "storage_type": "sftp",
+    "config": {
+      "host": "backup.example.com",
+      "port": 22,
+      "username": "backup-user",
+      "password": "your-password",
+      "base_path": "/data/storage"
+    },
+    "is_hot": false
+  }
+}

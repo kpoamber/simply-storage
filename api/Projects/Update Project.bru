@@ -1,0 +1,18 @@
+meta {
+  name: Update Project
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/api/projects/{{projectId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Updated Project Name",
+    "hot_to_cold_days": 14
+  }
+}

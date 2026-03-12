@@ -1,0 +1,11 @@
+meta {
+  name: Disable Storage
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/api/storages/{{storageId}}
+  body: none
+  auth: none
+}

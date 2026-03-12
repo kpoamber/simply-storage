@@ -24,7 +24,7 @@ services:
     environment:
       - APP_SERVER__HOST=0.0.0.0
       - APP_SERVER__PORT=8080
-      - APP_DATABASE__URL=postgres://innovare:innovare@postgres:5432/innovare_storage
+      - APP_DATABASE__URL=postgres://innovare:innovare@postgres:5432/innovare_storage?sslmode=disable
       - APP_DATABASE__MAX_CONNECTIONS=10
       - APP_STORAGE__LOCAL_TEMP_PATH=/app/data/temp
       - APP_STORAGE__HMAC_SECRET=${HMAC_SECRET:-change-me-in-production}

@@ -1,0 +1,11 @@
+meta {
+  name: List Storage Files
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/api/storages/{{storageId}}/files?page=1&per_page=50
+  body: none
+  auth: none
+}

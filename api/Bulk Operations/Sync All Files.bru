@@ -1,0 +1,11 @@
+meta {
+  name: Sync All Files
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/storages/{{storageId}}/sync-all
+  body: none
+  auth: none
+}

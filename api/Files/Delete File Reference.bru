@@ -1,0 +1,11 @@
+meta {
+  name: Delete File Reference
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/api/files/{{fileId}}?project_id={{projectId}}
+  body: none
+  auth: none
+}

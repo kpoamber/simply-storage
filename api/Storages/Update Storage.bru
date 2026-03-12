@@ -1,0 +1,18 @@
+meta {
+  name: Update Storage
+  type: http
+  seq: 7
+}
+
+put {
+  url: {{baseUrl}}/api/storages/{{storageId}}
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Renamed Storage",
+    "is_hot": false
+  }
+}

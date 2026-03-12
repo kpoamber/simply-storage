@@ -1,0 +1,11 @@
+meta {
+  name: Export Status
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/storages/{{storageId}}/export/status?job_id={{exportJobId}}
+  body: none
+  auth: none
+}

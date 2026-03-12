@@ -1,0 +1,11 @@
+meta {
+  name: Get Project
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/projects/{{projectId}}
+  body: none
+  auth: none
+}

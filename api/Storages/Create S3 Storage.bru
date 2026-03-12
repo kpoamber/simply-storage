@@ -1,0 +1,32 @@
+meta {
+  name: Create S3 Storage
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/storages
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "AWS S3 Bucket",
+    "storage_type": "s3",
+    "config": {
+      "bucket": "my-bucket",
+      "region": "eu-central-1",
+      "access_key_id": "AKIAIOSFODNN7EXAMPLE",
+      "secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "prefix": "files/"
+    },
+    "is_hot": true
+  }
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setVar("storageId", res.body.id);
+  }
+}
