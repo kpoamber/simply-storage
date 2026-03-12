@@ -247,12 +247,12 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 - Create: `frontend/src/pages/Projects.tsx`
 - Create: `frontend/src/pages/ProjectDetail.tsx`
 
-- [ ] Dashboard page: total files, total storage used, active sync tasks count, storage health overview, active nodes count (cards/widgets)
-- [ ] Projects list page: table with name, file count, storage usage, hot_to_cold_days setting, actions (edit, view)
-- [ ] Project detail page: file browser with search/pagination, project settings form (name, slug, hot_to_cold_days), assigned storages
-- [ ] File upload UI: drag-and-drop zone or file picker on project detail page
-- [ ] File actions: download, get temp link (with copy-to-clipboard), restore from cold, delete
-- [ ] Write tests for key interactions
+- [x] Dashboard page: total files, total storage used, active sync tasks count, storage health overview, active nodes count (cards/widgets)
+- [x] Projects list page: table with name, file count, storage usage, hot_to_cold_days setting, actions (edit, view)
+- [x] Project detail page: file browser with search/pagination, project settings form (name, slug, hot_to_cold_days), assigned storages
+- [x] File upload UI: drag-and-drop zone or file picker on project detail page
+- [x] File actions: download, get temp link (with copy-to-clipboard), restore from cold, delete
+- [x] Write tests for key interactions
 
 ### Task 15: Admin frontend - storage management and sync monitoring
 

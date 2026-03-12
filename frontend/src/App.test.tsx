@@ -62,9 +62,7 @@ describe('App', () => {
 
   it('navigates to Project Detail page', () => {
     renderWithProviders('/projects/123e4567-e89b-12d3-a456-426614174000');
-    expect(
-      screen.getByText('Project ID: 123e4567-e89b-12d3-a456-426614174000'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Loading project...')).toBeInTheDocument();
   });
 
   it('navigates to Storage Detail page', () => {
