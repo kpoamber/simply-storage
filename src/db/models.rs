@@ -15,6 +15,7 @@ pub struct Project {
     pub hot_to_cold_days: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,24 +49,28 @@ impl Project {
     }
 
     pub async fn find_by_id(pool: &PgPool, id: Uuid) -> AppResult<Project> {
-        sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = $1")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?
-            .ok_or_else(|| AppError::NotFound(format!("Project {} not found", id)))
+        sqlx::query_as::<_, Project>(
+            "SELECT * FROM projects WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Project {} not found", id)))
     }
 
     pub async fn find_by_slug(pool: &PgPool, slug: &str) -> AppResult<Project> {
-        sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE slug = $1")
-            .bind(slug)
-            .fetch_optional(pool)
-            .await?
-            .ok_or_else(|| AppError::NotFound(format!("Project with slug '{}' not found", slug)))
+        sqlx::query_as::<_, Project>(
+            "SELECT * FROM projects WHERE slug = $1 AND deleted_at IS NULL",
+        )
+        .bind(slug)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Project with slug '{}' not found", slug)))
     }
 
     pub async fn list(pool: &PgPool) -> AppResult<Vec<Project>> {
         let rows = sqlx::query_as::<_, Project>(
-            "SELECT * FROM projects ORDER BY created_at DESC",
+            "SELECT * FROM projects WHERE deleted_at IS NULL ORDER BY created_at DESC",
         )
         .fetch_all(pool)
         .await?;
@@ -99,10 +104,12 @@ impl Project {
     }
 
     pub async fn delete(pool: &PgPool, id: Uuid) -> AppResult<()> {
-        let result = sqlx::query("DELETE FROM projects WHERE id = $1")
-            .bind(id)
-            .execute(pool)
-            .await?;
+        let result = sqlx::query(
+            "UPDATE projects SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .execute(pool)
+        .await?;
 
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound(format!("Project {} not found", id)));
@@ -513,12 +520,27 @@ impl FileLocation {
         Ok(row)
     }
 
+    /// Find file locations with synced status on enabled storages (for downloads).
     pub async fn find_for_file(pool: &PgPool, file_id: Uuid) -> AppResult<Vec<FileLocation>> {
         let rows = sqlx::query_as::<_, FileLocation>(
             r#"SELECT fl.* FROM file_locations fl
                JOIN storages s ON s.id = fl.storage_id
                WHERE fl.file_id = $1 AND s.enabled = TRUE AND fl.status = 'synced'
                ORDER BY s.is_hot DESC, fl.last_accessed_at DESC NULLS LAST"#,
+        )
+        .bind(file_id)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// Find all file locations regardless of status (for metadata views).
+    pub async fn find_all_for_file(pool: &PgPool, file_id: Uuid) -> AppResult<Vec<FileLocation>> {
+        let rows = sqlx::query_as::<_, FileLocation>(
+            r#"SELECT fl.* FROM file_locations fl
+               WHERE fl.file_id = $1
+               ORDER BY fl.created_at DESC"#,
         )
         .bind(file_id)
         .fetch_all(pool)
@@ -608,6 +630,7 @@ pub struct SyncTask {
     pub status: String,
     pub retries: i32,
     pub error_msg: Option<String>,
+    pub retry_after: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -698,6 +721,7 @@ impl SyncTask {
         let tasks = sqlx::query_as::<_, SyncTask>(
             r#"SELECT * FROM sync_tasks
                WHERE status = 'pending' AND retries < $1
+               AND (retry_after IS NULL OR retry_after <= NOW())
                ORDER BY created_at ASC
                LIMIT $2"#,
         )
@@ -760,7 +784,8 @@ impl SyncTask {
         Ok(())
     }
 
-    /// Re-queue a failed task back to pending for retry.
+    /// Re-queue a failed task back to pending for retry with exponential backoff.
+    /// Delay: 2^retries seconds (1s, 2s, 4s, 8s, 16s, ..., capped at 5 minutes).
     pub async fn requeue_for_retry(
         pool: &PgPool,
         id: Uuid,
@@ -768,7 +793,13 @@ impl SyncTask {
     ) -> AppResult<SyncTask> {
         let row = sqlx::query_as::<_, SyncTask>(
             r#"UPDATE sync_tasks
-               SET status = 'pending', error_msg = $1, retries = retries + 1
+               SET status = 'pending',
+                   error_msg = $1,
+                   retries = retries + 1,
+                   retry_after = NOW() + LEAST(
+                       INTERVAL '1 second' * POWER(2, retries),
+                       INTERVAL '5 minutes'
+                   )
                WHERE id = $2
                RETURNING *"#,
         )
@@ -944,6 +975,7 @@ mod tests {
             hot_to_cold_days: Some(7),
             created_at: now,
             updated_at: now,
+            deleted_at: None,
         };
 
         let json = serde_json::to_value(&project).unwrap();
@@ -1035,6 +1067,7 @@ mod tests {
             status: "pending".to_string(),
             retries: 0,
             error_msg: None,
+            retry_after: None,
             created_at: now,
             updated_at: now,
         };
@@ -1056,6 +1089,7 @@ mod tests {
             status: "failed".to_string(),
             retries: 3,
             error_msg: Some("Connection timeout".to_string()),
+            retry_after: None,
             created_at: now,
             updated_at: now,
         };

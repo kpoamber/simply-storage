@@ -120,7 +120,10 @@ impl S3StorageBackend {
                 .upload_id(&upload_id)
                 .part_number(part_number)
                 .body(ByteStream::from(part_data))
-                .content_length(((end - offset) as u64).try_into().unwrap_or(0))
+                .content_length(
+                        i64::try_from((end - offset) as u64)
+                            .expect("S3 part size exceeds i64::MAX"),
+                    )
                 .send()
                 .await;
 

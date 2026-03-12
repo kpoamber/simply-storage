@@ -112,7 +112,7 @@ async fn get_file_metadata(
 ) -> Result<HttpResponse, AppError> {
     let file_id = path.into_inner();
     let file = File::find_by_id(pool.get_ref(), file_id).await?;
-    let locations = FileLocation::find_for_file(pool.get_ref(), file_id).await?;
+    let locations = FileLocation::find_all_for_file(pool.get_ref(), file_id).await?;
 
     let references = sqlx::query_as::<_, FileReference>(
         "SELECT * FROM file_references WHERE file_id = $1 ORDER BY created_at DESC",

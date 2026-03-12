@@ -28,6 +28,19 @@ async fn create_storage(
     config: web::Data<AppConfig>,
     body: web::Json<CreateStorage>,
 ) -> Result<HttpResponse, AppError> {
+    // Validate backend configuration before persisting to DB
+    // This prevents invalid storage records from accumulating
+    if body.enabled.unwrap_or(true) {
+        create_backend(&body.storage_type, &body.config, &config.storage.hmac_secret)
+            .await
+            .map_err(|e| {
+                AppError::BadRequest(format!(
+                    "Invalid storage backend configuration: {}",
+                    e
+                ))
+            })?;
+    }
+
     let storage = Storage::create(pool.get_ref(), &body).await?;
 
     // Register the backend in the registry so it's immediately usable

@@ -421,6 +421,7 @@ mod tests {
             status: "in_progress".to_string(),
             retries: 2,
             error_msg: Some("timeout".to_string()),
+            retry_after: None,
             created_at: now,
             updated_at: now,
         };

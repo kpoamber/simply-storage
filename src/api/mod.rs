@@ -257,7 +257,8 @@ mod tests {
         assert!(json["config"]["server"]["port"].is_number());
         assert!(json["config"]["database"]["url"].is_string());
         assert!(json["config"]["database"]["max_connections"].is_number());
-        assert!(json["config"]["storage"]["hmac_secret"].is_string());
+        // hmac_secret has skip_serializing, so it must NOT appear in exported config
+        assert!(json["config"]["storage"]["hmac_secret"].is_null());
         assert!(json["config"]["storage"]["local_temp_path"].is_string());
         assert!(json["config"]["sync"]["num_workers"].is_number());
         assert!(json["config"]["sync"]["max_retries"].is_number());
@@ -274,6 +275,7 @@ mod tests {
             hot_to_cold_days: Some(7),
             created_at: now,
             updated_at: now,
+            deleted_at: None,
         };
         let storage = Storage {
             id: Uuid::new_v4(),
