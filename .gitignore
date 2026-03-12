@@ -1,3 +1,6 @@
 
 # ralphex progress logs
 .ralphex/progress/
+
+# Rust build artifacts
+/target/

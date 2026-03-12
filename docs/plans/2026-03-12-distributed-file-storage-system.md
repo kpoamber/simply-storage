@@ -38,12 +38,12 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 - Create: `src/config.rs`
 - Create: `src/error.rs`
 
-- [ ] Initialize Cargo project with dependencies: actix-web, actix-files, tokio, sqlx (postgres), serde, sha2, uuid, chrono, tracing, config, thiserror
-- [ ] Set up configuration loading (TOML file + env var overrides) for DB connection, server port, local temp storage path, HMAC secret, number of sync workers
-- [ ] Set up tracing/logging with tracing-subscriber
-- [ ] Create AppError type with proper HTTP status mapping via actix-web ResponseError
-- [ ] Create health check endpoint (`GET /health`) and basic Actix-Web server startup
-- [ ] Write tests: config loading, error conversion, health check endpoint
+- [x] Initialize Cargo project with dependencies: actix-web, actix-files, tokio, sqlx (postgres), serde, sha2, uuid, chrono, tracing, config, thiserror
+- [x] Set up configuration loading (TOML file + env var overrides) for DB connection, server port, local temp storage path, HMAC secret, number of sync workers
+- [x] Set up tracing/logging with tracing-subscriber
+- [x] Create AppError type with proper HTTP status mapping via actix-web ResponseError
+- [x] Create health check endpoint (`GET /health`) and basic Actix-Web server startup
+- [x] Write tests: config loading, error conversion, health check endpoint
 
 ### Task 2: Database schema and migrations
 
