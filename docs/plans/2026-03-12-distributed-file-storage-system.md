@@ -52,17 +52,17 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 - Create: `src/db/mod.rs`
 - Create: `src/db/models.rs`
 
-- [ ] Design and write migration for core tables:
+- [x] Design and write migration for core tables:
   - `projects` (id UUID PK, name VARCHAR, slug VARCHAR UNIQUE, hot_to_cold_days INT nullable, created_at, updated_at)
   - `storages` (id UUID PK, name VARCHAR, storage_type VARCHAR, config JSONB, is_hot BOOL DEFAULT true, project_id UUID nullable FK, enabled BOOL DEFAULT true, created_at, updated_at)
   - `files` (id UUID PK, hash_sha256 CHAR(64) UNIQUE, size BIGINT, content_type VARCHAR, created_at)
   - `file_references` (id UUID PK, file_id UUID FK, project_id UUID FK, original_name VARCHAR, created_at) UNIQUE(file_id, project_id, original_name)
   - `file_locations` (id UUID PK, file_id UUID FK, storage_id UUID FK, storage_path VARCHAR, status VARCHAR, synced_at TIMESTAMP, last_accessed_at TIMESTAMP, created_at) UNIQUE(file_id, storage_id)
   - `sync_tasks` (id UUID PK, file_id UUID FK, source_storage_id UUID FK, target_storage_id UUID FK, status VARCHAR DEFAULT 'pending', retries INT DEFAULT 0, error_msg TEXT, created_at, updated_at)
-- [ ] Configure Citus distribution: shard `files` and `file_locations` by file_id, `file_references` by project_id
-- [ ] Create sqlx model structs with FromRow and basic CRUD query functions
-- [ ] Set up PgPool connection pool in application state
-- [ ] Write tests: migration applies, CRUD operations, unique constraints enforced
+- [x] Configure Citus distribution: shard `files` and `file_locations` by file_id, `file_references` by project_id
+- [x] Create sqlx model structs with FromRow and basic CRUD query functions
+- [x] Set up PgPool connection pool in application state
+- [x] Write tests: migration applies, CRUD operations, unique constraints enforced
 
 ### Task 3: Storage abstraction trait and local disk backend
 
