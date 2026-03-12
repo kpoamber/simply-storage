@@ -90,16 +90,16 @@ High-performance distributed file storage web service in Rust (Actix-Web) with P
 - Create: `src/services/mod.rs`
 - Create: `src/services/file_service.rs`
 
-- [ ] Implement file upload flow:
+- [x] Implement file upload flow:
   1. Accept bytes, compute SHA-256 hash and determine content_type
   2. Check if hash exists in `files` table (deduplication)
   3. If new file: store to primary storage via backend, insert `files` record
   4. Create `file_references` row linking file to project with original filename
   5. Determine target storages (project-specific + shared), create `file_locations` for primary, create `sync_tasks` for remaining
   6. Return success immediately after primary storage write
-- [ ] Implement file download: look up file -> find best available `file_location` (prefer hot) -> stream from storage backend -> update `last_accessed_at`
-- [ ] Handle concurrent uploads of same file via DB unique constraint + retry/upsert logic
-- [ ] Write tests: upload new file, upload duplicate (same hash returns existing), download, concurrent upload handling
+- [x] Implement file download: look up file -> find best available `file_location` (prefer hot) -> stream from storage backend -> update `last_accessed_at`
+- [x] Handle concurrent uploads of same file via DB unique constraint + retry/upsert logic
+- [x] Write tests: upload new file, upload duplicate (same hash returns existing), download, concurrent upload handling
 
 ### Task 5: REST API endpoints
 

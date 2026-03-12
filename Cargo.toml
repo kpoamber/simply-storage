@@ -28,3 +28,4 @@ async-trait = "0.1"
 actix-web = { version = "4", features = ["macros"] }
 actix-rt = "2"
 tempfile = "3"
+futures = "0.3"
