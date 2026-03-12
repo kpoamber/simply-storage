@@ -245,8 +245,9 @@ impl Storage {
         .bind(project_id)
         .bind(enabled)
         .bind(id)
-        .fetch_one(pool)
-        .await?;
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Storage {} not found", id)))?;
 
         Ok(row)
     }
@@ -463,17 +464,32 @@ pub struct CreateFileLocation {
 
 impl FileLocation {
     pub async fn create(pool: &PgPool, input: &CreateFileLocation) -> AppResult<FileLocation> {
-        let row = sqlx::query_as::<_, FileLocation>(
-            r#"INSERT INTO file_locations (file_id, storage_id, storage_path, status)
-               VALUES ($1, $2, $3, $4)
-               RETURNING *"#,
-        )
-        .bind(input.file_id)
-        .bind(input.storage_id)
-        .bind(&input.storage_path)
-        .bind(&input.status)
-        .fetch_one(pool)
-        .await?;
+        // Set synced_at = NOW() when the initial status is 'synced'
+        let row = if input.status == "synced" {
+            sqlx::query_as::<_, FileLocation>(
+                r#"INSERT INTO file_locations (file_id, storage_id, storage_path, status, synced_at)
+                   VALUES ($1, $2, $3, $4, NOW())
+                   RETURNING *"#,
+            )
+            .bind(input.file_id)
+            .bind(input.storage_id)
+            .bind(&input.storage_path)
+            .bind(&input.status)
+            .fetch_one(pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, FileLocation>(
+                r#"INSERT INTO file_locations (file_id, storage_id, storage_path, status)
+                   VALUES ($1, $2, $3, $4)
+                   RETURNING *"#,
+            )
+            .bind(input.file_id)
+            .bind(input.storage_id)
+            .bind(&input.storage_path)
+            .bind(&input.status)
+            .fetch_one(pool)
+            .await?
+        };
 
         Ok(row)
     }

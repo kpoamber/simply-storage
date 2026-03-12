@@ -30,6 +30,11 @@ async fn spa_fallback() -> actix_web::Result<NamedFile> {
 /// Configure API routes for the application (no static file serving).
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.route("/health", web::get().to(health_check));
+    // Local storage temp URL download endpoint (outside /api scope)
+    cfg.route(
+        "/download/local",
+        web::get().to(api::files::download_local_temp),
+    );
     api::configure_api_routes(cfg);
 }
 

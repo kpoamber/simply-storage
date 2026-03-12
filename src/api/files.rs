@@ -2,15 +2,23 @@ use actix_multipart::Multipart;
 use actix_web::{web, HttpResponse};
 use bytes::BytesMut;
 use futures::TryStreamExt;
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use sqlx::PgPool;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
+use crate::config::AppConfig;
 use crate::db::models::{File, FileLocation, FileReference};
 use crate::error::AppError;
 use crate::services::{FileService, TierService};
+use crate::storage::StorageRegistry;
 
 use super::PaginationParams;
+
+type HmacSha256 = Hmac<Sha256>;
 
 // ─── Request/response types ─────────────────────────────────────────────────────
 
@@ -166,6 +174,85 @@ async fn restore_file(
     let file_id = path.into_inner();
     let task = tier_service.restore_file(file_id).await?;
     Ok(HttpResponse::Accepted().json(task))
+}
+
+// ─── Local temp URL download ─────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct LocalTempDownloadQuery {
+    pub path: String,
+    pub expires: u64,
+    pub sig: String,
+}
+
+/// GET /download/local - Serve files via HMAC-signed temporary URLs for local storage.
+pub async fn download_local_temp(
+    pool: web::Data<PgPool>,
+    registry: web::Data<Arc<StorageRegistry>>,
+    config: web::Data<AppConfig>,
+    query: web::Query<LocalTempDownloadQuery>,
+) -> Result<HttpResponse, AppError> {
+    // Check expiration
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    if now > query.expires {
+        return Err(AppError::Unauthorized(
+            "Download link has expired".to_string(),
+        ));
+    }
+
+    // Verify HMAC signature
+    let message = format!("{}:{}", query.path, query.expires);
+    let mut mac = HmacSha256::new_from_slice(config.storage.hmac_secret.as_bytes())
+        .expect("HMAC accepts any key");
+    mac.update(message.as_bytes());
+    let expected = hex::encode(mac.finalize().into_bytes());
+
+    if !constant_time_eq(expected.as_bytes(), query.sig.as_bytes()) {
+        return Err(AppError::Unauthorized(
+            "Invalid download link signature".to_string(),
+        ));
+    }
+
+    // Find a synced file location matching this storage_path
+    let location = sqlx::query_as::<_, FileLocation>(
+        r#"SELECT fl.* FROM file_locations fl
+           JOIN storages s ON s.id = fl.storage_id AND s.enabled = TRUE
+           WHERE fl.storage_path = $1 AND fl.status = 'synced'
+           LIMIT 1"#,
+    )
+    .bind(&query.path)
+    .fetch_optional(pool.get_ref())
+    .await?
+    .ok_or_else(|| AppError::NotFound("File not found".to_string()))?;
+
+    // Download from the storage backend
+    let backend = registry.get(&location.storage_id).await?;
+    let data = backend.download(&query.path).await?;
+
+    // Get content type from the file record
+    let file = File::find_by_id(pool.get_ref(), location.file_id).await?;
+
+    // Update last_accessed_at
+    let _ = FileLocation::touch_accessed(pool.get_ref(), location.id).await;
+
+    Ok(HttpResponse::Ok()
+        .content_type(file.content_type.as_str())
+        .body(data))
+}
+
+/// Constant-time comparison to prevent timing attacks on HMAC signatures.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 // ─── Route configuration ────────────────────────────────────────────────────────
