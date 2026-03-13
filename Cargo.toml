@@ -38,6 +38,9 @@ pavao = { version = "0.2", optional = true }
 tokio-util = "0.7"
 flate2 = "1"
 tar = "0.4"
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
+argon2 = "0.5"
+rand = "0.8"
 
 [features]
 default = []

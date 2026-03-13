@@ -43,17 +43,17 @@
 - Modify: `src/services/mod.rs`
 - Modify: `Cargo.toml`
 
-- [ ] Добавить зависимости в Cargo.toml: `jsonwebtoken = "9"`, `argon2 = "0.5"`
-- [ ] Добавить AuthConfig в `src/config.rs`: jwt_secret (String), access_token_ttl_secs (u64, default 900), refresh_token_ttl_secs (u64, default 604800)
-- [ ] Создать `src/services/auth_service.rs` с AuthService:
+- [x] Добавить зависимости в Cargo.toml: `jsonwebtoken = "9"`, `argon2 = "0.5"`
+- [x] Добавить AuthConfig в `src/config.rs`: jwt_secret (String), access_token_ttl_secs (u64, default 900), refresh_token_ttl_secs (u64, default 604800)
+- [x] Создать `src/services/auth_service.rs` с AuthService:
   - `hash_password(password) -> String` - хеширование через argon2
   - `verify_password(password, hash) -> bool` - проверка пароля
   - `generate_access_token(user_id, role) -> String` - JWT access token
   - `generate_refresh_token() -> String` - случайный refresh token
   - `validate_access_token(token) -> Claims` - валидация и декодирование JWT
-- [ ] Claims struct: sub (user_id), role (String), exp (usize)
-- [ ] Написать тесты: hash/verify password, generate/validate token, expired token rejection
-- [ ] run project test suite - must pass before task 3
+- [x] Claims struct: sub (user_id), role (String), exp (usize)
+- [x] Написать тесты: hash/verify password, generate/validate token, expired token rejection
+- [x] run project test suite - must pass before task 3
 
 ### Task 3: Auth middleware (extractor)
 

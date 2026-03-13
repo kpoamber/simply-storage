@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn test_restore_requires_cold_location() {
         // Restore accepts files with "synced" or "archived" status on cold storage
-        let valid_statuses = vec!["synced", "archived"];
+        let valid_statuses = ["synced", "archived"];
         assert!(valid_statuses.contains(&"synced"));
         assert!(valid_statuses.contains(&"archived"));
         assert!(!valid_statuses.contains(&"restoring"));

@@ -2599,6 +2599,7 @@ dependencies = [
  "actix-multipart",
  "actix-rt",
  "actix-web",
+ "argon2",
  "async-trait",
  "aws-config",
  "aws-credential-types",
@@ -2611,7 +2612,9 @@ dependencies = [
  "futures",
  "hex",
  "hmac",
+ "jsonwebtoken",
  "pavao",
+ "rand 0.8.5",
  "reqwest",
  "rsa 0.9.10",
  "russh",
@@ -2724,6 +2727,27 @@ dependencies = [
  "pest",
  "pest_derive",
  "serde",
+]
+
+[[package]]
+name = "jsonwebtoken"
+version = "10.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0529410abe238729a60b108898784df8984c87f6054c9c4fcacc47e4803c1ce1"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "getrandom 0.2.17",
+ "hmac",
+ "js-sys",
+ "p256 0.13.2",
+ "p384",
+ "rand 0.8.5",
+ "rsa 0.9.10",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "signature 2.2.0",
 ]
 
 [[package]]

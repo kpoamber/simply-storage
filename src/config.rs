@@ -10,6 +10,8 @@ pub struct AppConfig {
     pub storage: StorageConfig,
     #[serde(default = "default_sync")]
     pub sync: SyncConfig,
+    #[serde(default = "default_auth")]
+    pub auth: AuthConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -34,6 +36,16 @@ pub struct StorageConfig {
     pub local_temp_path: String,
     #[serde(default = "default_hmac_secret", skip_serializing)]
     pub hmac_secret: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AuthConfig {
+    #[serde(default = "default_jwt_secret", skip_serializing)]
+    pub jwt_secret: String,
+    #[serde(default = "default_access_token_ttl_secs")]
+    pub access_token_ttl_secs: u64,
+    #[serde(default = "default_refresh_token_ttl_secs")]
+    pub refresh_token_ttl_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -76,6 +88,26 @@ fn default_sync() -> SyncConfig {
         poll_interval_secs: default_poll_interval_secs(),
         tier_scan_interval_secs: default_tier_scan_interval_secs(),
     }
+}
+
+fn default_auth() -> AuthConfig {
+    AuthConfig {
+        jwt_secret: default_jwt_secret(),
+        access_token_ttl_secs: default_access_token_ttl_secs(),
+        refresh_token_ttl_secs: default_refresh_token_ttl_secs(),
+    }
+}
+
+fn default_jwt_secret() -> String {
+    "change-me-jwt-secret-in-production".to_string()
+}
+
+fn default_access_token_ttl_secs() -> u64 {
+    900
+}
+
+fn default_refresh_token_ttl_secs() -> u64 {
+    604800
 }
 
 fn default_host() -> String {
