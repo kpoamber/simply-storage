@@ -197,5 +197,5 @@ Add support for user-defined metadata (JSON key/value) on file uploads, with fas
 
 ### Task 10: Update documentation
 
-- [ ] Update CLAUDE.md: add file_metadata table/column, search endpoint, bulk delete endpoint to project structure
-- [ ] Move this plan to `docs/plans/completed/`
+- [x] Update CLAUDE.md: add file_metadata table/column, search endpoint, bulk delete endpoint to project structure
+- [x] Move this plan to `docs/plans/completed/`
