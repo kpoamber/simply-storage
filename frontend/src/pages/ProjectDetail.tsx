@@ -63,6 +63,15 @@ export default function ProjectDetail() {
         {stats.file_count} files &middot; {formatBytes(stats.total_size)}
       </p>
 
+      <div className="mt-3 flex gap-3">
+        <Link
+          to={`/projects/${id}/search`}
+          className="flex items-center gap-1 rounded bg-gray-100 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-200"
+        >
+          <Search className="h-4 w-4" /> Search Files
+        </Link>
+      </div>
+
       {canWrite && <ProjectSettingsForm project={project} />}
 
       {canWrite && <ProjectStoragesSection projectId={id!} />}

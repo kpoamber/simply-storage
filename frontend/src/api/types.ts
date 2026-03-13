@@ -157,6 +157,57 @@ export interface AuthTokenResponse {
   refresh_token: string;
 }
 
+// Search types
+export interface MetadataFilterLeaf {
+  key: string;
+  value: string;
+}
+
+export interface MetadataFilterAnd {
+  and: MetadataFilterNode[];
+}
+
+export interface MetadataFilterOr {
+  or: MetadataFilterNode[];
+}
+
+export interface MetadataFilterNot {
+  not: MetadataFilterNode;
+}
+
+export type MetadataFilterNode =
+  | MetadataFilterLeaf
+  | MetadataFilterAnd
+  | MetadataFilterOr
+  | MetadataFilterNot;
+
+export interface SearchRequest {
+  filters?: MetadataFilterNode;
+  page?: number;
+  per_page?: number;
+}
+
+export interface SearchResult {
+  results: FileReference[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface TimelineEntry {
+  date: string;
+  count: number;
+  size: number;
+}
+
+export interface SearchSummary {
+  total_files: number;
+  total_size: number;
+  earliest_upload: string | null;
+  latest_upload: string | null;
+  timeline: TimelineEntry[];
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes <= 0) return '0 B';
   const k = 1024;

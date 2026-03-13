@@ -148,22 +148,22 @@ Add support for user-defined metadata (JSON key/value) on file uploads, with fas
 - Modify: `frontend/src/App.tsx`
 - Modify: `frontend/src/components/Sidebar.tsx`
 
-- [ ] Install recharts: `npm install recharts`
-- [ ] Add search and summary API functions to client.ts
-- [ ] Add TypeScript types for search request/response, summary response
-- [ ] Create ProjectSearch page with:
+- [x] Install recharts: `npm install recharts`
+- [x] Add search and summary API functions to client.ts
+- [x] Add TypeScript types for search request/response, summary response
+- [x] Create ProjectSearch page with:
   - Query builder UI: rows of (key, value) filter conditions, each with AND/OR/NOT toggle; support adding/removing conditions and grouping
   - Search button that calls search API
   - Results table: file name, size, metadata tags, created_at, sync status (reuse existing file table pattern)
   - Pagination controls
-- [ ] Add summary section above results:
+- [x] Add summary section above results:
   - Total files found, total size (human-readable)
   - Line chart (recharts): file count over time (x=date, y=count)
   - Area chart (recharts): cumulative size over time (x=date, y=bytes)
-- [ ] Add route `/projects/:id/search` in App.tsx
-- [ ] Add "Search" link in project context navigation (ProjectDetail page tabs or sidebar sub-items)
-- [ ] Write tests: query builder renders, add/remove filters works, search triggers API call, results render, charts render with mock data
-- [ ] Run frontend test suite - must pass before task 8
+- [x] Add route `/projects/:id/search` in App.tsx
+- [x] Add "Search" link in project context navigation (ProjectDetail page tabs or sidebar sub-items)
+- [x] Write tests: query builder renders, add/remove filters works, search triggers API call, results render, charts render with mock data
+- [x] Run frontend test suite - must pass before task 8
 
 ### Task 8: Frontend - bulk deletion UI
 

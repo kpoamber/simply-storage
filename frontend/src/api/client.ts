@@ -114,4 +114,18 @@ export async function uploadFile(
   });
 }
 
+export async function searchFiles(projectId: string, request: import('./types').SearchRequest) {
+  return apiClient.post<import('./types').SearchResult>(
+    `/projects/${projectId}/files/search`,
+    request,
+  );
+}
+
+export async function searchSummary(projectId: string, filters?: import('./types').MetadataFilterNode) {
+  return apiClient.post<import('./types').SearchSummary>(
+    `/projects/${projectId}/files/search/summary`,
+    filters ? { filters } : {},
+  );
+}
+
 export default apiClient;
