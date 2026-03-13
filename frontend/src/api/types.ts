@@ -113,6 +113,33 @@ export interface ExportStatus {
   error: string | null;
 }
 
+export interface AuthUser {
+  id: string;
+  username: string;
+  role: 'admin' | 'user';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface RegisterRequest {
+  username: string;
+  password: string;
+}
+
+export interface AuthTokenResponse {
+  access_token: string;
+  refresh_token: string;
+}
+
+export interface RegisterResponse extends AuthTokenResponse {
+  user: AuthUser;
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes <= 0) return '0 B';
   const k = 1024;

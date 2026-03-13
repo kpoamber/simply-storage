@@ -123,16 +123,16 @@
 - Modify: `frontend/src/components/Layout.tsx`
 - Modify: `frontend/src/components/Sidebar.tsx`
 
-- [ ] Добавить типы AuthUser, LoginRequest, LoginResponse, RegisterRequest в types.ts
-- [ ] Создать AuthContext с:
+- [x] Добавить типы AuthUser, LoginRequest, LoginResponse, RegisterRequest в types.ts
+- [x] Создать AuthContext с:
   - Хранение access_token в памяти, refresh_token в localStorage
   - Функции login, register, logout, refreshToken
   - Axios interceptor: добавлять Authorization header, автоматический refresh при 401
-- [ ] Создать страницу Login (login + register форма)
-- [ ] Обновить App.tsx: добавить AuthProvider, ProtectedRoute компонент, route /login
-- [ ] Обновить Layout/Sidebar: показывать username и кнопку logout, скрывать admin-only пункты меню для роли user
-- [ ] Написать тесты: Login page рендеринг, AuthContext login/logout, ProtectedRoute redirect
-- [ ] run project test suite - must pass before task 7
+- [x] Создать страницу Login (login + register форма)
+- [x] Обновить App.tsx: добавить AuthProvider, ProtectedRoute компонент, route /login
+- [x] Обновить Layout/Sidebar: показывать username и кнопку logout, скрывать admin-only пункты меню для роли user
+- [x] Написать тесты: Login page рендеринг, AuthContext login/logout, ProtectedRoute redirect
+- [x] run project test suite - must pass before task 7
 
 ### Task 7: Проверка acceptance criteria
 

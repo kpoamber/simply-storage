@@ -7,9 +7,88 @@ const apiClient = axios.create({
   },
 });
 
+let getAccessToken: (() => string | null) | null = null;
+let onRefreshToken: (() => Promise<string | null>) | null = null;
+
+export function setAuthInterceptors(
+  tokenGetter: () => string | null,
+  refresher: () => Promise<string | null>,
+) {
+  getAccessToken = tokenGetter;
+  onRefreshToken = refresher;
+}
+
+// Request interceptor: add Authorization header
+apiClient.interceptors.request.use((config) => {
+  const token = getAccessToken?.();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Response interceptor: handle errors and 401 refresh
+let isRefreshing = false;
+let failedQueue: Array<{
+  resolve: (token: string | null) => void;
+  reject: (error: unknown) => void;
+}> = [];
+
+function processQueue(error: unknown, token: string | null) {
+  failedQueue.forEach(({ resolve, reject }) => {
+    if (error) {
+      reject(error);
+    } else {
+      resolve(token);
+    }
+  });
+  failedQueue = [];
+}
+
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const originalRequest = error.config;
+
+    if (
+      error.response?.status === 401 &&
+      onRefreshToken &&
+      !originalRequest._retry &&
+      !originalRequest.url?.includes('/auth/')
+    ) {
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({
+            resolve: (token) => {
+              originalRequest.headers.Authorization = `Bearer ${token}`;
+              resolve(apiClient(originalRequest));
+            },
+            reject,
+          });
+        });
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      try {
+        const newToken = await onRefreshToken();
+        if (newToken) {
+          processQueue(null, newToken);
+          originalRequest.headers.Authorization = `Bearer ${newToken}`;
+          return apiClient(originalRequest);
+        } else {
+          processQueue(new Error('Refresh failed'), null);
+          return Promise.reject(error);
+        }
+      } catch (refreshError) {
+        processQueue(refreshError, null);
+        return Promise.reject(refreshError);
+      } finally {
+        isRefreshing = false;
+      }
+    }
+
     if (error.response) {
       const message = error.response.data?.error || error.response.statusText;
       console.error(`API error ${error.response.status}: ${message}`);

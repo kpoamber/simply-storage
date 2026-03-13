@@ -6,16 +6,24 @@ import {
   RefreshCw,
   Server,
 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 const navItems = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/projects', label: 'Projects', icon: FolderOpen },
-  { to: '/storages', label: 'Storages', icon: HardDrive },
-  { to: '/sync-tasks', label: 'Sync Tasks', icon: RefreshCw },
-  { to: '/nodes', label: 'Nodes', icon: Server },
+  { to: '/', label: 'Dashboard', icon: LayoutDashboard, adminOnly: false },
+  { to: '/projects', label: 'Projects', icon: FolderOpen, adminOnly: false },
+  { to: '/storages', label: 'Storages', icon: HardDrive, adminOnly: true },
+  { to: '/sync-tasks', label: 'Sync Tasks', icon: RefreshCw, adminOnly: true },
+  { to: '/nodes', label: 'Nodes', icon: Server, adminOnly: true },
 ];
 
 export default function Sidebar() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
+  const visibleItems = navItems.filter(
+    (item) => !item.adminOnly || isAdmin,
+  );
+
   return (
     <aside className="w-64 bg-gray-900 text-white flex flex-col min-h-screen">
       <div className="p-4 border-b border-gray-700">
@@ -23,7 +31,7 @@ export default function Sidebar() {
         <p className="text-xs text-gray-400 mt-1">Admin Panel</p>
       </div>
       <nav className="flex-1 p-3 space-y-1">
-        {navItems.map(({ to, label, icon: Icon }) => (
+        {visibleItems.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}

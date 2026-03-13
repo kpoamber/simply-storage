@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import apiClient from './client';
+import apiClient, { setAuthInterceptors } from './client';
 
 describe('apiClient', () => {
   it('has correct base URL', () => {
@@ -18,5 +18,16 @@ describe('apiClient', () => {
       (apiClient.interceptors.response as unknown as { handlers: unknown[] })
         .handlers.length,
     ).toBeGreaterThan(0);
+  });
+
+  it('has request interceptors configured', () => {
+    expect(
+      (apiClient.interceptors.request as unknown as { handlers: unknown[] })
+        .handlers.length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('exports setAuthInterceptors function', () => {
+    expect(typeof setAuthInterceptors).toBe('function');
   });
 });
