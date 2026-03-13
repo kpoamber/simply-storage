@@ -1,11 +1,11 @@
 meta {
-  name: Sync All Files
+  name: List Users
   type: http
-  seq: 1
+  seq: 6
 }
 
-post {
-  url: {{baseUrl}}/api/storages/{{storageId}}/sync-all
+get {
+  url: {{baseUrl}}/api/auth/users
   body: none
   auth: bearer
 }

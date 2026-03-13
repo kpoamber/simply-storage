@@ -3,10 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Login() {
-  const { login, register } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
 
-  const [isRegister, setIsRegister] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -18,17 +17,12 @@ export default function Login() {
     setLoading(true);
 
     try {
-      if (isRegister) {
-        await register(username, password);
-      } else {
-        await login(username, password);
-      }
+      await login(username, password);
       navigate('/');
     } catch (err: unknown) {
       const axiosError = err as { response?: { data?: { error?: string } } };
       setError(
-        axiosError.response?.data?.error ||
-          (isRegister ? 'Registration failed' : 'Login failed'),
+        axiosError.response?.data?.error || 'Login failed',
       );
     } finally {
       setLoading(false);
@@ -43,7 +37,7 @@ export default function Login() {
             Innovare Storage
           </h1>
           <p className="text-sm text-gray-500 text-center mb-6">
-            {isRegister ? 'Create a new account' : 'Sign in to your account'}
+            Sign in to your account
           </p>
 
           {error && (
@@ -95,28 +89,9 @@ export default function Login() {
               disabled={loading}
               className="w-full py-2 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {loading
-                ? 'Please wait...'
-                : isRegister
-                  ? 'Register'
-                  : 'Sign In'}
+              {loading ? 'Please wait...' : 'Sign In'}
             </button>
           </form>
-
-          <div className="mt-4 text-center">
-            <button
-              type="button"
-              onClick={() => {
-                setIsRegister(!isRegister);
-                setError('');
-              }}
-              className="text-sm text-blue-600 hover:text-blue-800"
-            >
-              {isRegister
-                ? 'Already have an account? Sign in'
-                : "Don't have an account? Register"}
-            </button>
-          </div>
         </div>
       </div>
     </div>

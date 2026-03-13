@@ -1181,6 +1181,26 @@ impl User {
         Ok(row)
     }
 
+    pub async fn list(pool: &PgPool) -> AppResult<Vec<User>> {
+        let rows = sqlx::query_as::<_, User>(
+            "SELECT * FROM users ORDER BY created_at ASC",
+        )
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn delete(pool: &PgPool, id: Uuid) -> AppResult<()> {
+        let result = sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!("User {} not found", id)));
+        }
+        Ok(())
+    }
+
     pub async fn count(pool: &PgPool) -> AppResult<i64> {
         let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
             .fetch_one(pool)

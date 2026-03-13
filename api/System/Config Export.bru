@@ -7,5 +7,9 @@ meta {
 get {
   url: {{baseUrl}}/api/system/config-export
   body: none
-  auth: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
 }

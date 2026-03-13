@@ -1,6 +1,6 @@
 use actix_web::{App, HttpServer, web};
 use innovare_storage::config::AppConfig;
-use innovare_storage::db::models::{Node, RefreshToken};
+use innovare_storage::db::models::{CreateUser, Node, RefreshToken, User};
 use innovare_storage::services::{AuthService, BulkService, FileService, TierService};
 use innovare_storage::storage::StorageRegistry;
 use innovare_storage::workers::{SyncWorker, TierWorker};
@@ -54,6 +54,29 @@ async fn main() -> std::io::Result<()> {
     }
 
     let auth_service = AuthService::new(&config.auth);
+
+    // Seed default admin user if no users exist
+    let user_count = User::count(&pool).await.expect("Failed to count users");
+    if user_count == 0 {
+        let password_hash = auth_service
+            .hash_password(&config.auth.default_admin_password)
+            .expect("Failed to hash default admin password");
+        User::create(
+            &pool,
+            &CreateUser {
+                username: config.auth.default_admin_username.clone(),
+                password_hash,
+                role: "admin".to_string(),
+            },
+        )
+        .await
+        .expect("Failed to create default admin user");
+        tracing::info!(
+            username = %config.auth.default_admin_username,
+            "Default admin user created. Change the password after first login!"
+        );
+    }
+
     let file_service = FileService::new(
         pool.clone(),
         registry.clone(),

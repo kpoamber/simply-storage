@@ -46,6 +46,10 @@ pub struct AuthConfig {
     pub access_token_ttl_secs: u64,
     #[serde(default = "default_refresh_token_ttl_secs")]
     pub refresh_token_ttl_secs: u64,
+    #[serde(default = "default_admin_username")]
+    pub default_admin_username: String,
+    #[serde(default = "default_admin_password", skip_serializing)]
+    pub default_admin_password: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -95,6 +99,8 @@ fn default_auth() -> AuthConfig {
         jwt_secret: default_jwt_secret(),
         access_token_ttl_secs: default_access_token_ttl_secs(),
         refresh_token_ttl_secs: default_refresh_token_ttl_secs(),
+        default_admin_username: default_admin_username(),
+        default_admin_password: default_admin_password(),
     }
 }
 
@@ -108,6 +114,14 @@ fn default_access_token_ttl_secs() -> u64 {
 
 fn default_refresh_token_ttl_secs() -> u64 {
     604800
+}
+
+fn default_admin_username() -> String {
+    "admin".to_string()
+}
+
+fn default_admin_password() -> String {
+    "Innovare2026!".to_string()
 }
 
 fn default_host() -> String {

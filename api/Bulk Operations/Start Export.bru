@@ -7,7 +7,11 @@ meta {
 post {
   url: {{baseUrl}}/api/storages/{{storageId}}/export
   body: none
-  auth: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
 }
 
 script:post-response {

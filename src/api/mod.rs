@@ -322,6 +322,8 @@ mod tests {
             jwt_secret: "test-secret-for-system-endpoints".to_string(),
             access_token_ttl_secs: 900,
             refresh_token_ttl_secs: 604800,
+            default_admin_username: "admin".to_string(),
+            default_admin_password: "admin123".to_string(),
         })
     }
 

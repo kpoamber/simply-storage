@@ -54,7 +54,7 @@ apiClient.interceptors.response.use(
       error.response?.status === 401 &&
       onRefreshToken &&
       !originalRequest._retry &&
-      !originalRequest.url?.match(/\/auth\/(login|register|refresh|logout)$/)
+      !originalRequest.url?.match(/\/auth\/(login|refresh|logout)$/)
     ) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {

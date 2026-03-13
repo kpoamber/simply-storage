@@ -45,7 +45,7 @@ describe('Login', () => {
     localStorage.clear();
   });
 
-  it('renders login form by default', async () => {
+  it('renders login form', async () => {
     renderLogin();
     await waitFor(() => {
       expect(screen.getByText('Sign in to your account')).toBeInTheDocument();
@@ -55,26 +55,13 @@ describe('Login', () => {
     expect(screen.getByRole('button', { name: 'Sign In' })).toBeInTheDocument();
   });
 
-  it('switches to register form', async () => {
+  it('does not show registration toggle', async () => {
     renderLogin();
     await waitFor(() => {
       expect(screen.getByText('Sign in to your account')).toBeInTheDocument();
     });
-
-    fireEvent.click(screen.getByText("Don't have an account? Register"));
-    expect(screen.getByText('Create a new account')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Register' })).toBeInTheDocument();
-  });
-
-  it('switches back to login form', async () => {
-    renderLogin();
-    await waitFor(() => {
-      expect(screen.getByText('Sign in to your account')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByText("Don't have an account? Register"));
-    fireEvent.click(screen.getByText('Already have an account? Sign in'));
-    expect(screen.getByText('Sign in to your account')).toBeInTheDocument();
+    expect(screen.queryByText(/Register/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Create a new account/)).not.toBeInTheDocument();
   });
 
   it('submits login form', async () => {
@@ -128,39 +115,6 @@ describe('Login', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Invalid username or password')).toBeInTheDocument();
-    });
-  });
-
-  it('submits register form', async () => {
-    mockPost.mockImplementation((url: string) => {
-      if (url === '/auth/register') {
-        return Promise.resolve({
-          data: {
-            user: { id: '1', username: 'newuser', role: 'admin', created_at: '', updated_at: '' },
-            access_token: 'tok',
-            refresh_token: 'ref',
-          },
-        });
-      }
-      return Promise.reject(new Error('Unknown'));
-    });
-
-    renderLogin();
-    await waitFor(() => {
-      expect(screen.getByText('Sign in to your account')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByText("Don't have an account? Register"));
-
-    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'newuser' } });
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Register' }));
-
-    await waitFor(() => {
-      expect(mockPost).toHaveBeenCalledWith('/auth/register', {
-        username: 'newuser',
-        password: 'password123',
-      });
     });
   });
 });

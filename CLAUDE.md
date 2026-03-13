@@ -29,7 +29,7 @@ docker-compose up --build --scale app=3  # Scale app instances
 
 - `src/api/` - HTTP route handlers, each module registers routes via `web::scope`
 - `src/api/auth.rs` - AuthenticatedUser extractor (JWT auth middleware via FromRequest)
-- `src/api/auth_routes.rs` - Auth API endpoints (register, login, refresh, me, logout)
+- `src/api/auth_routes.rs` - Auth API endpoints (login, refresh, me, logout, admin user management)
 - `src/db/models.rs` - Database models with sqlx FromRow, all CRUD functions
 - `src/services/` - Business logic layer (FileService, BulkService, TierService, AuthService)
 - `src/services/auth_service.rs` - AuthService (JWT token generation/validation, argon2 password hashing)
@@ -39,10 +39,10 @@ docker-compose up --build --scale app=3  # Scale app instances
 - `src/config.rs` - AppConfig loaded from config/default.toml + APP_ env vars
 - `src/error.rs` - AppError enum with thiserror, implements actix-web ResponseError
 - `src/lib.rs` - AppState struct, app configuration, health check endpoint
-- `src/main.rs` - Server startup, migration, worker spawning, graceful shutdown
+- `src/main.rs` - Server startup, migration, admin seeding, worker spawning, graceful shutdown
 - `frontend/src/` - React admin dashboard
 - `frontend/src/contexts/AuthContext.tsx` - Auth context (token storage, login/logout, auto-refresh)
-- `frontend/src/pages/Login.tsx` - Login and registration page
+- `frontend/src/pages/Login.tsx` - Login page (no public registration)
 - `migrations/` - SQL migrations (run automatically on startup)
 
 ## Code Patterns
@@ -74,6 +74,8 @@ Auth-related:
 - `APP_AUTH__JWT_SECRET` - JWT signing secret (default: `change-me-jwt-secret-in-production`)
 - `APP_AUTH__ACCESS_TOKEN_TTL_SECS` - Access token TTL in seconds (default: 900 = 15 min)
 - `APP_AUTH__REFRESH_TOKEN_TTL_SECS` - Refresh token TTL in seconds (default: 604800 = 7 days)
+- `APP_AUTH__DEFAULT_ADMIN_USERNAME` - Default admin username (default: `admin`)
+- `APP_AUTH__DEFAULT_ADMIN_PASSWORD` - Default admin password (default: `Innovare2026!`)
 
 ## Optional Features
 

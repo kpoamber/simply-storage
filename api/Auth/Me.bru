@@ -1,11 +1,11 @@
 meta {
-  name: Download Export
+  name: Me
   type: http
   seq: 4
 }
 
 get {
-  url: {{baseUrl}}/api/storages/{{storageId}}/export/download?job_id={{exportJobId}}
+  url: {{baseUrl}}/api/auth/me
   body: none
   auth: bearer
 }
