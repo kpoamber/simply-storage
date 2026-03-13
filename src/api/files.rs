@@ -468,6 +468,7 @@ mod tests {
                 file_id,
                 project_id: uuid::Uuid::new_v4(),
                 original_name: "test.txt".to_string(),
+                metadata: serde_json::json!({}),
                 created_at: now,
             }],
         };

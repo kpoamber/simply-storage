@@ -395,6 +395,7 @@ pub struct FileReference {
     pub file_id: Uuid,
     pub project_id: Uuid,
     pub original_name: String,
+    pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
 }
 
@@ -403,18 +404,25 @@ pub struct CreateFileReference {
     pub file_id: Uuid,
     pub project_id: Uuid,
     pub original_name: String,
+    #[serde(default = "default_empty_object")]
+    pub metadata: serde_json::Value,
+}
+
+fn default_empty_object() -> serde_json::Value {
+    serde_json::json!({})
 }
 
 impl FileReference {
     pub async fn create(pool: &PgPool, input: &CreateFileReference) -> AppResult<FileReference> {
         let row = sqlx::query_as::<_, FileReference>(
-            r#"INSERT INTO file_references (file_id, project_id, original_name)
-               VALUES ($1, $2, $3)
+            r#"INSERT INTO file_references (file_id, project_id, original_name, metadata)
+               VALUES ($1, $2, $3, $4)
                RETURNING *"#,
         )
         .bind(input.file_id)
         .bind(input.project_id)
         .bind(&input.original_name)
+        .bind(&input.metadata)
         .fetch_one(pool)
         .await?;
 
@@ -508,6 +516,24 @@ impl FileReference {
             ));
         }
         Ok(())
+    }
+
+    pub async fn update_metadata(
+        pool: &PgPool,
+        id: Uuid,
+        metadata: &serde_json::Value,
+    ) -> AppResult<FileReference> {
+        let row = sqlx::query_as::<_, FileReference>(
+            r#"UPDATE file_references SET metadata = $1
+               WHERE id = $2
+               RETURNING *"#,
+        )
+        .bind(metadata)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+
+        row.ok_or_else(|| AppError::NotFound(format!("File reference {} not found", id)))
     }
 }
 
@@ -1644,11 +1670,72 @@ mod tests {
             file_id: Uuid::new_v4(),
             project_id: Uuid::new_v4(),
             original_name: "photo.jpg".to_string(),
+            metadata: serde_json::json!({"env": "prod"}),
             created_at: now,
         };
 
         let json = serde_json::to_value(&fref).unwrap();
         assert_eq!(json["original_name"], "photo.jpg");
+        assert_eq!(json["metadata"]["env"], "prod");
+    }
+
+    #[test]
+    fn test_file_reference_metadata_defaults_to_empty_object() {
+        let json = serde_json::json!({
+            "file_id": Uuid::new_v4(),
+            "project_id": Uuid::new_v4(),
+            "original_name": "test.txt"
+        });
+        let input: CreateFileReference = serde_json::from_value(json).unwrap();
+        assert_eq!(input.metadata, serde_json::json!({}));
+    }
+
+    #[test]
+    fn test_file_reference_metadata_with_values() {
+        let now = Utc::now();
+        let metadata = serde_json::json!({"env": "prod", "version": "1.0", "active": true, "priority": 5});
+        let fref = FileReference {
+            id: Uuid::new_v4(),
+            file_id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            original_name: "report.pdf".to_string(),
+            metadata: metadata.clone(),
+            created_at: now,
+        };
+
+        let json = serde_json::to_value(&fref).unwrap();
+        assert_eq!(json["metadata"]["env"], "prod");
+        assert_eq!(json["metadata"]["version"], "1.0");
+        assert_eq!(json["metadata"]["active"], true);
+        assert_eq!(json["metadata"]["priority"], 5);
+    }
+
+    #[test]
+    fn test_file_reference_empty_metadata_serialization() {
+        let now = Utc::now();
+        let fref = FileReference {
+            id: Uuid::new_v4(),
+            file_id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            original_name: "empty.txt".to_string(),
+            metadata: serde_json::json!({}),
+            created_at: now,
+        };
+
+        let json = serde_json::to_value(&fref).unwrap();
+        assert_eq!(json["metadata"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn test_create_file_reference_with_metadata() {
+        let metadata = serde_json::json!({"department": "engineering", "confidential": false});
+        let input = CreateFileReference {
+            file_id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            original_name: "doc.txt".to_string(),
+            metadata: metadata.clone(),
+        };
+        assert_eq!(input.metadata, metadata);
     }
 
     #[test]
@@ -2283,5 +2370,106 @@ mod tests {
         let table_names: Vec<&str> = tables.iter().map(|t| t.0.as_str()).collect();
         assert!(table_names.contains(&"user_projects"));
         assert!(table_names.contains(&"user_storages"));
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_file_reference_metadata_column() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        // Verify metadata column exists with correct default
+        let col: (String, String, String) = sqlx::query_as(
+            r#"SELECT column_name::text, data_type::text, column_default::text
+               FROM information_schema.columns
+               WHERE table_name = 'file_references' AND column_name = 'metadata'"#,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(col.0, "metadata");
+        assert_eq!(col.1, "jsonb");
+        assert!(col.2.contains("'{}'::jsonb"));
+
+        // Verify GIN index exists
+        let idx_exists: (bool,) = sqlx::query_as(
+            r#"SELECT EXISTS(
+                SELECT 1 FROM pg_indexes
+                WHERE tablename = 'file_references' AND indexname = 'idx_file_references_metadata'
+            )"#,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(idx_exists.0, "GIN index on metadata should exist");
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_file_reference_metadata_crud() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        // Create a project and file to reference
+        let project = Project::create(
+            &pool,
+            &CreateProject {
+                name: "Meta Test".to_string(),
+                slug: format!("meta-test-{}", Uuid::new_v4()),
+                hot_to_cold_days: None,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+        let file_input = CreateFile {
+            hash_sha256: format!("{:064x}", Uuid::new_v4().as_u128()),
+            size: 512,
+            content_type: "text/plain".to_string(),
+        };
+        let (file, _) = File::create_or_find(&pool, &file_input).await.unwrap();
+
+        // Create reference without metadata (defaults to {})
+        let create_ref = CreateFileReference {
+            file_id: file.id,
+            project_id: project.id,
+            original_name: "no-meta.txt".to_string(),
+            metadata: serde_json::json!({}),
+        };
+        let fref = FileReference::create(&pool, &create_ref).await.unwrap();
+        assert_eq!(fref.metadata, serde_json::json!({}));
+
+        // Create reference with metadata
+        let meta = serde_json::json!({"env": "staging", "version": "2.0"});
+        let create_ref2 = CreateFileReference {
+            file_id: file.id,
+            project_id: project.id,
+            original_name: "with-meta.txt".to_string(),
+            metadata: meta.clone(),
+        };
+        let fref2 = FileReference::create(&pool, &create_ref2).await.unwrap();
+        assert_eq!(fref2.metadata, meta);
+
+        // Update metadata
+        let new_meta = serde_json::json!({"env": "prod", "version": "3.0", "release": true});
+        let updated = FileReference::update_metadata(&pool, fref2.id, &new_meta)
+            .await
+            .unwrap();
+        assert_eq!(updated.metadata, new_meta);
+
+        // List for project should return metadata
+        let listed = FileReference::list_for_project(&pool, project.id, 10, 0)
+            .await
+            .unwrap();
+        assert!(listed.len() >= 2);
+        let found = listed.iter().find(|r| r.id == fref2.id).unwrap();
+        assert_eq!(found.metadata, new_meta);
+
+        // Find by file_id should return metadata
+        let by_file = FileReference::find_by_file_id(&pool, file.id).await.unwrap();
+        assert!(by_file.len() >= 2);
     }
 }

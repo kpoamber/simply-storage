@@ -117,6 +117,7 @@ impl FileService {
             file_id: file.id,
             project_id,
             original_name: original_name.to_string(),
+            metadata: serde_json::json!({}),
         };
         let file_reference = FileReference::create_or_find(&self.pool, &create_ref).await?;
 
@@ -401,6 +402,7 @@ mod tests {
                 file_id: Uuid::new_v4(),
                 project_id: Uuid::new_v4(),
                 original_name: "test.txt".to_string(),
+                metadata: serde_json::json!({}),
                 created_at: now,
             },
             is_duplicate: false,
