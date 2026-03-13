@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod bulk;
 pub mod files;
 pub mod projects;

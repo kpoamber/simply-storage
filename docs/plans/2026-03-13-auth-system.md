@@ -62,16 +62,16 @@
 - Modify: `src/api/mod.rs`
 - Modify: `src/error.rs`
 
-- [ ] Добавить вариант `Forbidden(String)` в AppError с кодом 403
-- [ ] Создать `src/api/auth.rs` с Actix-Web extractor `AuthenticatedUser`:
+- [x] Добавить вариант `Forbidden(String)` в AppError с кодом 403
+- [x] Создать `src/api/auth.rs` с Actix-Web extractor `AuthenticatedUser`:
   - Реализовать `FromRequest` для AuthenticatedUser
   - Извлекать JWT из заголовка `Authorization: Bearer <token>`
   - Декодировать и валидировать токен через AuthService
   - Структура AuthenticatedUser: user_id (Uuid), role (String)
-- [ ] Добавить helper-метод `AuthenticatedUser::require_admin() -> Result<(), AppError>` для проверки роли
-- [ ] Добавить helper `AuthenticatedUser::require_owner_or_admin(owner_id) -> Result<(), AppError>`
-- [ ] Написать тесты: извлечение из валидного токена, отклонение без токена, отклонение с истекшим токеном, require_admin проверки
-- [ ] run project test suite - must pass before task 4
+- [x] Добавить helper-метод `AuthenticatedUser::require_admin() -> Result<(), AppError>` для проверки роли
+- [x] Добавить helper `AuthenticatedUser::require_owner_or_admin(owner_id) -> Result<(), AppError>`
+- [x] Написать тесты: извлечение из валидного токена, отклонение без токена, отклонение с истекшим токеном, require_admin проверки
+- [x] run project test suite - must pass before task 4
 
 ### Task 4: API эндпоинты авторизации
 

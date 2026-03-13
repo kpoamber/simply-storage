@@ -11,6 +11,9 @@ pub enum AppError {
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
     #[error("Conflict: {0}")]
     Conflict(String),
 
@@ -33,6 +36,7 @@ impl AppError {
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -54,6 +58,7 @@ impl actix_web::ResponseError for AppError {
             AppError::NotFound(msg) => msg.clone(),
             AppError::BadRequest(msg) => msg.clone(),
             AppError::Unauthorized(msg) => msg.clone(),
+            AppError::Forbidden(msg) => msg.clone(),
             AppError::Conflict(msg) => msg.clone(),
             // Internal errors: log details, return generic message
             AppError::Internal(_) | AppError::Database(_) | AppError::Io(_) | AppError::Config(_) => {
@@ -87,6 +92,12 @@ mod tests {
     fn test_bad_request_status() {
         let err = AppError::BadRequest("invalid input".into());
         assert_eq!(err.status_code(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_forbidden_status() {
+        let err = AppError::Forbidden("access denied".into());
+        assert_eq!(err.status_code(), StatusCode::FORBIDDEN);
     }
 
     #[test]
