@@ -30,6 +30,16 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+
+  if (user?.role !== 'admin') {
+    return <Navigate to="/" replace />;
+  }
+
+  return <>{children}</>;
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -49,8 +59,8 @@ function AppRoutes() {
         <Route path="storages/:id" element={<StorageDetail />} />
         <Route path="sync-tasks" element={<SyncTasks />} />
         <Route path="nodes" element={<Nodes />} />
-        <Route path="users" element={<Users />} />
-        <Route path="users/:id" element={<UserDetail />} />
+        <Route path="users" element={<AdminRoute><Users /></AdminRoute>} />
+        <Route path="users/:id" element={<AdminRoute><UserDetail /></AdminRoute>} />
         <Route
           path="*"
           element={

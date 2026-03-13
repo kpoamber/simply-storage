@@ -234,6 +234,7 @@ function ProjectAssignmentsSection({
 }) {
   const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const { data: allProjects } = useQuery<Project[]>({
     queryKey: ['all-projects-for-assign'],
@@ -251,6 +252,13 @@ function ProjectAssignmentsSection({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user', userId] });
       setShowAdd(false);
+      setError(null);
+    },
+    onError: (err: unknown) => {
+      const message =
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || 'Failed to add project assignment';
+      setError(message);
     },
   });
 
@@ -259,11 +267,23 @@ function ProjectAssignmentsSection({
       apiClient.delete(`/projects/${projectId}/members/${userId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user', userId] });
+      setError(null);
+    },
+    onError: (err: unknown) => {
+      const message =
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || 'Failed to remove project assignment';
+      setError(message);
     },
   });
 
   return (
     <div className="mt-6">
+      {error && (
+        <div className="mb-2 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-medium text-gray-700">
           Assigned Projects ({assignedProjects.length})
@@ -348,6 +368,7 @@ function StorageAssignmentsSection({
 }) {
   const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const { data: allStorages } = useQuery<StorageBackend[]>({
     queryKey: ['all-storages-for-assign'],
@@ -365,6 +386,13 @@ function StorageAssignmentsSection({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user', userId] });
       setShowAdd(false);
+      setError(null);
+    },
+    onError: (err: unknown) => {
+      const message =
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || 'Failed to add storage assignment';
+      setError(message);
     },
   });
 
@@ -373,11 +401,23 @@ function StorageAssignmentsSection({
       apiClient.delete(`/storages/${storageId}/members/${userId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user', userId] });
+      setError(null);
+    },
+    onError: (err: unknown) => {
+      const message =
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || 'Failed to remove storage assignment';
+      setError(message);
     },
   });
 
   return (
     <div className="mt-6">
+      {error && (
+        <div className="mb-2 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-medium text-gray-700">
           Assigned Storages ({assignedStorages.length})

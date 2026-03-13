@@ -348,19 +348,38 @@ async fn update_user(
         None
     };
 
-    // Apply updates
+    // Apply updates atomically in a transaction
+    let mut tx = pool.begin().await?;
+
     if let Some(ref role) = body.role {
-        updated_user = User::update_role(pool.get_ref(), user_id, role).await?;
+        updated_user = sqlx::query_as::<_, User>(
+            "UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
+        )
+        .bind(role)
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
     }
 
     if let Some(ref hash) = password_hash {
-        updated_user = User::update_password_hash(pool.get_ref(), user_id, hash).await?;
+        updated_user = sqlx::query_as::<_, User>(
+            "UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
+        )
+        .bind(hash)
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
     }
 
     // Invalidate refresh tokens once if either role or password changed
     if body.role.is_some() || body.password.is_some() {
-        RefreshToken::delete_by_user_id(pool.get_ref(), user_id).await?;
+        sqlx::query("DELETE FROM refresh_tokens WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
     }
+
+    tx.commit().await?;
 
     Ok(HttpResponse::Ok().json(updated_user))
 }
