@@ -147,6 +147,6 @@
 
 ### Task 8: Обновление документации
 
-- [ ] Обновить CLAUDE.md: добавить auth-related файлы в Project Structure
-- [ ] Добавить env vars для JWT конфигурации в раздел Configuration Env Vars
-- [ ] Переместить план в `docs/plans/completed/`
+- [x] Обновить CLAUDE.md: добавить auth-related файлы в Project Structure
+- [x] Добавить env vars для JWT конфигурации в раздел Configuration Env Vars
+- [x] Переместить план в `docs/plans/completed/`
