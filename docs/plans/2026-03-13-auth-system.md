@@ -136,14 +136,14 @@
 
 ### Task 7: Проверка acceptance criteria
 
-- [ ] manual test: регистрация первого пользователя (должен стать admin)
-- [ ] manual test: login -> получение токенов -> доступ к API
-- [ ] manual test: создание проекта user-ом -> доступ только к своим проектам
-- [ ] manual test: admin видит все проекты и может управлять хранилищами
-- [ ] manual test: refresh token обновляет access token
-- [ ] manual test: frontend redirect на /login без авторизации
-- [ ] run full test suite: `cargo test` и `cd frontend && npm test`
-- [ ] run linter: `cargo clippy -- -D warnings` и `cd frontend && npm run lint`
+- [x] manual test: регистрация первого пользователя (должен стать admin)
+- [x] manual test: login -> получение токенов -> доступ к API
+- [x] manual test: создание проекта user-ом -> доступ только к своим проектам
+- [x] manual test: admin видит все проекты и может управлять хранилищами
+- [x] manual test: refresh token обновляет access token
+- [x] manual test: frontend redirect на /login без авторизации
+- [x] run full test suite: `cargo test` и `cd frontend && npm test`
+- [x] run linter: `cargo clippy -- -D warnings` и `cd frontend && npm run lint`
 
 ### Task 8: Обновление документации
 
