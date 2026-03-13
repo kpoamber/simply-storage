@@ -13,8 +13,23 @@ vi.mock('../api/client', () => ({
   },
 }));
 
+vi.mock('../contexts/AuthContext', () => ({
+  useAuth: () => ({
+    user: {
+      id: 'current-admin',
+      username: 'admin',
+      role: 'admin',
+      created_at: '2026-01-01',
+      updated_at: '2026-01-01',
+    },
+    isLoading: false,
+  }),
+}));
+
 import apiClient from '../api/client';
 const mockGet = vi.mocked(apiClient.get);
+const mockPost = vi.mocked(apiClient.post);
+const mockDelete = vi.mocked(apiClient.delete);
 
 function renderProjectDetail(projectId: string) {
   const queryClient = new QueryClient({
@@ -36,6 +51,7 @@ const mockProject = {
   name: 'Test Project',
   slug: 'test-project',
   hot_to_cold_days: 14,
+  owner_id: 'owner-1',
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 };
@@ -56,12 +72,22 @@ const mockFiles = [
   },
 ];
 
-function setupMocks(files = mockFiles) {
+const mockMembers = [
+  { id: 'owner-1', username: 'projectowner', role: 'user', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
+  { id: 'member-1', username: 'memberuser', role: 'user', created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z' },
+];
+
+function setupMocks(files = mockFiles, members = mockMembers) {
   mockGet.mockImplementation((url: string) => {
     if (url === '/projects/proj-1') return Promise.resolve({ data: mockProjectDetail });
     if (url.startsWith('/projects/proj-1/files')) return Promise.resolve({ data: files });
     if (url === '/projects/proj-1/storages') return Promise.resolve({ data: [] });
     if (url === '/projects/proj-1/available-storages') return Promise.resolve({ data: [] });
+    if (url === '/projects/proj-1/members') return Promise.resolve({ data: members });
+    if (url === '/auth/users') return Promise.resolve({ data: [
+      ...members,
+      { id: 'other-1', username: 'otheruser', role: 'user', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
+    ] });
     return Promise.reject(new Error('Unknown URL'));
   });
 }
@@ -190,6 +216,7 @@ describe('ProjectDetail', () => {
         });
       }
       if (url === '/projects/proj-1/available-storages') return Promise.resolve({ data: [] });
+      if (url === '/projects/proj-1/members') return Promise.resolve({ data: [] });
       return Promise.resolve({ data: [] });
     });
 
@@ -197,6 +224,95 @@ describe('ProjectDetail', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Local Disk')).toBeInTheDocument();
+    });
+  });
+
+  it('shows members section with owner badge', async () => {
+    setupMocks();
+    renderProjectDetail('proj-1');
+
+    await waitFor(() => {
+      expect(screen.getByText('projectowner')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Owner')).toBeInTheDocument();
+    expect(screen.getByText('memberuser')).toBeInTheDocument();
+  });
+
+  it('shows empty members state when no members', async () => {
+    setupMocks(mockFiles, []);
+    renderProjectDetail('proj-1');
+
+    await waitFor(() => {
+      expect(screen.getByText('No members assigned.')).toBeInTheDocument();
+    });
+  });
+
+  it('owner row has no remove button', async () => {
+    setupMocks();
+    renderProjectDetail('proj-1');
+
+    await waitFor(() => {
+      expect(screen.getByText('projectowner')).toBeInTheDocument();
+    });
+
+    const removeButtons = screen.getAllByTitle('Remove member');
+    expect(removeButtons).toHaveLength(1);
+  });
+
+  it('clicking remove member calls DELETE', async () => {
+    setupMocks();
+    mockDelete.mockResolvedValue({ data: {} });
+    renderProjectDetail('proj-1');
+
+    await waitFor(() => {
+      expect(screen.getByText('memberuser')).toBeInTheDocument();
+    });
+
+    const removeButton = screen.getByTitle('Remove member');
+    fireEvent.click(removeButton);
+
+    await waitFor(() => {
+      expect(mockDelete).toHaveBeenCalledWith('/projects/proj-1/members/member-1');
+    });
+  });
+
+  it('opens add member modal', async () => {
+    setupMocks();
+    renderProjectDetail('proj-1');
+
+    await waitFor(() => {
+      expect(screen.getByText('Members')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('Add Member'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Select a user...')).toBeInTheDocument();
+    });
+  });
+
+  it('adds a member via the modal', async () => {
+    setupMocks();
+    mockPost.mockResolvedValue({ data: {} });
+    renderProjectDetail('proj-1');
+
+    await waitFor(() => {
+      expect(screen.getByText('Members')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('Add Member'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Select a user...')).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByDisplayValue('Select a user...'), {
+      target: { value: 'other-1' },
+    });
+    fireEvent.click(screen.getByText('Add'));
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith('/projects/proj-1/members', { user_id: 'other-1' });
     });
   });
 });

@@ -13,9 +13,23 @@ vi.mock('../api/client', () => ({
   },
 }));
 
+vi.mock('../contexts/AuthContext', () => ({
+  useAuth: () => ({
+    user: {
+      id: 'current-admin',
+      username: 'admin',
+      role: 'admin',
+      created_at: '2026-01-01',
+      updated_at: '2026-01-01',
+    },
+    isLoading: false,
+  }),
+}));
+
 import apiClient from '../api/client';
 const mockGet = vi.mocked(apiClient.get);
 const mockPost = vi.mocked(apiClient.post);
+const mockDelete = vi.mocked(apiClient.delete);
 
 const mockStorage = {
   id: 's1', name: 'Local Primary', storage_type: 'local',
@@ -75,7 +89,7 @@ describe('StorageDetail', () => {
     mockGet.mockImplementation((url: string) => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
       if (url.includes('/files')) return Promise.resolve({ data: mockFileLocations });
-      return Promise.reject(new Error('Unknown URL'));
+      return Promise.resolve({ data: [] });
     });
 
     renderStorageDetail();
@@ -91,7 +105,7 @@ describe('StorageDetail', () => {
     mockGet.mockImplementation((url: string) => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
       if (url.includes('/files')) return Promise.resolve({ data: mockFileLocations });
-      return Promise.reject(new Error('Unknown URL'));
+      return Promise.resolve({ data: [] });
     });
 
     renderStorageDetail();
@@ -108,7 +122,7 @@ describe('StorageDetail', () => {
     mockGet.mockImplementation((url: string) => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
       if (url.includes('/files')) return Promise.resolve({ data: [] });
-      return Promise.reject(new Error('Unknown URL'));
+      return Promise.resolve({ data: [] });
     });
 
     renderStorageDetail();
@@ -123,7 +137,7 @@ describe('StorageDetail', () => {
     mockGet.mockImplementation((url: string) => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
       if (url.includes('/files')) return Promise.resolve({ data: [] });
-      return Promise.reject(new Error('Unknown URL'));
+      return Promise.resolve({ data: [] });
     });
     mockPost.mockResolvedValue({ data: { created: 5 } });
 
@@ -144,7 +158,7 @@ describe('StorageDetail', () => {
     mockGet.mockImplementation((url: string) => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
       if (url.includes('/files')) return Promise.resolve({ data: [] });
-      return Promise.reject(new Error('Unknown URL'));
+      return Promise.resolve({ data: [] });
     });
 
     renderStorageDetail();
@@ -163,7 +177,7 @@ describe('StorageDetail', () => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
       if (url.includes('/files')) return Promise.resolve({ data: [] });
       if (url.includes('/export/status')) return Promise.resolve({ data: mockExportStatus });
-      return Promise.reject(new Error('Unknown URL'));
+      return Promise.resolve({ data: [] });
     });
     mockPost.mockResolvedValue({ data: { job_id: 'job-1', message: 'Export started' } });
 
@@ -190,7 +204,7 @@ describe('StorageDetail', () => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
       if (url.includes('/files')) return Promise.resolve({ data: [] });
       if (url.includes('/export/status')) return Promise.resolve({ data: mockExportStatus });
-      return Promise.reject(new Error('Unknown URL'));
+      return Promise.resolve({ data: [] });
     });
     mockPost.mockResolvedValue({ data: { job_id: 'job-2', message: 'Export started' } });
 
@@ -204,6 +218,124 @@ describe('StorageDetail', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Download archive')).toBeInTheDocument();
+    });
+  });
+
+  it('shows members section with assigned users', async () => {
+    const membersList = [
+      { id: 'u1', username: 'alice', role: 'user', created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z' },
+      { id: 'u2', username: 'bob', role: 'admin', created_at: '2026-02-15T00:00:00Z', updated_at: '2026-02-15T00:00:00Z' },
+    ];
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
+      if (url.includes('/files')) return Promise.resolve({ data: [] });
+      if (url === '/storages/s1/members') return Promise.resolve({ data: membersList });
+      return Promise.resolve({ data: [] });
+    });
+
+    renderStorageDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('alice')).toBeInTheDocument();
+    });
+    expect(screen.getByText('bob')).toBeInTheDocument();
+  });
+
+  it('shows empty members state when no members', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
+      if (url.includes('/files')) return Promise.resolve({ data: [] });
+      if (url === '/storages/s1/members') return Promise.resolve({ data: [] });
+      return Promise.resolve({ data: [] });
+    });
+
+    renderStorageDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('No members assigned.')).toBeInTheDocument();
+    });
+  });
+
+  it('clicking remove member calls DELETE', async () => {
+    const membersList = [
+      { id: 'u1', username: 'alice', role: 'user', created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z' },
+    ];
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
+      if (url.includes('/files')) return Promise.resolve({ data: [] });
+      if (url === '/storages/s1/members') return Promise.resolve({ data: membersList });
+      return Promise.resolve({ data: [] });
+    });
+    mockDelete.mockResolvedValue({ data: {} });
+
+    renderStorageDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('alice')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTitle('Remove member'));
+
+    await waitFor(() => {
+      expect(mockDelete).toHaveBeenCalledWith('/storages/s1/members/u1');
+    });
+  });
+
+  it('opens add member modal', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
+      if (url.includes('/files')) return Promise.resolve({ data: [] });
+      if (url === '/storages/s1/members') return Promise.resolve({ data: [] });
+      if (url === '/auth/users') return Promise.resolve({ data: [
+        { id: 'u1', username: 'alice', role: 'user', created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z' },
+      ] });
+      return Promise.resolve({ data: [] });
+    });
+
+    renderStorageDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Members')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('Add Member'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Select a user...')).toBeInTheDocument();
+    });
+  });
+
+  it('adds a member via the modal', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
+      if (url.includes('/files')) return Promise.resolve({ data: [] });
+      if (url === '/storages/s1/members') return Promise.resolve({ data: [] });
+      if (url === '/auth/users') return Promise.resolve({ data: [
+        { id: 'u1', username: 'alice', role: 'user', created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z' },
+      ] });
+      return Promise.resolve({ data: [] });
+    });
+    mockPost.mockResolvedValue({ data: {} });
+
+    renderStorageDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Members')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('Add Member'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Select a user...')).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByDisplayValue('Select a user...'), {
+      target: { value: 'u1' },
+    });
+    fireEvent.click(screen.getByText('Add'));
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith('/storages/s1/members', { user_id: 'u1' });
     });
   });
 });

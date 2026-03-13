@@ -147,27 +147,27 @@ Add full user management UI to the admin dashboard with many-to-many user-to-pro
 - Modify: `frontend/src/pages/ProjectDetail.tsx`
 - Modify: `frontend/src/pages/StorageDetail.tsx`
 
-- [ ] Add Members section to ProjectDetail.tsx (visible to admins):
+- [x] Add Members section to ProjectDetail.tsx (visible to admins):
   - Table: username, role, assigned date, remove button
   - "Add member" button: modal/dropdown with available users (not yet assigned)
   - Shows project owner separately (with "Owner" badge, not removable)
-- [ ] Add Members section to StorageDetail.tsx (visible to admins):
+- [x] Add Members section to StorageDetail.tsx (visible to admins):
   - Table: username, assigned date, remove button
   - "Add member" button: modal/dropdown with available users
-- [ ] Write tests for members sections
-- [ ] Run `cd frontend && npm test` - must pass before task 8
+- [x] Write tests for members sections
+- [x] Run `cd frontend && npm test` - must pass before task 8
 
 ### Task 8: Verify acceptance criteria
 
-- [ ] Manual test: create user, assign to project and storage, verify user can see assigned resources
-- [ ] Manual test: remove assignment, verify user loses access
-- [ ] Manual test: admin can see all users/projects/storages, manage assignments from both sides
-- [ ] Run full backend test suite: `cargo test`
-- [ ] Run full frontend test suite: `cd frontend && npm test`
-- [ ] Run backend linter: `cargo clippy -- -D warnings`
-- [ ] Run frontend linter: `cd frontend && npm run lint`
+- [x] Manual test: create user, assign to project and storage, verify user can see assigned resources
+- [x] Manual test: remove assignment, verify user loses access
+- [x] Manual test: admin can see all users/projects/storages, manage assignments from both sides
+- [x] Run full backend test suite: `cargo test`
+- [x] Run full frontend test suite: `cd frontend && npm test`
+- [x] Run backend linter: `cargo clippy -- -D warnings`
+- [x] Run frontend linter: `cd frontend && npm run lint`
 
 ### Task 9: Update documentation
 
-- [ ] Update CLAUDE.md with new routes, tables, and patterns
-- [ ] Move this plan to `docs/plans/completed/`
+- [x] Update CLAUDE.md with new routes, tables, and patterns
+- [x] Move this plan to `docs/plans/completed/`

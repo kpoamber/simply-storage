@@ -29,7 +29,7 @@ docker-compose up --build --scale app=3  # Scale app instances
 
 - `src/api/` - HTTP route handlers, each module registers routes via `web::scope`
 - `src/api/auth.rs` - AuthenticatedUser extractor (JWT auth middleware via FromRequest)
-- `src/api/auth_routes.rs` - Auth API endpoints (login, refresh, me, logout, admin user management)
+- `src/api/auth_routes.rs` - Auth API endpoints (login, refresh, me, logout, admin user CRUD, user detail with assignments)
 - `src/db/models.rs` - Database models with sqlx FromRow, all CRUD functions
 - `src/services/` - Business logic layer (FileService, BulkService, TierService, AuthService)
 - `src/services/auth_service.rs` - AuthService (JWT token generation/validation, argon2 password hashing)
@@ -43,6 +43,8 @@ docker-compose up --build --scale app=3  # Scale app instances
 - `frontend/src/` - React admin dashboard
 - `frontend/src/contexts/AuthContext.tsx` - Auth context (token storage, login/logout, auto-refresh)
 - `frontend/src/pages/Login.tsx` - Login page (no public registration)
+- `frontend/src/pages/Users.tsx` - Admin user management page (list, create, delete users)
+- `frontend/src/pages/UserDetail.tsx` - User detail with role/password editing and project/storage assignment management
 - `migrations/` - SQL migrations (run automatically on startup)
 
 ## Code Patterns
@@ -56,11 +58,12 @@ docker-compose up --build --scale app=3  # Scale app instances
 - API responses: JSON with serde Serialize
 - File uploads: `actix-multipart` with streaming
 - Authentication: JWT access tokens (Bearer header) + refresh tokens, argon2 password hashing
-- Authorization: `AuthenticatedUser` extractor from request, role-based (admin/user) with owner checks
+- Authorization: `AuthenticatedUser` extractor from request, role-based (admin/user) with owner and membership checks
+- User-resource assignments: many-to-many via `user_projects` and `user_storages` junction tables; members get read access, owners/admins get write access
 
 ## Database
 
-- Tables: projects, storages, files, file_references, file_locations, sync_tasks, nodes, users, refresh_tokens
+- Tables: projects, storages, files, file_references, file_locations, sync_tasks, nodes, users, refresh_tokens, user_projects, user_storages
 - Citus distribution: files and file_locations by file_id, file_references by project_id
 - UUIDs as primary keys (uuid v4)
 - Timestamps: chrono NaiveDateTime

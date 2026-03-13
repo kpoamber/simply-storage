@@ -3,6 +3,7 @@ export interface Project {
   name: string;
   slug: string;
   hot_to_cold_days: number | null;
+  owner_id: string | null;
   created_at: string;
   updated_at: string;
 }

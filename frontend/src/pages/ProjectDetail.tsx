@@ -6,10 +6,13 @@ import {
   ChevronLeft, ChevronRight, Search, Check, Plus, X, Pencil,
 } from 'lucide-react';
 import apiClient from '../api/client';
-import { ProjectWithStats, FileReference, TempLinkResponse, StorageBackend, ProjectStorageAssignment, formatBytes } from '../api/types';
+import { ProjectWithStats, FileReference, TempLinkResponse, StorageBackend, ProjectStorageAssignment, AuthUser, formatBytes } from '../api/types';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
+  const { user: currentUser } = useAuth();
+  const isAdmin = currentUser?.role === 'admin';
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const perPage = 20;
@@ -62,6 +65,8 @@ export default function ProjectDetail() {
       <ProjectSettingsForm project={project} />
 
       <ProjectStoragesSection projectId={id!} />
+
+      {isAdmin && <ProjectMembersSection projectId={id!} ownerId={project.owner_id} />}
 
       <FileUploadZone projectId={id!} />
 
@@ -359,6 +364,162 @@ function ProjectStoragesSection({ projectId }: { projectId: string }) {
       {showAddDialog && (
         <AddStorageDialog projectId={projectId} onClose={() => setShowAddDialog(false)} />
       )}
+    </div>
+  );
+}
+
+function ProjectMembersSection({ projectId, ownerId }: { projectId: string; ownerId: string | null }) {
+  const queryClient = useQueryClient();
+  const [showAdd, setShowAdd] = useState(false);
+
+  const { data: members } = useQuery<AuthUser[]>({
+    queryKey: ['project-members', projectId],
+    queryFn: () => apiClient.get(`/projects/${projectId}/members`).then(r => r.data),
+  });
+
+  const { data: allUsers } = useQuery<AuthUser[]>({
+    queryKey: ['all-users-for-project-members'],
+    queryFn: () => apiClient.get('/auth/users').then(r => r.data),
+    enabled: showAdd,
+  });
+
+  const unassignedUsers = allUsers?.filter(
+    u => !members?.some(m => m.id === u.id) && u.id !== ownerId,
+  );
+
+  const addMutation = useMutation({
+    mutationFn: (userId: string) =>
+      apiClient.post(`/projects/${projectId}/members`, { user_id: userId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-members', projectId] });
+      setShowAdd(false);
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (userId: string) =>
+      apiClient.delete(`/projects/${projectId}/members/${userId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-members', projectId] });
+    },
+  });
+
+  const ownerUser = members?.find(m => m.id === ownerId);
+  const nonOwnerMembers = members?.filter(m => m.id !== ownerId) ?? [];
+
+  return (
+    <div className="mt-6">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-medium text-gray-700">Members</h3>
+        <button
+          onClick={() => setShowAdd(true)}
+          className="flex items-center gap-1 rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700"
+        >
+          <Plus className="h-4 w-4" /> Add Member
+        </button>
+      </div>
+
+      {(!members || (nonOwnerMembers.length === 0 && !ownerUser)) ? (
+        <p className="mt-2 text-gray-400">No members assigned.</p>
+      ) : (
+        <div className="mt-2 overflow-hidden rounded-lg border border-gray-200">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Username</th>
+                <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Role</th>
+                <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Assigned</th>
+                <th className="px-4 py-2 text-center text-xs font-medium uppercase text-gray-500">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 bg-white">
+              {ownerUser && (
+                <tr>
+                  <td className="px-4 py-2 text-sm">
+                    <Link to={`/users/${ownerUser.id}`} className="text-blue-600 hover:underline">{ownerUser.username}</Link>
+                  </td>
+                  <td className="px-4 py-2 text-sm">
+                    <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">Owner</span>
+                  </td>
+                  <td className="px-4 py-2 text-sm text-gray-500">{new Date(ownerUser.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-2 text-center text-sm text-gray-400">&mdash;</td>
+                </tr>
+              )}
+              {nonOwnerMembers.map(m => (
+                <tr key={m.id}>
+                  <td className="px-4 py-2 text-sm">
+                    <Link to={`/users/${m.id}`} className="text-blue-600 hover:underline">{m.username}</Link>
+                  </td>
+                  <td className="px-4 py-2 text-sm">
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${m.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-800'}`}>
+                      {m.role}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-sm text-gray-500">{new Date(m.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-2 text-center">
+                    <button
+                      onClick={() => removeMutation.mutate(m.id)}
+                      disabled={removeMutation.isPending}
+                      title="Remove member"
+                      className="text-red-500 hover:text-red-700 disabled:opacity-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {showAdd && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-medium text-gray-800">Add Member</h3>
+              <button onClick={() => setShowAdd(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+            </div>
+            {!unassignedUsers || unassignedUsers.length === 0 ? (
+              <p className="mt-4 text-sm text-gray-400">No available users to add.</p>
+            ) : (
+              <AddMemberSelect
+                users={unassignedUsers}
+                onSelect={id => addMutation.mutate(id)}
+                isPending={addMutation.isPending}
+              />
+            )}
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => setShowAdd(false)} className="rounded bg-gray-200 px-4 py-1.5 text-sm hover:bg-gray-300">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddMemberSelect({ users, onSelect, isPending }: { users: AuthUser[]; onSelect: (id: string) => void; isPending: boolean }) {
+  const [selectedId, setSelectedId] = useState('');
+  return (
+    <div className="mt-4">
+      <select
+        value={selectedId}
+        onChange={e => setSelectedId(e.target.value)}
+        className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+      >
+        <option value="">Select a user...</option>
+        {users.map(u => (
+          <option key={u.id} value={u.id}>{u.username} ({u.role})</option>
+        ))}
+      </select>
+      <button
+        onClick={() => onSelect(selectedId)}
+        disabled={!selectedId || isPending}
+        className="mt-2 rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+      >
+        {isPending ? 'Adding...' : 'Add'}
+      </button>
     </div>
   );
 }

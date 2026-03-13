@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { RefreshCw, Download, ChevronLeft, ChevronRight, Plus, Trash2, X } from 'lucide-react';
 import apiClient from '../api/client';
-import { StorageBackend, FileLocation, ExportStatus, formatBytes } from '../api/types';
+import { StorageBackend, FileLocation, ExportStatus, AuthUser, formatBytes } from '../api/types';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function StorageDetail() {
   const { id } = useParams<{ id: string }>();
+  const { user: currentUser } = useAuth();
+  const isAdmin = currentUser?.role === 'admin';
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [exportJobId, setExportJobId] = useState<string | null>(null);
@@ -146,6 +149,8 @@ export default function StorageDetail() {
         </div>
       )}
 
+      {isAdmin && <StorageMembersSection storageId={id!} />}
+
       <div className="mt-6">
         <h3 className="text-lg font-medium text-gray-700">Files on this Storage</h3>
         {!fileLocations?.length ? (
@@ -206,6 +211,132 @@ export default function StorageDetail() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function StorageMembersSection({ storageId }: { storageId: string }) {
+  const queryClient = useQueryClient();
+  const [showAdd, setShowAdd] = useState(false);
+  const [selectedUserId, setSelectedUserId] = useState('');
+
+  const { data: members } = useQuery<AuthUser[]>({
+    queryKey: ['storage-members', storageId],
+    queryFn: () => apiClient.get(`/storages/${storageId}/members`).then(r => r.data),
+  });
+
+  const { data: allUsers } = useQuery<AuthUser[]>({
+    queryKey: ['all-users-for-storage-members'],
+    queryFn: () => apiClient.get('/auth/users').then(r => r.data),
+    enabled: showAdd,
+  });
+
+  const unassignedUsers = allUsers?.filter(
+    u => !members?.some(m => m.id === u.id),
+  );
+
+  const addMutation = useMutation({
+    mutationFn: (userId: string) =>
+      apiClient.post(`/storages/${storageId}/members`, { user_id: userId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['storage-members', storageId] });
+      setShowAdd(false);
+      setSelectedUserId('');
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (userId: string) =>
+      apiClient.delete(`/storages/${storageId}/members/${userId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['storage-members', storageId] });
+    },
+  });
+
+  return (
+    <div className="mt-6">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-medium text-gray-700">Members</h3>
+        <button
+          onClick={() => setShowAdd(true)}
+          className="flex items-center gap-1 rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700"
+        >
+          <Plus className="h-4 w-4" /> Add Member
+        </button>
+      </div>
+
+      {!members || members.length === 0 ? (
+        <p className="mt-2 text-gray-400">No members assigned.</p>
+      ) : (
+        <div className="mt-2 overflow-hidden rounded-lg border border-gray-200">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Username</th>
+                <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Assigned</th>
+                <th className="px-4 py-2 text-center text-xs font-medium uppercase text-gray-500">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 bg-white">
+              {members.map(m => (
+                <tr key={m.id}>
+                  <td className="px-4 py-2 text-sm">
+                    <Link to={`/users/${m.id}`} className="text-blue-600 hover:underline">{m.username}</Link>
+                  </td>
+                  <td className="px-4 py-2 text-sm text-gray-500">{new Date(m.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-2 text-center">
+                    <button
+                      onClick={() => removeMutation.mutate(m.id)}
+                      disabled={removeMutation.isPending}
+                      title="Remove member"
+                      className="text-red-500 hover:text-red-700 disabled:opacity-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {showAdd && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-medium text-gray-800">Add Member</h3>
+              <button onClick={() => { setShowAdd(false); setSelectedUserId(''); }} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+            </div>
+            {!unassignedUsers || unassignedUsers.length === 0 ? (
+              <p className="mt-4 text-sm text-gray-400">No available users to add.</p>
+            ) : (
+              <div className="mt-4">
+                <select
+                  value={selectedUserId}
+                  onChange={e => setSelectedUserId(e.target.value)}
+                  className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+                >
+                  <option value="">Select a user...</option>
+                  {unassignedUsers.map(u => (
+                    <option key={u.id} value={u.id}>{u.username} ({u.role})</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => addMutation.mutate(selectedUserId)}
+                  disabled={!selectedUserId || addMutation.isPending}
+                  className="mt-2 rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {addMutation.isPending ? 'Adding...' : 'Add'}
+                </button>
+              </div>
+            )}
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => { setShowAdd(false); setSelectedUserId(''); }} className="rounded bg-gray-200 px-4 py-1.5 text-sm hover:bg-gray-300">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
