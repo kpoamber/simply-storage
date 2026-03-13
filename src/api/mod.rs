@@ -273,6 +273,7 @@ mod tests {
             name: "Test".to_string(),
             slug: "test".to_string(),
             hot_to_cold_days: Some(7),
+            owner_id: None,
             created_at: now,
             updated_at: now,
             deleted_at: None,

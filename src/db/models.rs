@@ -13,6 +13,7 @@ pub struct Project {
     pub name: String,
     pub slug: String,
     pub hot_to_cold_days: Option<i32>,
+    pub owner_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
@@ -1109,6 +1110,131 @@ impl ProjectStorage {
     }
 }
 
+// ─── User ─────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct User {
+    pub id: Uuid,
+    pub username: String,
+    #[serde(skip_serializing)]
+    pub password_hash: String,
+    pub role: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateUser {
+    pub username: String,
+    pub password_hash: String,
+    pub role: String,
+}
+
+impl User {
+    pub async fn create(pool: &PgPool, input: &CreateUser) -> AppResult<User> {
+        let row = sqlx::query_as::<_, User>(
+            r#"INSERT INTO users (username, password_hash, role)
+               VALUES ($1, $2, $3)
+               RETURNING *"#,
+        )
+        .bind(&input.username)
+        .bind(&input.password_hash)
+        .bind(&input.role)
+        .fetch_one(pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    pub async fn find_by_id(pool: &PgPool, id: Uuid) -> AppResult<User> {
+        sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("User {} not found", id)))
+    }
+
+    pub async fn find_by_username(pool: &PgPool, username: &str) -> AppResult<Option<User>> {
+        let row = sqlx::query_as::<_, User>(
+            "SELECT * FROM users WHERE username = $1",
+        )
+        .bind(username)
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    pub async fn count(pool: &PgPool) -> AppResult<i64> {
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+            .fetch_one(pool)
+            .await?;
+        Ok(count)
+    }
+}
+
+// ─── RefreshToken ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct RefreshToken {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    #[serde(skip_serializing)]
+    pub token_hash: String,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateRefreshToken {
+    pub user_id: Uuid,
+    pub token_hash: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+impl RefreshToken {
+    pub async fn create(pool: &PgPool, input: &CreateRefreshToken) -> AppResult<RefreshToken> {
+        let row = sqlx::query_as::<_, RefreshToken>(
+            r#"INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+               VALUES ($1, $2, $3)
+               RETURNING *"#,
+        )
+        .bind(input.user_id)
+        .bind(&input.token_hash)
+        .bind(input.expires_at)
+        .fetch_one(pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    pub async fn find_by_hash(pool: &PgPool, token_hash: &str) -> AppResult<Option<RefreshToken>> {
+        let row = sqlx::query_as::<_, RefreshToken>(
+            "SELECT * FROM refresh_tokens WHERE token_hash = $1 AND expires_at > NOW()",
+        )
+        .bind(token_hash)
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    pub async fn delete_by_user_id(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
+        sqlx::query("DELETE FROM refresh_tokens WHERE user_id = $1")
+            .bind(user_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_expired(pool: &PgPool) -> AppResult<u64> {
+        let result = sqlx::query("DELETE FROM refresh_tokens WHERE expires_at <= NOW()")
+            .execute(pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 fn is_unique_violation(e: &sqlx::Error) -> bool {
@@ -1168,6 +1294,7 @@ mod tests {
             name: "My Project".to_string(),
             slug: "my-project".to_string(),
             hot_to_cold_days: Some(7),
+            owner_id: None,
             created_at: now,
             updated_at: now,
             deleted_at: None,
@@ -1368,6 +1495,134 @@ mod tests {
         assert!(!json["last_heartbeat"].is_null());
     }
 
+    #[test]
+    fn test_user_serialization() {
+        let now = Utc::now();
+        let user = User {
+            id: Uuid::new_v4(),
+            username: "testuser".to_string(),
+            password_hash: "secret_hash".to_string(),
+            role: "admin".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let json = serde_json::to_value(&user).unwrap();
+        assert_eq!(json["username"], "testuser");
+        assert_eq!(json["role"], "admin");
+        // password_hash should be skipped during serialization
+        assert!(json.get("password_hash").is_none());
+    }
+
+    #[test]
+    fn test_user_deserialization() {
+        let json = serde_json::json!({
+            "id": Uuid::new_v4(),
+            "username": "alice",
+            "password_hash": "hashed",
+            "role": "user",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z"
+        });
+        let user: User = serde_json::from_value(json).unwrap();
+        assert_eq!(user.username, "alice");
+        assert_eq!(user.role, "user");
+        assert_eq!(user.password_hash, "hashed");
+    }
+
+    #[test]
+    fn test_create_user_struct() {
+        let input = CreateUser {
+            username: "bob".to_string(),
+            password_hash: "argon2hash".to_string(),
+            role: "user".to_string(),
+        };
+        assert_eq!(input.username, "bob");
+        assert_eq!(input.role, "user");
+    }
+
+    #[test]
+    fn test_refresh_token_serialization() {
+        let now = Utc::now();
+        let token = RefreshToken {
+            id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            token_hash: "secret_token_hash".to_string(),
+            expires_at: now,
+            created_at: now,
+        };
+
+        let json = serde_json::to_value(&token).unwrap();
+        assert!(!json["user_id"].is_null());
+        assert!(!json["expires_at"].is_null());
+        // token_hash should be skipped during serialization
+        assert!(json.get("token_hash").is_none());
+    }
+
+    #[test]
+    fn test_refresh_token_deserialization() {
+        let user_id = Uuid::new_v4();
+        let json = serde_json::json!({
+            "id": Uuid::new_v4(),
+            "user_id": user_id,
+            "token_hash": "hash123",
+            "expires_at": "2026-12-31T23:59:59Z",
+            "created_at": "2026-01-01T00:00:00Z"
+        });
+        let token: RefreshToken = serde_json::from_value(json).unwrap();
+        assert_eq!(token.user_id, user_id);
+        assert_eq!(token.token_hash, "hash123");
+    }
+
+    #[test]
+    fn test_create_refresh_token_struct() {
+        let user_id = Uuid::new_v4();
+        let input = CreateRefreshToken {
+            user_id,
+            token_hash: "hashed_token".to_string(),
+            expires_at: Utc::now(),
+        };
+        assert_eq!(input.user_id, user_id);
+        assert_eq!(input.token_hash, "hashed_token");
+    }
+
+    #[test]
+    fn test_project_with_owner_id() {
+        let now = Utc::now();
+        let owner_id = Uuid::new_v4();
+        let project = Project {
+            id: Uuid::new_v4(),
+            name: "Owned Project".to_string(),
+            slug: "owned-project".to_string(),
+            hot_to_cold_days: None,
+            owner_id: Some(owner_id),
+            created_at: now,
+            updated_at: now,
+            deleted_at: None,
+        };
+
+        let json = serde_json::to_value(&project).unwrap();
+        assert_eq!(json["owner_id"], owner_id.to_string());
+    }
+
+    #[test]
+    fn test_project_without_owner_id() {
+        let now = Utc::now();
+        let project = Project {
+            id: Uuid::new_v4(),
+            name: "Unowned Project".to_string(),
+            slug: "unowned-project".to_string(),
+            hot_to_cold_days: None,
+            owner_id: None,
+            created_at: now,
+            updated_at: now,
+            deleted_at: None,
+        };
+
+        let json = serde_json::to_value(&project).unwrap();
+        assert!(json["owner_id"].is_null());
+    }
+
     // ─── Integration tests that require a running PostgreSQL ───────────────────
     // Run with: DATABASE_URL=postgres://... cargo test -- --ignored
 
@@ -1396,6 +1651,8 @@ mod tests {
         assert!(table_names.contains(&"file_locations"));
         assert!(table_names.contains(&"sync_tasks"));
         assert!(table_names.contains(&"nodes"));
+        assert!(table_names.contains(&"users"));
+        assert!(table_names.contains(&"refresh_tokens"));
     }
 
     #[ignore]
