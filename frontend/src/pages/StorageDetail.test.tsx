@@ -223,8 +223,8 @@ describe('StorageDetail', () => {
 
   it('shows members section with assigned users', async () => {
     const membersList = [
-      { id: 'u1', username: 'alice', role: 'user', created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z' },
-      { id: 'u2', username: 'bob', role: 'admin', created_at: '2026-02-15T00:00:00Z', updated_at: '2026-02-15T00:00:00Z' },
+      { id: 'u1', username: 'alice', role: 'user', created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z', assigned_at: '2026-02-05T00:00:00Z' },
+      { id: 'u2', username: 'bob', role: 'admin', created_at: '2026-02-15T00:00:00Z', updated_at: '2026-02-15T00:00:00Z', assigned_at: '2026-02-20T00:00:00Z' },
     ];
     mockGet.mockImplementation((url: string) => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });
@@ -258,7 +258,7 @@ describe('StorageDetail', () => {
 
   it('clicking remove member calls DELETE', async () => {
     const membersList = [
-      { id: 'u1', username: 'alice', role: 'user', created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z' },
+      { id: 'u1', username: 'alice', role: 'user', created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z', assigned_at: '2026-02-05T00:00:00Z' },
     ];
     mockGet.mockImplementation((url: string) => {
       if (url === '/storages/s1') return Promise.resolve({ data: mockStorage });

@@ -22,6 +22,10 @@ async fn main() -> std::io::Result<()> {
         tracing::warn!("JWT secret is set to the default value! Set APP_AUTH__JWT_SECRET to a secure random string before deploying to production.");
     }
 
+    if config.auth.default_admin_password == "Innovare2026!" {
+        tracing::warn!("Default admin password is unchanged! Set APP_AUTH__DEFAULT_ADMIN_PASSWORD to a secure password before deploying to production.");
+    }
+
     tracing::info!(
         "Starting server on {}:{}",
         config.server.host,

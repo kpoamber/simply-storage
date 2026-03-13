@@ -73,8 +73,8 @@ const mockFiles = [
 ];
 
 const mockMembers = [
-  { id: 'owner-1', username: 'projectowner', role: 'user', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
-  { id: 'member-1', username: 'memberuser', role: 'user', created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z' },
+  { id: 'owner-1', username: 'projectowner', role: 'user', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', assigned_at: '2026-01-15T00:00:00Z' },
+  { id: 'member-1', username: 'memberuser', role: 'user', created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z', assigned_at: '2026-02-10T00:00:00Z' },
 ];
 
 function setupMocks(files = mockFiles, members = mockMembers) {
@@ -87,7 +87,7 @@ function setupMocks(files = mockFiles, members = mockMembers) {
     if (url === '/auth/users/owner-1') return Promise.resolve({ data: { user: mockMembers[0], projects: [], storages: [] } });
     if (url === '/auth/users') return Promise.resolve({ data: [
       ...members,
-      { id: 'other-1', username: 'otheruser', role: 'user', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
+      { id: 'other-1', username: 'otheruser', role: 'user', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', assigned_at: '2026-01-01T00:00:00Z' },
     ] });
     return Promise.reject(new Error('Unknown URL'));
   });

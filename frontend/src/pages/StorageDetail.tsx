@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw, Download, ChevronLeft, ChevronRight, Plus, Trash2, X } from 'lucide-react';
 import apiClient from '../api/client';
-import { StorageBackend, FileLocation, ExportStatus, AuthUser, formatBytes } from '../api/types';
+import { StorageBackend, FileLocation, ExportStatus, AuthUser, MemberInfo, formatBytes } from '../api/types';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function StorageDetail() {
@@ -235,7 +235,7 @@ function StorageMembersSection({ storageId }: { storageId: string }) {
   const [showAdd, setShowAdd] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState('');
 
-  const { data: members } = useQuery<AuthUser[]>({
+  const { data: members } = useQuery<MemberInfo[]>({
     queryKey: ['storage-members', storageId],
     queryFn: () => apiClient.get(`/storages/${storageId}/members`).then(r => r.data),
   });
@@ -288,7 +288,7 @@ function StorageMembersSection({ storageId }: { storageId: string }) {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Username</th>
-                <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Created</th>
+                <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Assigned</th>
                 <th className="px-4 py-2 text-center text-xs font-medium uppercase text-gray-500">Actions</th>
               </tr>
             </thead>
@@ -298,7 +298,7 @@ function StorageMembersSection({ storageId }: { storageId: string }) {
                   <td className="px-4 py-2 text-sm">
                     <Link to={`/users/${m.id}`} className="text-blue-600 hover:underline">{m.username}</Link>
                   </td>
-                  <td className="px-4 py-2 text-sm text-gray-500">{new Date(m.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-2 text-sm text-gray-500">{new Date(m.assigned_at).toLocaleDateString()}</td>
                   <td className="px-4 py-2 text-center">
                     <button
                       onClick={() => removeMutation.mutate(m.id)}

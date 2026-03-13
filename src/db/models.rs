@@ -1156,6 +1156,19 @@ pub struct User {
     pub updated_at: DateTime<Utc>,
 }
 
+/// User info with assignment date, returned by member list endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct MemberInfo {
+    pub id: Uuid,
+    pub username: String,
+    #[serde(skip_serializing)]
+    pub password_hash: String,
+    pub role: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub assigned_at: DateTime<Utc>,
+}
+
 #[derive(Debug)]
 pub struct CreateUser {
     pub username: String,
@@ -1365,9 +1378,9 @@ impl UserProject {
         Ok(row)
     }
 
-    pub async fn list_for_project(pool: &PgPool, project_id: Uuid) -> AppResult<Vec<User>> {
-        let rows = sqlx::query_as::<_, User>(
-            r#"SELECT u.* FROM users u
+    pub async fn list_for_project(pool: &PgPool, project_id: Uuid) -> AppResult<Vec<MemberInfo>> {
+        let rows = sqlx::query_as::<_, MemberInfo>(
+            r#"SELECT u.*, up.created_at AS assigned_at FROM users u
                JOIN user_projects up ON up.user_id = u.id
                WHERE up.project_id = $1
                ORDER BY u.username ASC"#,
@@ -1455,9 +1468,9 @@ impl UserStorage {
         Ok(row)
     }
 
-    pub async fn list_for_storage(pool: &PgPool, storage_id: Uuid) -> AppResult<Vec<User>> {
-        let rows = sqlx::query_as::<_, User>(
-            r#"SELECT u.* FROM users u
+    pub async fn list_for_storage(pool: &PgPool, storage_id: Uuid) -> AppResult<Vec<MemberInfo>> {
+        let rows = sqlx::query_as::<_, MemberInfo>(
+            r#"SELECT u.*, us.created_at AS assigned_at FROM users u
                JOIN user_storages us ON us.user_id = u.id
                WHERE us.storage_id = $1
                ORDER BY u.username ASC"#,

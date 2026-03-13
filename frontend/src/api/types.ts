@@ -125,6 +125,10 @@ export interface AuthUser {
   updated_at: string;
 }
 
+export interface MemberInfo extends AuthUser {
+  assigned_at: string;
+}
+
 export interface UserWithAssignments {
   user: AuthUser;
   projects: Project[];

@@ -6,7 +6,7 @@ import {
   ChevronLeft, ChevronRight, Search, Check, Plus, X, Pencil,
 } from 'lucide-react';
 import apiClient from '../api/client';
-import { ProjectWithStats, FileReference, TempLinkResponse, StorageBackend, ProjectStorageAssignment, AuthUser, formatBytes } from '../api/types';
+import { ProjectWithStats, FileReference, TempLinkResponse, StorageBackend, ProjectStorageAssignment, AuthUser, MemberInfo, formatBytes } from '../api/types';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function ProjectDetail() {
@@ -373,7 +373,7 @@ function ProjectMembersSection({ projectId, ownerId }: { projectId: string; owne
   const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
 
-  const { data: members } = useQuery<AuthUser[]>({
+  const { data: members } = useQuery<MemberInfo[]>({
     queryKey: ['project-members', projectId],
     queryFn: () => apiClient.get(`/projects/${projectId}/members`).then(r => r.data),
   });
@@ -435,7 +435,7 @@ function ProjectMembersSection({ projectId, ownerId }: { projectId: string; owne
               <tr>
                 <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Username</th>
                 <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Role</th>
-                <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Created</th>
+                <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Assigned</th>
                 <th className="px-4 py-2 text-center text-xs font-medium uppercase text-gray-500">Actions</th>
               </tr>
             </thead>
@@ -448,7 +448,7 @@ function ProjectMembersSection({ projectId, ownerId }: { projectId: string; owne
                   <td className="px-4 py-2 text-sm">
                     <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">Owner</span>
                   </td>
-                  <td className="px-4 py-2 text-sm text-gray-500">{new Date(ownerUserData.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-2 text-sm text-gray-500">&mdash;</td>
                   <td className="px-4 py-2 text-center text-sm text-gray-400">&mdash;</td>
                 </tr>
               )}
@@ -462,7 +462,7 @@ function ProjectMembersSection({ projectId, ownerId }: { projectId: string; owne
                       {m.role}
                     </span>
                   </td>
-                  <td className="px-4 py-2 text-sm text-gray-500">{new Date(m.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-2 text-sm text-gray-500">{new Date(m.assigned_at).toLocaleDateString()}</td>
                   <td className="px-4 py-2 text-center">
                     <button
                       onClick={() => removeMutation.mutate(m.id)}
