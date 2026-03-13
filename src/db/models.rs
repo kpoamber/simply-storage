@@ -1207,6 +1207,30 @@ impl User {
             .await?;
         Ok(count)
     }
+
+    pub async fn update_role(pool: &PgPool, id: Uuid, role: &str) -> AppResult<User> {
+        let row = sqlx::query_as::<_, User>(
+            "UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
+        )
+        .bind(role)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("User {} not found", id)))?;
+        Ok(row)
+    }
+
+    pub async fn update_password_hash(pool: &PgPool, id: Uuid, password_hash: &str) -> AppResult<User> {
+        let row = sqlx::query_as::<_, User>(
+            "UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
+        )
+        .bind(password_hash)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("User {} not found", id)))?;
+        Ok(row)
+    }
 }
 
 // ─── RefreshToken ─────────────────────────────────────────────────────────────

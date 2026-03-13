@@ -4,7 +4,7 @@ use serde::Deserialize;
 use sqlx::PgPool;
 
 use crate::api::auth::AuthenticatedUser;
-use crate::db::models::{is_unique_violation, CreateRefreshToken, CreateUser, RefreshToken, User};
+use crate::db::models::{is_unique_violation, CreateRefreshToken, CreateUser, RefreshToken, User, UserProject, UserStorage};
 use crate::error::AppError;
 use crate::services::auth_service::AuthService;
 
@@ -34,6 +34,12 @@ pub struct RefreshRequest {
 #[derive(Debug, Deserialize)]
 pub struct LogoutRequest {
     pub refresh_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateUserRequest {
+    pub role: Option<String>,
+    pub password: Option<String>,
 }
 
 /// Admin-only: create a new user
@@ -249,6 +255,87 @@ async fn logout(
     Ok(HttpResponse::Ok().json(serde_json::json!({"message": "Logged out successfully"})))
 }
 
+/// Admin-only: get user detail with assigned projects and storages
+async fn get_user(
+    pool: web::Data<PgPool>,
+    auth_user: AuthenticatedUser,
+    path: web::Path<uuid::Uuid>,
+) -> Result<HttpResponse, AppError> {
+    auth_user.require_admin()?;
+    let user_id = path.into_inner();
+
+    let user = User::find_by_id(pool.get_ref(), user_id).await?;
+    let projects = UserProject::list_for_user(pool.get_ref(), user_id).await?;
+    let storages = UserStorage::list_for_user(pool.get_ref(), user_id).await?;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "user": user,
+        "projects": projects,
+        "storages": storages,
+    })))
+}
+
+/// Admin-only: update user role and/or password
+async fn update_user(
+    pool: web::Data<PgPool>,
+    auth_service: web::Data<AuthService>,
+    auth_user: AuthenticatedUser,
+    path: web::Path<uuid::Uuid>,
+    body: web::Json<UpdateUserRequest>,
+) -> Result<HttpResponse, AppError> {
+    auth_user.require_admin()?;
+    let user_id = path.into_inner();
+
+    if body.role.is_none() && body.password.is_none() {
+        return Err(AppError::BadRequest(
+            "At least one of 'role' or 'password' must be provided".to_string(),
+        ));
+    }
+
+    // Ensure the target user exists
+    let user = User::find_by_id(pool.get_ref(), user_id).await?;
+
+    let mut updated_user = user;
+
+    if let Some(ref role) = body.role {
+        if role != "admin" && role != "user" {
+            return Err(AppError::BadRequest(
+                "Role must be 'admin' or 'user'".to_string(),
+            ));
+        }
+
+        // Prevent admin from demoting themselves
+        if user_id == auth_user.user_id && role != "admin" {
+            return Err(AppError::BadRequest(
+                "Cannot demote your own admin account".to_string(),
+            ));
+        }
+
+        updated_user = User::update_role(pool.get_ref(), user_id, role).await?;
+    }
+
+    if let Some(ref password) = body.password {
+        if password.len() < 6 {
+            return Err(AppError::BadRequest(
+                "Password must be at least 6 characters".to_string(),
+            ));
+        }
+        if password.len() > 1024 {
+            return Err(AppError::BadRequest(
+                "Password must not exceed 1024 characters".to_string(),
+            ));
+        }
+
+        let password_hash = auth_service
+            .hash_password(password)
+            .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
+
+        updated_user = User::update_password_hash(pool.get_ref(), user_id, &password_hash).await?;
+    }
+
+    Ok(HttpResponse::Ok().json(updated_user))
+}
+
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/auth")
@@ -258,6 +345,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/logout", web::post().to(logout))
             .route("/users", web::post().to(create_user))
             .route("/users", web::get().to(list_users))
+            .route("/users/{user_id}", web::get().to(get_user))
+            .route("/users/{user_id}", web::put().to(update_user))
             .route("/users/{user_id}", web::delete().to(delete_user)),
     );
 }
@@ -328,6 +417,38 @@ mod tests {
         });
         let req: LogoutRequest = serde_json::from_value(json).unwrap();
         assert_eq!(req.refresh_token, "token_to_revoke");
+    }
+
+    #[test]
+    fn test_update_user_request_deserialization() {
+        let json = serde_json::json!({
+            "role": "admin",
+            "password": "newpass123"
+        });
+        let req: UpdateUserRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.role, Some("admin".to_string()));
+        assert_eq!(req.password, Some("newpass123".to_string()));
+    }
+
+    #[test]
+    fn test_update_user_request_partial() {
+        let json = serde_json::json!({ "role": "user" });
+        let req: UpdateUserRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.role, Some("user".to_string()));
+        assert!(req.password.is_none());
+
+        let json = serde_json::json!({ "password": "newpass" });
+        let req: UpdateUserRequest = serde_json::from_value(json).unwrap();
+        assert!(req.role.is_none());
+        assert_eq!(req.password, Some("newpass".to_string()));
+    }
+
+    #[test]
+    fn test_update_user_request_empty() {
+        let json = serde_json::json!({});
+        let req: UpdateUserRequest = serde_json::from_value(json).unwrap();
+        assert!(req.role.is_none());
+        assert!(req.password.is_none());
     }
 
     #[test]
@@ -452,6 +573,21 @@ mod tests {
         // GET /api/auth/users should not be 404
         let req = actix_web::test::TestRequest::get()
             .uri("/api/auth/users")
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_ne!(resp.status(), 404);
+
+        // GET /api/auth/users/{id} should not be 404
+        let fake_id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::get()
+            .uri(&format!("/api/auth/users/{}", fake_id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_ne!(resp.status(), 404);
+
+        // PUT /api/auth/users/{id} should not be 404
+        let req = actix_web::test::TestRequest::put()
+            .uri(&format!("/api/auth/users/{}", fake_id))
             .to_request();
         let resp = actix_web::test::call_service(&app, req).await;
         assert_ne!(resp.status(), 404);
@@ -694,5 +830,327 @@ mod tests {
 
         let body: serde_json::Value = actix_web::test::read_body_json(resp).await;
         assert_eq!(body["username"], username);
+    }
+
+    #[ignore]
+    #[actix_rt::test]
+    async fn test_get_user_detail() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        let auth_service = test_auth_service();
+        let admin_name = format!("test_admin_{}", uuid::Uuid::new_v4());
+        let (_, admin_token) = seed_test_user(&pool, &auth_service, &admin_name, "admin").await;
+        let target_name = format!("test_target_{}", uuid::Uuid::new_v4());
+        let (target_user, _) = seed_test_user(&pool, &auth_service, &target_name, "user").await;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool.clone()))
+                .app_data(web::Data::new(auth_service))
+                .service(web::scope("/api").configure(configure)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get()
+            .uri(&format!("/api/auth/users/{}", target_user.id))
+            .insert_header(("Authorization", format!("Bearer {}", admin_token)))
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = actix_web::test::read_body_json(resp).await;
+        assert_eq!(body["user"]["username"], target_name);
+        assert!(body["projects"].is_array());
+        assert!(body["storages"].is_array());
+    }
+
+    #[ignore]
+    #[actix_rt::test]
+    async fn test_get_user_detail_requires_admin() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        let auth_service = test_auth_service();
+        let user_name = format!("test_user_{}", uuid::Uuid::new_v4());
+        let (user, user_token) = seed_test_user(&pool, &auth_service, &user_name, "user").await;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool.clone()))
+                .app_data(web::Data::new(auth_service))
+                .service(web::scope("/api").configure(configure)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get()
+            .uri(&format!("/api/auth/users/{}", user.id))
+            .insert_header(("Authorization", format!("Bearer {}", user_token)))
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
+    }
+
+    #[ignore]
+    #[actix_rt::test]
+    async fn test_get_user_detail_not_found() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        let auth_service = test_auth_service();
+        let admin_name = format!("test_admin_{}", uuid::Uuid::new_v4());
+        let (_, admin_token) = seed_test_user(&pool, &auth_service, &admin_name, "admin").await;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool.clone()))
+                .app_data(web::Data::new(auth_service))
+                .service(web::scope("/api").configure(configure)),
+        )
+        .await;
+
+        let fake_id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::get()
+            .uri(&format!("/api/auth/users/{}", fake_id))
+            .insert_header(("Authorization", format!("Bearer {}", admin_token)))
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 404);
+    }
+
+    #[ignore]
+    #[actix_rt::test]
+    async fn test_update_user_role() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        let auth_service = test_auth_service();
+        let admin_name = format!("test_admin_{}", uuid::Uuid::new_v4());
+        let (_, admin_token) = seed_test_user(&pool, &auth_service, &admin_name, "admin").await;
+        let target_name = format!("test_target_{}", uuid::Uuid::new_v4());
+        let (target_user, _) = seed_test_user(&pool, &auth_service, &target_name, "user").await;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool.clone()))
+                .app_data(web::Data::new(auth_service))
+                .service(web::scope("/api").configure(configure)),
+        )
+        .await;
+
+        // Promote to admin
+        let req = actix_web::test::TestRequest::put()
+            .uri(&format!("/api/auth/users/{}", target_user.id))
+            .insert_header(("Authorization", format!("Bearer {}", admin_token)))
+            .set_json(serde_json::json!({ "role": "admin" }))
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = actix_web::test::read_body_json(resp).await;
+        assert_eq!(body["role"], "admin");
+    }
+
+    #[ignore]
+    #[actix_rt::test]
+    async fn test_update_user_password() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        let auth_service = test_auth_service();
+        let admin_name = format!("test_admin_{}", uuid::Uuid::new_v4());
+        let (_, admin_token) = seed_test_user(&pool, &auth_service, &admin_name, "admin").await;
+        let target_name = format!("test_target_{}", uuid::Uuid::new_v4());
+        let (target_user, _) = seed_test_user(&pool, &auth_service, &target_name, "user").await;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool.clone()))
+                .app_data(web::Data::new(auth_service.clone()))
+                .service(web::scope("/api").configure(configure)),
+        )
+        .await;
+
+        // Reset password
+        let req = actix_web::test::TestRequest::put()
+            .uri(&format!("/api/auth/users/{}", target_user.id))
+            .insert_header(("Authorization", format!("Bearer {}", admin_token)))
+            .set_json(serde_json::json!({ "password": "newpassword123" }))
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        // Verify new password works via login
+        let req = actix_web::test::TestRequest::post()
+            .uri("/api/auth/login")
+            .set_json(serde_json::json!({
+                "username": target_name,
+                "password": "newpassword123"
+            }))
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[ignore]
+    #[actix_rt::test]
+    async fn test_update_user_invalid_role() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        let auth_service = test_auth_service();
+        let admin_name = format!("test_admin_{}", uuid::Uuid::new_v4());
+        let (_, admin_token) = seed_test_user(&pool, &auth_service, &admin_name, "admin").await;
+        let target_name = format!("test_target_{}", uuid::Uuid::new_v4());
+        let (target_user, _) = seed_test_user(&pool, &auth_service, &target_name, "user").await;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool.clone()))
+                .app_data(web::Data::new(auth_service))
+                .service(web::scope("/api").configure(configure)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::put()
+            .uri(&format!("/api/auth/users/{}", target_user.id))
+            .insert_header(("Authorization", format!("Bearer {}", admin_token)))
+            .set_json(serde_json::json!({ "role": "superadmin" }))
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 400);
+    }
+
+    #[ignore]
+    #[actix_rt::test]
+    async fn test_update_user_short_password() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        let auth_service = test_auth_service();
+        let admin_name = format!("test_admin_{}", uuid::Uuid::new_v4());
+        let (_, admin_token) = seed_test_user(&pool, &auth_service, &admin_name, "admin").await;
+        let target_name = format!("test_target_{}", uuid::Uuid::new_v4());
+        let (target_user, _) = seed_test_user(&pool, &auth_service, &target_name, "user").await;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool.clone()))
+                .app_data(web::Data::new(auth_service))
+                .service(web::scope("/api").configure(configure)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::put()
+            .uri(&format!("/api/auth/users/{}", target_user.id))
+            .insert_header(("Authorization", format!("Bearer {}", admin_token)))
+            .set_json(serde_json::json!({ "password": "short" }))
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 400);
+    }
+
+    #[ignore]
+    #[actix_rt::test]
+    async fn test_update_user_cannot_self_demote() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        let auth_service = test_auth_service();
+        let admin_name = format!("test_admin_{}", uuid::Uuid::new_v4());
+        let (admin_user, admin_token) = seed_test_user(&pool, &auth_service, &admin_name, "admin").await;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool.clone()))
+                .app_data(web::Data::new(auth_service))
+                .service(web::scope("/api").configure(configure)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::put()
+            .uri(&format!("/api/auth/users/{}", admin_user.id))
+            .insert_header(("Authorization", format!("Bearer {}", admin_token)))
+            .set_json(serde_json::json!({ "role": "user" }))
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 400);
+    }
+
+    #[ignore]
+    #[actix_rt::test]
+    async fn test_update_user_requires_admin() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        let auth_service = test_auth_service();
+        let user_name = format!("test_user_{}", uuid::Uuid::new_v4());
+        let (user, user_token) = seed_test_user(&pool, &auth_service, &user_name, "user").await;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool.clone()))
+                .app_data(web::Data::new(auth_service))
+                .service(web::scope("/api").configure(configure)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::put()
+            .uri(&format!("/api/auth/users/{}", user.id))
+            .insert_header(("Authorization", format!("Bearer {}", user_token)))
+            .set_json(serde_json::json!({ "role": "admin" }))
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
+    }
+
+    #[ignore]
+    #[actix_rt::test]
+    async fn test_update_user_empty_body() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        let auth_service = test_auth_service();
+        let admin_name = format!("test_admin_{}", uuid::Uuid::new_v4());
+        let (_, admin_token) = seed_test_user(&pool, &auth_service, &admin_name, "admin").await;
+        let target_name = format!("test_target_{}", uuid::Uuid::new_v4());
+        let (target_user, _) = seed_test_user(&pool, &auth_service, &target_name, "user").await;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool.clone()))
+                .app_data(web::Data::new(auth_service))
+                .service(web::scope("/api").configure(configure)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::put()
+            .uri(&format!("/api/auth/users/{}", target_user.id))
+            .insert_header(("Authorization", format!("Bearer {}", admin_token)))
+            .set_json(serde_json::json!({}))
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 400);
     }
 }

@@ -54,16 +54,16 @@ Add full user management UI to the admin dashboard with many-to-many user-to-pro
 **Files:**
 - Modify: `src/api/auth_routes.rs`
 
-- [ ] Add GET /api/auth/users/{user_id} endpoint (admin-only):
+- [x] Add GET /api/auth/users/{user_id} endpoint (admin-only):
   - Returns user detail with assigned project IDs and storage IDs
   - Response: `{ user: User, projects: Vec<Project>, storages: Vec<StorageBackend> }`
-- [ ] Add PUT /api/auth/users/{user_id} endpoint (admin-only):
+- [x] Add PUT /api/auth/users/{user_id} endpoint (admin-only):
   - Allow updating role and/or resetting password
   - Input: `{ role?: String, password?: String }`
   - Validate role is "admin" or "user", validate password length
   - Prevent admin from demoting themselves
-- [ ] Write tests for new endpoints
-- [ ] Run `cargo test` - must pass before task 3
+- [x] Write tests for new endpoints
+- [x] Run `cargo test` - must pass before task 3
 
 ### Task 3: Backend API - project and storage members
 
