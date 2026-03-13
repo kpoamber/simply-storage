@@ -67,7 +67,7 @@ Add support for user-defined metadata (JSON key/value) on file uploads, with fas
 - Modify: `src/api/files.rs`
 - Modify: `src/db/models.rs`
 
-- [ ] Design search query DSL as JSON request body:
+- [x] Design search query DSL as JSON request body:
   ```
   POST /api/projects/{project_id}/files/search
   {
@@ -77,12 +77,12 @@ Add support for user-defined metadata (JSON key/value) on file uploads, with fas
   }
   ```
   Filter node types: `{"key": "k", "value": "v"}` (leaf), `{"and": [...]}`, `{"or": [...]}`, `{"not": <node>}`
-- [ ] Implement filter-to-SQL compiler in models.rs: recursively build WHERE clause using `metadata @> '{"key":"value"}'::jsonb` for leaf nodes, AND/OR/NOT for logical operators; use parameterized queries to prevent SQL injection
-- [ ] Add `FileReference::search_by_metadata()` in models.rs that executes the compiled query with pagination, scoped to project_id
-- [ ] Register `POST /projects/{project_id}/files/search` route; require read access to project
-- [ ] Return paginated results with total count (same FileReference shape with metadata included)
-- [ ] Write tests: search with single key match, AND filter, OR filter, NOT filter, nested AND/OR/NOT, empty filters (return all), no results
-- [ ] Run project test suite - must pass before task 4
+- [x] Implement filter-to-SQL compiler in models.rs: recursively build WHERE clause using `metadata @> '{"key":"value"}'::jsonb` for leaf nodes, AND/OR/NOT for logical operators; use parameterized queries to prevent SQL injection
+- [x] Add `FileReference::search_by_metadata()` in models.rs that executes the compiled query with pagination, scoped to project_id
+- [x] Register `POST /projects/{project_id}/files/search` route; require read access to project
+- [x] Return paginated results with total count (same FileReference shape with metadata included)
+- [x] Write tests: search with single key match, AND filter, OR filter, NOT filter, nested AND/OR/NOT, empty filters (return all), no results
+- [x] Run project test suite - must pass before task 4
 
 ### Task 4: Search summary and aggregation API
 

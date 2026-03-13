@@ -11,7 +11,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 use crate::config::AppConfig;
-use crate::db::models::{File, FileLocation, FileReference, Project, Storage, UserProject};
+use crate::db::models::{
+    File, FileLocation, FileReference, MetadataFilter, Project, Storage, UserProject,
+};
 use crate::error::AppError;
 use crate::services::{FileService, TierService};
 use crate::storage::StorageRegistry;
@@ -382,6 +384,47 @@ async fn restore_file(
     Ok(HttpResponse::Accepted().json(task))
 }
 
+// ─── Metadata search ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct MetadataSearchRequest {
+    pub filters: Option<MetadataFilter>,
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+}
+
+async fn search_files(
+    pool: web::Data<PgPool>,
+    path: web::Path<Uuid>,
+    user: AuthenticatedUser,
+    body: web::Json<MetadataSearchRequest>,
+) -> Result<HttpResponse, AppError> {
+    let project_id = path.into_inner();
+
+    // Verify project exists and user has read access (admin, owner, or member)
+    let project = Project::find_by_id(pool.get_ref(), project_id).await?;
+    if !user.is_admin() && !user.is_owner(project.owner_id) {
+        let is_member = UserProject::is_member(pool.get_ref(), user.user_id, project_id).await?;
+        if !is_member {
+            return Err(AppError::Forbidden("Access denied: not a member".to_string()));
+        }
+    }
+
+    let page = body.page.unwrap_or(1);
+    let per_page = body.per_page.unwrap_or(50);
+
+    let result = FileReference::search_by_metadata(
+        pool.get_ref(),
+        project_id,
+        body.filters.as_ref(),
+        page,
+        per_page,
+    )
+    .await?;
+
+    Ok(HttpResponse::Ok().json(result))
+}
+
 // ─── Local temp URL download ─────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -458,6 +501,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         web::resource("/projects/{project_id}/files")
             .route(web::post().to(upload_file))
             .route(web::get().to(list_project_files)),
+    )
+    .service(
+        web::resource("/projects/{project_id}/files/search")
+            .route(web::post().to(search_files)),
     )
     .service(
         web::resource("/files/{id}")
@@ -688,6 +735,92 @@ mod tests {
         assert_eq!(json["file_reference"]["metadata"]["priority"], 1);
     }
 
+    // ─── Metadata search tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_metadata_search_request_defaults() {
+        let json = serde_json::json!({});
+        let req: MetadataSearchRequest = serde_json::from_value(json).unwrap();
+        assert!(req.filters.is_none());
+        assert!(req.page.is_none());
+        assert!(req.per_page.is_none());
+    }
+
+    #[test]
+    fn test_metadata_search_request_with_filters() {
+        let json = serde_json::json!({
+            "filters": {"key": "env", "value": "prod"},
+            "page": 2,
+            "per_page": 25
+        });
+        let req: MetadataSearchRequest = serde_json::from_value(json).unwrap();
+        assert!(req.filters.is_some());
+        assert_eq!(req.page, Some(2));
+        assert_eq!(req.per_page, Some(25));
+    }
+
+    #[test]
+    fn test_metadata_search_request_with_and_filter() {
+        let json = serde_json::json!({
+            "filters": {
+                "and": [
+                    {"key": "env", "value": "prod"},
+                    {"not": {"key": "status", "value": "deprecated"}}
+                ]
+            }
+        });
+        let req: MetadataSearchRequest = serde_json::from_value(json).unwrap();
+        assert!(req.filters.is_some());
+        match req.filters.unwrap() {
+            crate::db::models::MetadataFilter::And { and } => {
+                assert_eq!(and.len(), 2);
+            }
+            _ => panic!("Expected And filter"),
+        }
+    }
+
+    #[test]
+    fn test_metadata_search_request_with_or_filter() {
+        let json = serde_json::json!({
+            "filters": {
+                "or": [
+                    {"key": "env", "value": "prod"},
+                    {"key": "env", "value": "staging"}
+                ]
+            }
+        });
+        let req: MetadataSearchRequest = serde_json::from_value(json).unwrap();
+        assert!(req.filters.is_some());
+    }
+
+    #[test]
+    fn test_metadata_search_request_with_nested_filters() {
+        let json = serde_json::json!({
+            "filters": {
+                "and": [
+                    {"key": "env", "value": "prod"},
+                    {"or": [
+                        {"key": "tier", "value": "hot"},
+                        {"key": "tier", "value": "warm"}
+                    ]},
+                    {"not": {"key": "archived", "value": true}}
+                ]
+            },
+            "page": 1,
+            "per_page": 10
+        });
+        let req: MetadataSearchRequest = serde_json::from_value(json).unwrap();
+        assert!(req.filters.is_some());
+    }
+
+    #[test]
+    fn test_metadata_search_empty_filters_returns_all() {
+        // Empty filters (None) means no metadata filter => returns all
+        let json = serde_json::json!({"filters": null});
+        let req: MetadataSearchRequest = serde_json::from_value(json).unwrap();
+        assert!(req.filters.is_none());
+    }
+
     // ─── Auth enforcement tests ───────────────────────────────────────────────
 
     use crate::config::AuthConfig;
@@ -800,6 +933,28 @@ mod tests {
         let id = uuid::Uuid::new_v4();
         let req = actix_web::test::TestRequest::post()
             .uri(&format!("/files/{}/restore", id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_search_files_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/projects/{project_id}/files/search",
+                    actix_web::web::post().to(search_files),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::post()
+            .uri(&format!("/projects/{}/files/search", id))
+            .set_json(serde_json::json!({}))
             .to_request();
         let resp = actix_web::test::call_service(&app, req).await;
         assert_eq!(resp.status(), 401);

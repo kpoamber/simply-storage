@@ -537,6 +537,153 @@ impl FileReference {
     }
 }
 
+// ─── Metadata Search ──────────────────────────────────────────────────────────
+
+/// Filter node for metadata search DSL.
+/// Supports leaf matches, AND/OR/NOT logical composition.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum MetadataFilter {
+    And { and: Vec<MetadataFilter> },
+    Or { or: Vec<MetadataFilter> },
+    Not { not: Box<MetadataFilter> },
+    Leaf { key: String, value: serde_json::Value },
+}
+
+/// Compiles MetadataFilter tree into a SQL WHERE clause fragment with numbered parameters.
+pub struct MetadataFilterCompiler {
+    next_param: usize,
+    params: Vec<serde_json::Value>,
+}
+
+impl MetadataFilterCompiler {
+    /// Create a new compiler. `start_param` is the next available parameter index (1-based).
+    pub fn new(start_param: usize) -> Self {
+        Self {
+            next_param: start_param,
+            params: Vec::new(),
+        }
+    }
+
+    /// Compile a filter tree into a SQL fragment and collect JSONB parameters.
+    pub fn compile(&mut self, filter: &MetadataFilter) -> AppResult<String> {
+        match filter {
+            MetadataFilter::Leaf { key, value } => {
+                let idx = self.next_param;
+                self.next_param += 1;
+                let json_obj = serde_json::json!({ key: value });
+                self.params.push(json_obj);
+                Ok(format!("metadata @> ${}::jsonb", idx))
+            }
+            MetadataFilter::And { and } => {
+                if and.is_empty() {
+                    return Ok("TRUE".to_string());
+                }
+                let parts: Vec<String> = and
+                    .iter()
+                    .map(|f| self.compile(f))
+                    .collect::<AppResult<_>>()?;
+                Ok(format!("({})", parts.join(" AND ")))
+            }
+            MetadataFilter::Or { or } => {
+                if or.is_empty() {
+                    return Ok("TRUE".to_string());
+                }
+                let parts: Vec<String> = or
+                    .iter()
+                    .map(|f| self.compile(f))
+                    .collect::<AppResult<_>>()?;
+                Ok(format!("({})", parts.join(" OR ")))
+            }
+            MetadataFilter::Not { not } => {
+                let inner = self.compile(not)?;
+                Ok(format!("NOT ({})", inner))
+            }
+        }
+    }
+
+    /// Consume the compiler and return the collected JSONB parameters.
+    pub fn into_params(self) -> Vec<serde_json::Value> {
+        self.params
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct SearchResult {
+    pub results: Vec<FileReference>,
+    pub total: i64,
+    pub page: i64,
+    pub per_page: i64,
+}
+
+impl FileReference {
+    /// Search file references by metadata filters with pagination, scoped to a project.
+    pub async fn search_by_metadata(
+        pool: &PgPool,
+        project_id: Uuid,
+        filters: Option<&MetadataFilter>,
+        page: i64,
+        per_page: i64,
+    ) -> AppResult<SearchResult> {
+        let limit = per_page.clamp(1, 100);
+        let offset = page.max(1).saturating_sub(1).saturating_mul(limit);
+
+        // $1 = project_id
+        let mut compiler = MetadataFilterCompiler::new(2);
+
+        let filter_clause = match filters {
+            Some(f) => compiler.compile(f)?,
+            None => "TRUE".to_string(),
+        };
+
+        let jsonb_params = compiler.into_params();
+        let limit_idx = jsonb_params.len() + 2;
+        let offset_idx = limit_idx + 1;
+
+        let count_sql = format!(
+            "SELECT COUNT(*)::bigint FROM file_references WHERE project_id = $1 AND {}",
+            filter_clause
+        );
+
+        let data_sql = format!(
+            "SELECT * FROM file_references WHERE project_id = $1 AND {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+            filter_clause, limit_idx, offset_idx
+        );
+
+        // Build count query args
+        use sqlx::Arguments;
+        let mut count_args = sqlx::postgres::PgArguments::default();
+        count_args.add(project_id).map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        for param in &jsonb_params {
+            count_args.add(param).map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        }
+
+        let count_row: (i64,) = sqlx::query_as_with(&count_sql, count_args)
+            .fetch_one(pool)
+            .await?;
+
+        // Build data query args
+        let mut data_args = sqlx::postgres::PgArguments::default();
+        data_args.add(project_id).map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        for param in &jsonb_params {
+            data_args.add(param).map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        }
+        data_args.add(limit).map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        data_args.add(offset).map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+
+        let rows: Vec<FileReference> = sqlx::query_as_with(&data_sql, data_args)
+            .fetch_all(pool)
+            .await?;
+
+        Ok(SearchResult {
+            results: rows,
+            total: count_row.0,
+            page: page.max(1),
+            per_page: limit,
+        })
+    }
+}
+
 // ─── FileLocation ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -1736,6 +1883,240 @@ mod tests {
             metadata: metadata.clone(),
         };
         assert_eq!(input.metadata, metadata);
+    }
+
+    // ─── Metadata filter/search tests ───────────────────────────────────────
+
+    #[test]
+    fn test_metadata_filter_leaf_deserialization() {
+        let json = serde_json::json!({"key": "env", "value": "prod"});
+        let filter: MetadataFilter = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            filter,
+            MetadataFilter::Leaf {
+                key: "env".to_string(),
+                value: serde_json::json!("prod"),
+            }
+        );
+    }
+
+    #[test]
+    fn test_metadata_filter_and_deserialization() {
+        let json = serde_json::json!({
+            "and": [
+                {"key": "env", "value": "prod"},
+                {"key": "version", "value": "2.0"}
+            ]
+        });
+        let filter: MetadataFilter = serde_json::from_value(json).unwrap();
+        match filter {
+            MetadataFilter::And { and } => {
+                assert_eq!(and.len(), 2);
+            }
+            _ => panic!("Expected And variant"),
+        }
+    }
+
+    #[test]
+    fn test_metadata_filter_or_deserialization() {
+        let json = serde_json::json!({
+            "or": [
+                {"key": "env", "value": "prod"},
+                {"key": "env", "value": "staging"}
+            ]
+        });
+        let filter: MetadataFilter = serde_json::from_value(json).unwrap();
+        match filter {
+            MetadataFilter::Or { or } => {
+                assert_eq!(or.len(), 2);
+            }
+            _ => panic!("Expected Or variant"),
+        }
+    }
+
+    #[test]
+    fn test_metadata_filter_not_deserialization() {
+        let json = serde_json::json!({
+            "not": {"key": "status", "value": "deprecated"}
+        });
+        let filter: MetadataFilter = serde_json::from_value(json).unwrap();
+        match filter {
+            MetadataFilter::Not { not } => {
+                assert_eq!(
+                    *not,
+                    MetadataFilter::Leaf {
+                        key: "status".to_string(),
+                        value: serde_json::json!("deprecated"),
+                    }
+                );
+            }
+            _ => panic!("Expected Not variant"),
+        }
+    }
+
+    #[test]
+    fn test_metadata_filter_nested_and_or_not() {
+        let json = serde_json::json!({
+            "and": [
+                {"key": "env", "value": "prod"},
+                {"not": {"key": "status", "value": "deprecated"}},
+                {"or": [
+                    {"key": "tier", "value": "hot"},
+                    {"key": "tier", "value": "warm"}
+                ]}
+            ]
+        });
+        let filter: MetadataFilter = serde_json::from_value(json).unwrap();
+        match filter {
+            MetadataFilter::And { and } => {
+                assert_eq!(and.len(), 3);
+            }
+            _ => panic!("Expected And variant"),
+        }
+    }
+
+    #[test]
+    fn test_metadata_filter_compiler_leaf() {
+        let filter = MetadataFilter::Leaf {
+            key: "env".to_string(),
+            value: serde_json::json!("prod"),
+        };
+        let mut compiler = MetadataFilterCompiler::new(2);
+        let sql = compiler.compile(&filter).unwrap();
+        assert_eq!(sql, "metadata @> $2::jsonb");
+        let params = compiler.into_params();
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0], serde_json::json!({"env": "prod"}));
+    }
+
+    #[test]
+    fn test_metadata_filter_compiler_and() {
+        let filter = MetadataFilter::And {
+            and: vec![
+                MetadataFilter::Leaf {
+                    key: "env".to_string(),
+                    value: serde_json::json!("prod"),
+                },
+                MetadataFilter::Leaf {
+                    key: "version".to_string(),
+                    value: serde_json::json!("2.0"),
+                },
+            ],
+        };
+        let mut compiler = MetadataFilterCompiler::new(2);
+        let sql = compiler.compile(&filter).unwrap();
+        assert_eq!(sql, "(metadata @> $2::jsonb AND metadata @> $3::jsonb)");
+        assert_eq!(compiler.into_params().len(), 2);
+    }
+
+    #[test]
+    fn test_metadata_filter_compiler_or() {
+        let filter = MetadataFilter::Or {
+            or: vec![
+                MetadataFilter::Leaf {
+                    key: "env".to_string(),
+                    value: serde_json::json!("prod"),
+                },
+                MetadataFilter::Leaf {
+                    key: "env".to_string(),
+                    value: serde_json::json!("staging"),
+                },
+            ],
+        };
+        let mut compiler = MetadataFilterCompiler::new(2);
+        let sql = compiler.compile(&filter).unwrap();
+        assert_eq!(sql, "(metadata @> $2::jsonb OR metadata @> $3::jsonb)");
+    }
+
+    #[test]
+    fn test_metadata_filter_compiler_not() {
+        let filter = MetadataFilter::Not {
+            not: Box::new(MetadataFilter::Leaf {
+                key: "status".to_string(),
+                value: serde_json::json!("deprecated"),
+            }),
+        };
+        let mut compiler = MetadataFilterCompiler::new(2);
+        let sql = compiler.compile(&filter).unwrap();
+        assert_eq!(sql, "NOT (metadata @> $2::jsonb)");
+    }
+
+    #[test]
+    fn test_metadata_filter_compiler_nested() {
+        let filter = MetadataFilter::And {
+            and: vec![
+                MetadataFilter::Leaf {
+                    key: "env".to_string(),
+                    value: serde_json::json!("prod"),
+                },
+                MetadataFilter::Not {
+                    not: Box::new(MetadataFilter::Leaf {
+                        key: "status".to_string(),
+                        value: serde_json::json!("deprecated"),
+                    }),
+                },
+                MetadataFilter::Or {
+                    or: vec![
+                        MetadataFilter::Leaf {
+                            key: "tier".to_string(),
+                            value: serde_json::json!("hot"),
+                        },
+                        MetadataFilter::Leaf {
+                            key: "tier".to_string(),
+                            value: serde_json::json!("warm"),
+                        },
+                    ],
+                },
+            ],
+        };
+        let mut compiler = MetadataFilterCompiler::new(2);
+        let sql = compiler.compile(&filter).unwrap();
+        assert_eq!(
+            sql,
+            "(metadata @> $2::jsonb AND NOT (metadata @> $3::jsonb) AND (metadata @> $4::jsonb OR metadata @> $5::jsonb))"
+        );
+        assert_eq!(compiler.into_params().len(), 4);
+    }
+
+    #[test]
+    fn test_metadata_filter_compiler_empty_and() {
+        let filter = MetadataFilter::And { and: vec![] };
+        let mut compiler = MetadataFilterCompiler::new(2);
+        let sql = compiler.compile(&filter).unwrap();
+        assert_eq!(sql, "TRUE");
+        assert_eq!(compiler.into_params().len(), 0);
+    }
+
+    #[test]
+    fn test_metadata_filter_compiler_empty_or() {
+        let filter = MetadataFilter::Or { or: vec![] };
+        let mut compiler = MetadataFilterCompiler::new(2);
+        let sql = compiler.compile(&filter).unwrap();
+        assert_eq!(sql, "TRUE");
+    }
+
+    #[test]
+    fn test_search_result_serialization() {
+        let now = Utc::now();
+        let result = SearchResult {
+            results: vec![FileReference {
+                id: Uuid::new_v4(),
+                file_id: Uuid::new_v4(),
+                project_id: Uuid::new_v4(),
+                original_name: "test.txt".to_string(),
+                metadata: serde_json::json!({"env": "prod"}),
+                created_at: now,
+            }],
+            total: 1,
+            page: 1,
+            per_page: 50,
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["total"], 1);
+        assert_eq!(json["page"], 1);
+        assert_eq!(json["per_page"], 50);
+        assert_eq!(json["results"].as_array().unwrap().len(), 1);
+        assert_eq!(json["results"][0]["metadata"]["env"], "prod");
     }
 
     #[test]
