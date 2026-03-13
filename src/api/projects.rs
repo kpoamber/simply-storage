@@ -2,7 +2,10 @@ use actix_web::{web, HttpResponse};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::db::models::{CreateProject, Project, UpdateProject};
+use crate::db::models::{
+    CreateProject, CreateProjectStorage, Project, ProjectStorage, Storage, UpdateProject,
+    UpdateProjectStorage,
+};
 use crate::error::AppError;
 
 async fn create_project(
@@ -71,6 +74,65 @@ async fn delete_project(
     Ok(HttpResponse::NoContent().finish())
 }
 
+// ─── Project-Storage assignment endpoints ────────────────────────────────────
+
+async fn list_project_storages(
+    pool: web::Data<PgPool>,
+    path: web::Path<Uuid>,
+) -> Result<HttpResponse, AppError> {
+    let project_id = path.into_inner();
+    Project::find_by_id(pool.get_ref(), project_id).await?;
+
+    let assignments = ProjectStorage::list_for_project(pool.get_ref(), project_id).await?;
+    Ok(HttpResponse::Ok().json(assignments))
+}
+
+async fn assign_storage(
+    pool: web::Data<PgPool>,
+    path: web::Path<Uuid>,
+    body: web::Json<CreateProjectStorage>,
+) -> Result<HttpResponse, AppError> {
+    let project_id = path.into_inner();
+    Project::find_by_id(pool.get_ref(), project_id).await?;
+    Storage::find_by_id(pool.get_ref(), body.storage_id).await?;
+
+    let assignment = ProjectStorage::create(pool.get_ref(), project_id, &body).await?;
+    Ok(HttpResponse::Created().json(assignment))
+}
+
+async fn update_project_storage(
+    pool: web::Data<PgPool>,
+    path: web::Path<(Uuid, Uuid)>,
+    body: web::Json<UpdateProjectStorage>,
+) -> Result<HttpResponse, AppError> {
+    let (project_id, storage_id) = path.into_inner();
+    let assignment =
+        ProjectStorage::update(pool.get_ref(), project_id, storage_id, &body).await?;
+    Ok(HttpResponse::Ok().json(assignment))
+}
+
+async fn remove_storage_assignment(
+    pool: web::Data<PgPool>,
+    path: web::Path<(Uuid, Uuid)>,
+) -> Result<HttpResponse, AppError> {
+    let (project_id, storage_id) = path.into_inner();
+    ProjectStorage::delete(pool.get_ref(), project_id, storage_id).await?;
+    Ok(HttpResponse::NoContent().finish())
+}
+
+async fn list_available_storages(
+    pool: web::Data<PgPool>,
+    path: web::Path<Uuid>,
+) -> Result<HttpResponse, AppError> {
+    let project_id = path.into_inner();
+    Project::find_by_id(pool.get_ref(), project_id).await?;
+
+    let storages = ProjectStorage::list_available_storages(pool.get_ref(), project_id).await?;
+    // Redact sensitive config from available storages
+    let redacted: Vec<_> = storages.into_iter().map(|s| s.redacted()).collect();
+    Ok(HttpResponse::Ok().json(redacted))
+}
+
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::resource("/projects")
@@ -82,6 +144,20 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route(web::get().to(get_project))
             .route(web::put().to(update_project))
             .route(web::delete().to(delete_project)),
+    )
+    .service(
+        web::resource("/projects/{id}/storages")
+            .route(web::get().to(list_project_storages))
+            .route(web::post().to(assign_storage)),
+    )
+    .service(
+        web::resource("/projects/{id}/storages/{storage_id}")
+            .route(web::put().to(update_project_storage))
+            .route(web::delete().to(remove_storage_assignment)),
+    )
+    .service(
+        web::resource("/projects/{id}/available-storages")
+            .route(web::get().to(list_available_storages)),
     );
 }
 

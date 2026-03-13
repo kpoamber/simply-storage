@@ -27,6 +27,7 @@ pub struct S3StorageBackend {
     client: Client,
     bucket: String,
     prefix: String,
+    region: String,
     multipart_threshold: u64,
     part_size: u64,
 }
@@ -56,6 +57,7 @@ impl S3StorageBackend {
             "innovare-storage",
         );
 
+        let region = config.region.clone();
         let mut s3_config_builder = S3ConfigBuilder::new()
             .behavior_version(BehaviorVersion::latest())
             .region(Region::new(config.region))
@@ -72,6 +74,7 @@ impl S3StorageBackend {
             client,
             bucket: config.bucket,
             prefix: config.prefix,
+            region,
             multipart_threshold: config.multipart_threshold.unwrap_or(DEFAULT_MULTIPART_THRESHOLD),
             part_size: config.part_size.unwrap_or(DEFAULT_PART_SIZE),
         }
@@ -187,16 +190,37 @@ impl StorageBackend for S3StorageBackend {
             return self.multipart_upload(&key, &data).await;
         }
 
-        self.client
+        let result = self
+            .client
             .put_object()
             .bucket(&self.bucket)
             .key(&key)
-            .body(ByteStream::from(data))
+            .body(ByteStream::from(data.clone()))
             .send()
-            .await
-            .map_err(|e| AppError::Internal(format!("S3 upload failed: {}", e)))?;
+            .await;
 
-        Ok(())
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let err_str = format!("{}", e);
+                if err_str.contains("NoSuchBucket") {
+                    tracing::info!(bucket = %self.bucket, "Bucket not found, creating automatically");
+                    self.create_container(&self.bucket.clone()).await?;
+
+                    self.client
+                        .put_object()
+                        .bucket(&self.bucket)
+                        .key(&key)
+                        .body(ByteStream::from(data))
+                        .send()
+                        .await
+                        .map_err(|e| AppError::Internal(format!("S3 upload failed: {}", e)))?;
+                    Ok(())
+                } else {
+                    Err(AppError::Internal(format!("S3 upload failed: {}", e)))
+                }
+            }
+        }
     }
 
     async fn download(&self, path: &str) -> AppResult<Bytes> {
@@ -284,6 +308,47 @@ impl StorageBackend for S3StorageBackend {
             .map_err(|e| AppError::Internal(format!("S3 presigned URL generation failed: {}", e)))?;
 
         Ok(Some(presigned.uri().to_string()))
+    }
+
+    async fn list_containers(&self) -> AppResult<Vec<String>> {
+        let resp = self
+            .client
+            .list_buckets()
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("S3 list buckets failed: {}", e)))?;
+
+        let names: Vec<String> = resp
+            .buckets()
+            .iter()
+            .filter_map(|b| b.name().map(|n| n.to_string()))
+            .collect();
+
+        Ok(names)
+    }
+
+    async fn create_container(&self, name: &str) -> AppResult<()> {
+        let mut req = self.client.create_bucket().bucket(name);
+
+        // For regions other than us-east-1, we must specify a location constraint
+        if self.region != "us-east-1" {
+            let constraint = aws_sdk_s3::types::CreateBucketConfiguration::builder()
+                .location_constraint(aws_sdk_s3::types::BucketLocationConstraint::from(
+                    self.region.as_str(),
+                ))
+                .build();
+            req = req.create_bucket_configuration(constraint);
+        }
+
+        req.send()
+            .await
+            .map_err(|e| AppError::Internal(format!("S3 create bucket failed: {}", e)))?;
+
+        Ok(())
+    }
+
+    fn supports_containers(&self) -> bool {
+        true
     }
 
     async fn list(&self, prefix: &str) -> AppResult<Vec<String>> {

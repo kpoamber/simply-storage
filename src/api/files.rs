@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 use crate::config::AppConfig;
-use crate::db::models::{File, FileLocation, FileReference};
+use crate::db::models::{File, FileLocation, FileReference, Storage};
 use crate::error::AppError;
 use crate::services::{FileService, TierService};
 use crate::storage::StorageRegistry;
@@ -27,6 +27,15 @@ pub struct FileMetadata {
     pub file: File,
     pub locations: Vec<FileLocation>,
     pub references: Vec<FileReference>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FileReferenceWithSync {
+    #[serde(flatten)]
+    pub file_ref: FileReference,
+    pub sync_status: String,
+    pub synced_storages: i64,
+    pub total_storages: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -103,7 +112,42 @@ async fn list_project_files(
     let refs =
         FileReference::list_for_project(pool.get_ref(), project_id, query.limit(), query.offset())
             .await?;
-    Ok(HttpResponse::Ok().json(refs))
+
+    // Count total enabled storages available for this project
+    let total_storages = Storage::list_for_project(pool.get_ref(), project_id)
+        .await?
+        .len() as i64;
+
+    // Enrich each file reference with sync status
+    let mut result = Vec::with_capacity(refs.len());
+    for file_ref in refs {
+        let synced_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM file_locations WHERE file_id = $1 AND status = 'synced'",
+        )
+        .bind(file_ref.file_id)
+        .fetch_one(pool.get_ref())
+        .await
+        .unwrap_or((0,));
+
+        let sync_status = if total_storages == 0 {
+            "no_storage".to_string()
+        } else if synced_count.0 >= total_storages {
+            "synced".to_string()
+        } else if synced_count.0 > 0 {
+            "partial".to_string()
+        } else {
+            "pending".to_string()
+        };
+
+        result.push(FileReferenceWithSync {
+            file_ref,
+            sync_status,
+            synced_storages: synced_count.0,
+            total_storages,
+        });
+    }
+
+    Ok(HttpResponse::Ok().json(result))
 }
 
 async fn get_file_metadata(
@@ -135,9 +179,15 @@ async fn download_file(
     let file_id = path.into_inner();
     let result = file_service.download_file(file_id).await?;
 
-    Ok(HttpResponse::Ok()
-        .content_type(result.content_type)
-        .body(result.data))
+    let mut response = HttpResponse::Ok();
+    response.content_type(result.content_type);
+    if let Some(ref name) = result.original_name {
+        response.insert_header((
+            "Content-Disposition",
+            format!("attachment; filename=\"{}\"", name),
+        ));
+    }
+    Ok(response.body(result.data))
 }
 
 async fn get_temp_link(

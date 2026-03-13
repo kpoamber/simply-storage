@@ -60,7 +60,8 @@ function setupMocks(files = mockFiles) {
   mockGet.mockImplementation((url: string) => {
     if (url === '/projects/proj-1') return Promise.resolve({ data: mockProjectDetail });
     if (url.startsWith('/projects/proj-1/files')) return Promise.resolve({ data: files });
-    if (url === '/storages') return Promise.resolve({ data: [] });
+    if (url === '/projects/proj-1/storages') return Promise.resolve({ data: [] });
+    if (url === '/projects/proj-1/available-storages') return Promise.resolve({ data: [] });
     return Promise.reject(new Error('Unknown URL'));
   });
 }
@@ -178,23 +179,24 @@ describe('ProjectDetail', () => {
     mockGet.mockImplementation((url: string) => {
       if (url === '/projects/proj-1') return Promise.resolve({ data: mockProjectDetail });
       if (url.startsWith('/projects/proj-1/files')) return Promise.resolve({ data: [] });
-      if (url === '/storages') {
+      if (url === '/projects/proj-1/storages') {
         return Promise.resolve({
           data: [{
-            id: 's1', name: 'Local Disk', storage_type: 'local',
-            is_hot: true, enabled: true, file_count: 0, used_space: 0,
-            config: {}, project_id: null, created_at: '', updated_at: '',
+            id: 'ps-1', project_id: 'proj-1', storage_id: 's1',
+            container_override: null, prefix_override: null, is_active: true,
+            created_at: '', updated_at: '',
+            storage_name: 'Local Disk', storage_type: 'local', is_hot: true, enabled: true,
           }],
         });
       }
-      return Promise.reject(new Error('Unknown URL'));
+      if (url === '/projects/proj-1/available-storages') return Promise.resolve({ data: [] });
+      return Promise.resolve({ data: [] });
     });
 
     renderProjectDetail('proj-1');
 
     await waitFor(() => {
-      expect(screen.getByText('Assigned Storages')).toBeInTheDocument();
+      expect(screen.getByText('Local Disk')).toBeInTheDocument();
     });
-    expect(screen.getByText(/Local Disk/)).toBeInTheDocument();
   });
 });

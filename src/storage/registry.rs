@@ -151,6 +151,7 @@ pub async fn create_backend(
                     .ok_or_else(|| AppError::BadRequest("gcs storage requires 'private_key_pem'".to_string()))?
                     .to_string(),
                 token_uri: config["token_uri"].as_str().map(|s| s.to_string()),
+                gcp_project_id: config["gcp_project_id"].as_str().map(|s| s.to_string()),
             };
             Ok(Arc::new(GcsBackend::new(gcs_config)?))
         }

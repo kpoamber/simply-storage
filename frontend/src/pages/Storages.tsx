@@ -17,7 +17,7 @@ export default function Storages() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; storage_type: string; config: Record<string, unknown>; is_hot: boolean; project_id: string | null }) =>
+    mutationFn: (data: { name: string; storage_type: string; config: Record<string, unknown>; is_hot: boolean }) =>
       apiClient.post('/storages', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['storages'] });
@@ -175,7 +175,6 @@ function EditStorageModal({
             storage_type: storage.storage_type,
             config: storage.config,
             is_hot: storage.is_hot,
-            project_id: storage.project_id,
           }}
           onSubmit={(data) => onSubmit({ name: data.name, config: data.config, is_hot: data.is_hot })}
           isLoading={isLoading}

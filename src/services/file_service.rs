@@ -6,9 +6,11 @@ use uuid::Uuid;
 
 use crate::db::models::{
     CreateFile, CreateFileLocation, CreateFileReference, CreateSyncTask, File, FileLocation,
-    FileReference, Storage, SyncTask,
+    FileReference, ProjectStorage, Storage, SyncTask,
 };
 use crate::error::{AppError, AppResult};
+use crate::storage::registry::create_backend;
+use crate::storage::traits::StorageBackend;
 use crate::storage::StorageRegistry;
 
 /// Result returned after a successful file upload.
@@ -26,17 +28,23 @@ pub struct DownloadResult {
     pub data: Bytes,
     pub file: File,
     pub content_type: String,
+    pub original_name: Option<String>,
 }
 
 /// Core service handling file upload (with deduplication) and download operations.
 pub struct FileService {
     pool: PgPool,
     registry: Arc<StorageRegistry>,
+    hmac_secret: String,
 }
 
 impl FileService {
-    pub fn new(pool: PgPool, registry: Arc<StorageRegistry>) -> Self {
-        Self { pool, registry }
+    pub fn new(pool: PgPool, registry: Arc<StorageRegistry>, hmac_secret: String) -> Self {
+        Self {
+            pool,
+            registry,
+            hmac_secret,
+        }
     }
 
     /// Upload a file to the storage system with SHA-256 deduplication.
@@ -84,7 +92,7 @@ impl FileService {
 
         // 3b. If this is a new file, upload to primary storage
         if is_new {
-            let backend = self.registry.get(&primary_storage.id).await?;
+            let backend = self.get_project_backend(&primary_storage, project_id).await?;
             backend.upload(&storage_path, data).await?;
 
             // Create file_location for the primary storage
@@ -138,6 +146,7 @@ impl FileService {
     ///
     /// Finds the best available storage location (prefers hot storage),
     /// downloads the file data, and updates `last_accessed_at`.
+    /// Resolves container/prefix overrides from project_storages when applicable.
     pub async fn download_file(&self, file_id: Uuid) -> AppResult<DownloadResult> {
         // Look up the file record
         let file = File::find_by_id(&self.pool, file_id).await?;
@@ -151,18 +160,24 @@ impl FileService {
             )));
         }
 
+        // Get project_ids from file_references to resolve container overrides
+        let refs = FileReference::find_by_file_id(&self.pool, file_id).await?;
+
         // Try each location until we find one with a registered backend
         for location in &locations {
-            if let Ok(backend) = self.registry.get(&location.storage_id).await {
+            let backends = self
+                .resolve_backends_for_location(&location.storage_id, &refs)
+                .await;
+
+            for backend in &backends {
                 match backend.download(&location.storage_path).await {
                     Ok(data) => {
-                        // Update last_accessed_at
                         let _ = FileLocation::touch_accessed(&self.pool, location.id).await;
-
                         return Ok(DownloadResult {
                             data,
                             file: file.clone(),
                             content_type: file.content_type.clone(),
+                            original_name: refs.first().map(|r| r.original_name.clone()),
                         });
                     }
                     Err(e) => {
@@ -172,7 +187,6 @@ impl FileService {
                             error = %e,
                             "Failed to download from storage location, trying next"
                         );
-                        continue;
                     }
                 }
             }
@@ -192,9 +206,14 @@ impl FileService {
     ) -> AppResult<String> {
         let _file = File::find_by_id(&self.pool, file_id).await?;
         let locations = FileLocation::find_for_file(&self.pool, file_id).await?;
+        let refs = FileReference::find_by_file_id(&self.pool, file_id).await?;
 
         for location in &locations {
-            if let Ok(backend) = self.registry.get(&location.storage_id).await {
+            let backends = self
+                .resolve_backends_for_location(&location.storage_id, &refs)
+                .await;
+
+            for backend in &backends {
                 match backend
                     .generate_temp_url(&location.storage_path, expires_in)
                     .await
@@ -213,6 +232,75 @@ impl FileService {
             "No temp URL available for file {}",
             file_id
         )))
+    }
+
+    /// Resolve all possible backends for a storage location, considering container overrides
+    /// from project_storages. Returns override-based backends first, then the default backend.
+    async fn resolve_backends_for_location(
+        &self,
+        storage_id: &Uuid,
+        file_refs: &[FileReference],
+    ) -> Vec<Arc<dyn StorageBackend>> {
+        let mut backends: Vec<Arc<dyn StorageBackend>> = Vec::new();
+
+        // Try project-specific overrides first
+        if let Ok(storage) = Storage::find_by_id(&self.pool, *storage_id).await {
+            for fref in file_refs {
+                if let Ok(backend) = self.get_project_backend(&storage, fref.project_id).await {
+                    backends.push(backend);
+                }
+            }
+        }
+
+        // Fallback: default backend from registry (if not already covered)
+        if let Ok(default_backend) = self.registry.get(storage_id).await {
+            backends.push(default_backend);
+        }
+
+        backends
+    }
+
+    /// Get storage backends for a project, applying container/prefix overrides from project_storages.
+    /// Returns (Storage, backend, effective_storage_path_prefix) tuples.
+    async fn get_project_backend(
+        &self,
+        storage: &Storage,
+        project_id: Uuid,
+    ) -> AppResult<Arc<dyn StorageBackend>> {
+        let assignment =
+            ProjectStorage::find_for_project_and_storage(&self.pool, project_id, storage.id)
+                .await?;
+
+        if let Some(ps) = assignment {
+            if ps.container_override.is_some() || ps.prefix_override.is_some() {
+                let mut config = storage.config.clone();
+                if let Some(ref container) = ps.container_override {
+                    match storage.storage_type.as_str() {
+                        "s3" => {
+                            config["bucket"] =
+                                serde_json::Value::String(container.clone());
+                        }
+                        "azure" => {
+                            config["container"] =
+                                serde_json::Value::String(container.clone());
+                        }
+                        "gcs" => {
+                            config["bucket"] =
+                                serde_json::Value::String(container.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(ref prefix) = ps.prefix_override {
+                    config["prefix"] = serde_json::Value::String(prefix.clone());
+                }
+                return create_backend(&storage.storage_type, &config, &self.hmac_secret)
+                    .await;
+            }
+        }
+
+        // No overrides — use default backend from registry
+        self.registry.get(&storage.id).await
     }
 
     /// Find the primary storage for uploading: first hot, enabled storage
@@ -486,7 +574,7 @@ mod tests {
     #[tokio::test]
     async fn test_upload_new_file() {
         let (pool, registry, _dir, _storage_id, project_id) = setup_integration().await;
-        let service = FileService::new(pool, registry);
+        let service = FileService::new(pool, registry, "test-secret".to_string());
 
         let data = Bytes::from("hello world");
         let result = service
@@ -508,7 +596,7 @@ mod tests {
     #[tokio::test]
     async fn test_upload_duplicate_file() {
         let (pool, registry, _dir, _storage_id, project_id) = setup_integration().await;
-        let service = FileService::new(pool, registry);
+        let service = FileService::new(pool, registry, "test-secret".to_string());
 
         let data = Bytes::from("duplicate content");
 
@@ -536,7 +624,7 @@ mod tests {
     #[tokio::test]
     async fn test_download_file() {
         let (pool, registry, _dir, _storage_id, project_id) = setup_integration().await;
-        let service = FileService::new(pool, registry);
+        let service = FileService::new(pool, registry, "test-secret".to_string());
 
         let data = Bytes::from("download me");
         let upload_result = service
@@ -553,7 +641,7 @@ mod tests {
     #[tokio::test]
     async fn test_download_nonexistent_file() {
         let (pool, registry, _dir, _, _) = setup_integration().await;
-        let service = FileService::new(pool, registry);
+        let service = FileService::new(pool, registry, "test-secret".to_string());
 
         let result = service.download_file(Uuid::new_v4()).await;
         assert!(result.is_err());
@@ -563,7 +651,7 @@ mod tests {
     #[tokio::test]
     async fn test_concurrent_upload_same_file() {
         let (pool, registry, _dir, _storage_id, project_id) = setup_integration().await;
-        let service = Arc::new(FileService::new(pool, registry));
+        let service = Arc::new(FileService::new(pool, registry, "test-secret".to_string()));
 
         let data = Bytes::from("concurrent upload data");
 

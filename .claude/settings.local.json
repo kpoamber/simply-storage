@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/projects/innovare-storage/**)",
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo check:*)",
+      "Bash(cd C:/projects/innovare-storage/frontend && npm run build 2>&1)",
+      "Bash(cd C:/projects/innovare-storage/frontend && npm test 2>&1)",
+      "Bash(cd C:/projects/innovare-storage && docker-compose logs --tail=100 app 2>&1)",
+      "Bash(cd C:/projects/innovare-storage && docker-compose logs --tail=50 app 2>&1 | grep -i -A2 \"83ae1a96\\\\|download\\\\|error\\\\|ERROR\")"
+    ]
+  }
+}

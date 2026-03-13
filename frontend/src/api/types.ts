@@ -41,6 +41,9 @@ export interface FileReference {
   project_id: string;
   original_name: string;
   created_at: string;
+  sync_status?: string;
+  synced_storages?: number;
+  total_storages?: number;
 }
 
 export interface FileRecord {
@@ -71,6 +74,21 @@ export interface FileMetadata {
 export interface TempLinkResponse {
   url: string;
   expires_in_seconds: number;
+}
+
+export interface ProjectStorageAssignment {
+  id: string;
+  project_id: string;
+  storage_id: string;
+  container_override: string | null;
+  prefix_override: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  storage_name: string;
+  storage_type: string;
+  is_hot: boolean;
+  enabled: boolean;
 }
 
 export interface SyncTask {

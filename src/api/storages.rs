@@ -177,6 +177,46 @@ async fn list_storage_files(
     Ok(HttpResponse::Ok().json(locations))
 }
 
+// ─── Container management ────────────────────────────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+struct CreateContainerRequest {
+    name: String,
+}
+
+async fn list_storage_containers(
+    pool: web::Data<PgPool>,
+    registry: web::Data<Arc<StorageRegistry>>,
+    path: web::Path<Uuid>,
+) -> Result<HttpResponse, AppError> {
+    let storage_id = path.into_inner();
+    let _storage = Storage::find_by_id(pool.get_ref(), storage_id).await?;
+    let backend = registry.get(&storage_id).await?;
+
+    if !backend.supports_containers() {
+        return Err(AppError::BadRequest(
+            "This storage backend does not support container listing".to_string(),
+        ));
+    }
+
+    let containers = backend.list_containers().await?;
+    Ok(HttpResponse::Ok().json(containers))
+}
+
+async fn create_storage_container(
+    pool: web::Data<PgPool>,
+    registry: web::Data<Arc<StorageRegistry>>,
+    path: web::Path<Uuid>,
+    body: web::Json<CreateContainerRequest>,
+) -> Result<HttpResponse, AppError> {
+    let storage_id = path.into_inner();
+    let _storage = Storage::find_by_id(pool.get_ref(), storage_id).await?;
+    let backend = registry.get(&storage_id).await?;
+
+    backend.create_container(&body.name).await?;
+    Ok(HttpResponse::Created().json(serde_json::json!({"name": body.name})))
+}
+
 // ─── Route configuration ────────────────────────────────────────────────────────
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
@@ -193,6 +233,11 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     )
     .service(
         web::resource("/storages/{id}/files").route(web::get().to(list_storage_files)),
+    )
+    .service(
+        web::resource("/storages/{id}/containers")
+            .route(web::get().to(list_storage_containers))
+            .route(web::post().to(create_storage_container)),
     );
 }
 

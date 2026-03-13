@@ -49,7 +49,11 @@ async fn main() -> std::io::Result<()> {
         tracing::warn!("Failed to load storage backends from DB: {}", e);
     }
 
-    let file_service = FileService::new(pool.clone(), registry.clone());
+    let file_service = FileService::new(
+        pool.clone(),
+        registry.clone(),
+        config.storage.hmac_secret.clone(),
+    );
     let tier_service = TierService::new(pool.clone(), registry.clone());
     let bulk_service = BulkService::new(pool.clone(), registry.clone());
 
@@ -61,6 +65,7 @@ async fn main() -> std::io::Result<()> {
         pool.clone(),
         registry.clone(),
         config.sync.clone(),
+        config.storage.hmac_secret.clone(),
         cancel_token.clone(),
     );
     tracing::info!(

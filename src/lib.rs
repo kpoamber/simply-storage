@@ -53,6 +53,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
 /// Configure the full application including static file serving.
 /// This should be used in main.rs to set up the App.
 pub fn configure_app(cfg: &mut web::ServiceConfig) {
+    // Allow uploads up to 500MB
+    cfg.app_data(actix_multipart::form::MultipartFormConfig::default().total_limit(500 * 1024 * 1024));
+    cfg.app_data(actix_web::web::PayloadConfig::new(500 * 1024 * 1024));
+
     configure_routes(cfg);
 
     // Serve frontend static files from frontend/dist/

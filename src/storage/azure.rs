@@ -184,15 +184,67 @@ impl AzureBlobBackend {
     }
 }
 
-#[async_trait]
-impl StorageBackend for AzureBlobBackend {
-    async fn upload(&self, path: &str, data: Bytes) -> AppResult<()> {
-        let bp = self.blob_path(path);
-        let url = self.blob_url(&bp);
+impl AzureBlobBackend {
+    /// List all containers in this Azure storage account.
+    pub async fn list_account_containers(&self) -> AppResult<Vec<String>> {
+        let date = Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+
+        let query_params: Vec<(&str, &str)> = vec![("comp", "list")];
+        let auth = self.shared_key_auth(
+            "GET",
+            "",
+            &date,
+            None,
+            "",
+            &[],
+            &query_params,
+        )?;
+
+        let url = format!("{}/?comp=list", self.base_url);
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", auth)
+            .header("x-ms-date", &date)
+            .header("x-ms-version", API_VERSION)
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("Azure list containers failed: {}", e)))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Internal(format!(
+                "Azure list containers failed with status {}: {}",
+                status, body
+            )));
+        }
+
+        let body = resp.text().await.map_err(|e| {
+            AppError::Internal(format!("Azure list containers body read failed: {}", e))
+        })?;
+
+        let mut containers = Vec::new();
+        for section in body.split("<Container>").skip(1) {
+            if let Some(name_start) = section.find("<Name>") {
+                if let Some(name_end) = section.find("</Name>") {
+                    let name = &section[name_start + 6..name_end];
+                    containers.push(name.to_string());
+                }
+            }
+        }
+
+        Ok(containers)
+    }
+
+    /// Perform a single blob upload attempt, returning the raw response.
+    async fn upload_blob(&self, blob_path: &str, data: &Bytes) -> AppResult<reqwest::Response> {
+        let url = self.blob_url(blob_path);
         let date = Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string();
         let content_length = data.len();
 
-        let resource_path = format!("{}/{}", self.container, bp);
+        let resource_path = format!("{}/{}", self.container, blob_path);
         let auth = self.shared_key_auth(
             "PUT",
             &resource_path,
@@ -203,8 +255,7 @@ impl StorageBackend for AzureBlobBackend {
             &[],
         )?;
 
-        let resp = self
-            .client
+        self.client
             .put(&url)
             .header("Authorization", auth)
             .header("x-ms-date", &date)
@@ -214,11 +265,79 @@ impl StorageBackend for AzureBlobBackend {
             .body(data.to_vec())
             .send()
             .await
-            .map_err(|e| AppError::Internal(format!("Azure upload failed: {}", e)))?;
+            .map_err(|e| AppError::Internal(format!("Azure upload failed: {}", e)))
+    }
+
+    /// Create a new container in this Azure storage account.
+    pub async fn create_account_container(&self, name: &str) -> AppResult<()> {
+        let date = Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+
+        let resource_path = name.to_string();
+        let query_params: Vec<(&str, &str)> = vec![("restype", "container")];
+        let auth = self.shared_key_auth(
+            "PUT",
+            &resource_path,
+            &date,
+            Some(0),
+            "",
+            &[],
+            &query_params,
+        )?;
+
+        let url = format!("{}/{}?restype=container", self.base_url, name);
+
+        let resp = self
+            .client
+            .put(&url)
+            .header("Authorization", auth)
+            .header("x-ms-date", &date)
+            .header("x-ms-version", API_VERSION)
+            .header("Content-Length", "0")
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("Azure create container failed: {}", e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Internal(format!(
+                "Azure create container failed with status {}: {}",
+                status, body
+            )));
+        }
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl StorageBackend for AzureBlobBackend {
+    async fn upload(&self, path: &str, data: Bytes) -> AppResult<()> {
+        let bp = self.blob_path(path);
+
+        let resp = self.upload_blob(&bp, &data).await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+
+            // Auto-create container if it doesn't exist, then retry
+            if body.contains("ContainerNotFound") {
+                tracing::info!(container = %self.container, "Container not found, creating automatically");
+                self.create_account_container(&self.container.clone()).await?;
+
+                let retry_resp = self.upload_blob(&bp, &data).await?;
+                if !retry_resp.status().is_success() {
+                    let retry_status = retry_resp.status();
+                    let retry_body = retry_resp.text().await.unwrap_or_default();
+                    return Err(AppError::Internal(format!(
+                        "Azure upload failed with status {}: {}",
+                        retry_status, retry_body
+                    )));
+                }
+                return Ok(());
+            }
+
             return Err(AppError::Internal(format!(
                 "Azure upload failed with status {}: {}",
                 status, body
@@ -333,6 +452,18 @@ impl StorageBackend for AzureBlobBackend {
         let bp = self.blob_path(path);
         let url = self.generate_sas_url(&bp, expires_in)?;
         Ok(Some(url))
+    }
+
+    async fn list_containers(&self) -> AppResult<Vec<String>> {
+        self.list_account_containers().await
+    }
+
+    async fn create_container(&self, name: &str) -> AppResult<()> {
+        self.create_account_container(name).await
+    }
+
+    fn supports_containers(&self) -> bool {
+        true
     }
 
     async fn list(&self, prefix: &str) -> AppResult<Vec<String>> {

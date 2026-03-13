@@ -221,9 +221,10 @@ impl Storage {
 
     pub async fn list_for_project(pool: &PgPool, project_id: Uuid) -> AppResult<Vec<Storage>> {
         let rows = sqlx::query_as::<_, Storage>(
-            r#"SELECT * FROM storages
-               WHERE enabled = TRUE AND (project_id IS NULL OR project_id = $1)
-               ORDER BY created_at DESC"#,
+            r#"SELECT s.* FROM storages s
+               JOIN project_storages ps ON ps.storage_id = s.id
+               WHERE ps.project_id = $1 AND ps.is_active = TRUE AND s.enabled = TRUE
+               ORDER BY s.is_hot DESC, s.created_at DESC"#,
         )
         .bind(project_id)
         .fetch_all(pool)
@@ -442,6 +443,16 @@ impl FileReference {
             )));
         }
         Ok(())
+    }
+
+    pub async fn find_by_file_id(pool: &PgPool, file_id: Uuid) -> AppResult<Vec<FileReference>> {
+        let rows = sqlx::query_as::<_, FileReference>(
+            "SELECT * FROM file_references WHERE file_id = $1",
+        )
+        .bind(file_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
     }
 
     pub async fn delete_by_file_and_project(
@@ -911,6 +922,190 @@ impl Node {
         .await?;
 
         Ok(rows)
+    }
+}
+
+// ─── ProjectStorage ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ProjectStorage {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub storage_id: Uuid,
+    pub container_override: Option<String>,
+    pub prefix_override: Option<String>,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct ProjectStorageWithDetails {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub storage_id: Uuid,
+    pub container_override: Option<String>,
+    pub prefix_override: Option<String>,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub storage_name: String,
+    pub storage_type: String,
+    pub is_hot: bool,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateProjectStorage {
+    pub storage_id: Uuid,
+    pub container_override: Option<String>,
+    pub prefix_override: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateProjectStorage {
+    pub container_override: Option<Option<String>>,
+    pub prefix_override: Option<Option<String>>,
+    pub is_active: Option<bool>,
+}
+
+impl ProjectStorage {
+    pub async fn create(
+        pool: &PgPool,
+        project_id: Uuid,
+        input: &CreateProjectStorage,
+    ) -> AppResult<ProjectStorage> {
+        let row = sqlx::query_as::<_, ProjectStorage>(
+            r#"INSERT INTO project_storages (project_id, storage_id, container_override, prefix_override)
+               VALUES ($1, $2, $3, $4)
+               RETURNING *"#,
+        )
+        .bind(project_id)
+        .bind(input.storage_id)
+        .bind(&input.container_override)
+        .bind(&input.prefix_override)
+        .fetch_one(pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    pub async fn list_for_project(
+        pool: &PgPool,
+        project_id: Uuid,
+    ) -> AppResult<Vec<ProjectStorageWithDetails>> {
+        let rows = sqlx::query_as::<_, ProjectStorageWithDetails>(
+            r#"SELECT ps.id, ps.project_id, ps.storage_id,
+                      ps.container_override, ps.prefix_override,
+                      ps.is_active, ps.created_at, ps.updated_at,
+                      s.name AS storage_name, s.storage_type,
+                      s.is_hot, s.enabled
+               FROM project_storages ps
+               JOIN storages s ON s.id = ps.storage_id
+               WHERE ps.project_id = $1
+               ORDER BY s.is_hot DESC, s.name ASC"#,
+        )
+        .bind(project_id)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    pub async fn update(
+        pool: &PgPool,
+        project_id: Uuid,
+        storage_id: Uuid,
+        input: &UpdateProjectStorage,
+    ) -> AppResult<ProjectStorage> {
+        let current = sqlx::query_as::<_, ProjectStorage>(
+            "SELECT * FROM project_storages WHERE project_id = $1 AND storage_id = $2",
+        )
+        .bind(project_id)
+        .bind(storage_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Project storage assignment not found".to_string()))?;
+
+        let container_override = match &input.container_override {
+            Some(v) => v.clone(),
+            None => current.container_override,
+        };
+        let prefix_override = match &input.prefix_override {
+            Some(v) => v.clone(),
+            None => current.prefix_override,
+        };
+        let is_active = input.is_active.unwrap_or(current.is_active);
+
+        let row = sqlx::query_as::<_, ProjectStorage>(
+            r#"UPDATE project_storages
+               SET container_override = $1, prefix_override = $2, is_active = $3
+               WHERE project_id = $4 AND storage_id = $5
+               RETURNING *"#,
+        )
+        .bind(&container_override)
+        .bind(&prefix_override)
+        .bind(is_active)
+        .bind(project_id)
+        .bind(storage_id)
+        .fetch_one(pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    pub async fn delete(pool: &PgPool, project_id: Uuid, storage_id: Uuid) -> AppResult<()> {
+        let result = sqlx::query(
+            "DELETE FROM project_storages WHERE project_id = $1 AND storage_id = $2",
+        )
+        .bind(project_id)
+        .bind(storage_id)
+        .execute(pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(
+                "Project storage assignment not found".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub async fn list_available_storages(
+        pool: &PgPool,
+        project_id: Uuid,
+    ) -> AppResult<Vec<Storage>> {
+        let rows = sqlx::query_as::<_, Storage>(
+            r#"SELECT s.* FROM storages s
+               WHERE s.enabled = TRUE
+               AND s.id NOT IN (
+                   SELECT storage_id FROM project_storages WHERE project_id = $1
+               )
+               ORDER BY s.name ASC"#,
+        )
+        .bind(project_id)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    /// Get a single assignment with container/prefix overrides.
+    pub async fn find_for_project_and_storage(
+        pool: &PgPool,
+        project_id: Uuid,
+        storage_id: Uuid,
+    ) -> AppResult<Option<ProjectStorage>> {
+        let row = sqlx::query_as::<_, ProjectStorage>(
+            "SELECT * FROM project_storages WHERE project_id = $1 AND storage_id = $2",
+        )
+        .bind(project_id)
+        .bind(storage_id)
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(row)
     }
 }
 

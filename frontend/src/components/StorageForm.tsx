@@ -80,9 +80,8 @@ interface StorageFormProps {
     storage_type: string;
     config: Record<string, unknown>;
     is_hot: boolean;
-    project_id: string | null;
   };
-  onSubmit: (data: { name: string; storage_type: string; config: Record<string, unknown>; is_hot: boolean; project_id: string | null }) => void;
+  onSubmit: (data: { name: string; storage_type: string; config: Record<string, unknown>; is_hot: boolean }) => void;
   onCancel: () => void;
   isLoading: boolean;
   isEdit?: boolean;
@@ -124,7 +123,7 @@ export default function StorageForm({ initialValues, onSubmit, onCancel, isLoadi
         config[field.key] = field.type === 'number' ? parseInt(val, 10) : val;
       }
     }
-    onSubmit({ name, storage_type: storageType, config, is_hot: isHot, project_id: null });
+    onSubmit({ name, storage_type: storageType, config, is_hot: isHot });
   };
 
   return (

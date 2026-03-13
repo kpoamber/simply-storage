@@ -29,6 +29,8 @@ pub struct GcsConfig {
     pub private_key_pem: String,
     /// Token URI (defaults to Google's OAuth2 endpoint).
     pub token_uri: Option<String>,
+    /// GCP project ID (for bucket listing/creation). If not set, parsed from client_email.
+    pub gcp_project_id: Option<String>,
 }
 
 struct CachedToken {
@@ -44,6 +46,7 @@ pub struct GcsBackend {
     client_email: String,
     private_key: RsaPrivateKey,
     token_uri: String,
+    gcp_project_id: Option<String>,
     cached_token: RwLock<Option<CachedToken>>,
 }
 
@@ -55,6 +58,15 @@ impl GcsBackend {
 
         let token_uri = config.token_uri.unwrap_or_else(|| TOKEN_URI.to_string());
 
+        // Derive GCP project ID from config or from client_email (sa@PROJECT.iam.gserviceaccount.com)
+        let gcp_project_id = config.gcp_project_id.or_else(|| {
+            config.client_email
+                .split('@')
+                .nth(1)?
+                .strip_suffix(".iam.gserviceaccount.com")
+                .map(|s| s.to_string())
+        });
+
         Ok(Self {
             client: reqwest::Client::new(),
             bucket: config.bucket,
@@ -62,6 +74,7 @@ impl GcsBackend {
             client_email: config.client_email,
             private_key,
             token_uri,
+            gcp_project_id,
             cached_token: RwLock::new(None),
         })
     }
@@ -244,6 +257,34 @@ impl StorageBackend for GcsBackend {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
+
+            // Auto-create bucket if it doesn't exist, then retry
+            if status == reqwest::StatusCode::NOT_FOUND && body.contains("notFound") {
+                tracing::info!(bucket = %self.bucket, "Bucket not found, creating automatically");
+                self.create_container(&self.bucket.clone()).await?;
+
+                let retry_token = self.get_access_token().await?;
+                let retry_resp = self
+                    .client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {}", retry_token))
+                    .header("Content-Type", "application/octet-stream")
+                    .body(data.to_vec())
+                    .send()
+                    .await
+                    .map_err(|e| AppError::Internal(format!("GCS upload failed: {}", e)))?;
+
+                if !retry_resp.status().is_success() {
+                    let retry_status = retry_resp.status();
+                    let retry_body = retry_resp.text().await.unwrap_or_default();
+                    return Err(AppError::Internal(format!(
+                        "GCS upload failed with status {}: {}",
+                        retry_status, retry_body
+                    )));
+                }
+                return Ok(());
+            }
+
             return Err(AppError::Internal(format!(
                 "GCS upload failed with status {}: {}",
                 status, body
@@ -363,6 +404,94 @@ impl StorageBackend for GcsBackend {
         Ok(Some(url))
     }
 
+    async fn list_containers(&self) -> AppResult<Vec<String>> {
+        let project_id = self.gcp_project_id.as_deref().ok_or_else(|| {
+            AppError::BadRequest(
+                "GCP project ID is required for bucket listing. Set gcp_project_id in config or use a standard service account email.".to_string(),
+            )
+        })?;
+
+        let token = self.get_access_token().await?;
+        let url = format!(
+            "{}/b?project={}",
+            GCS_API_V1,
+            urlencoding::encode(project_id),
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("GCS list buckets failed: {}", e)))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Internal(format!(
+                "GCS list buckets failed with status {}: {}",
+                status, body
+            )));
+        }
+
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| AppError::Internal(format!("GCS list buckets parse failed: {}", e)))?;
+
+        let mut buckets = Vec::new();
+        if let Some(items) = body["items"].as_array() {
+            for item in items {
+                if let Some(name) = item["name"].as_str() {
+                    buckets.push(name.to_string());
+                }
+            }
+        }
+
+        Ok(buckets)
+    }
+
+    async fn create_container(&self, name: &str) -> AppResult<()> {
+        let project_id = self.gcp_project_id.as_deref().ok_or_else(|| {
+            AppError::BadRequest(
+                "GCP project ID is required for bucket creation. Set gcp_project_id in config or use a standard service account email.".to_string(),
+            )
+        })?;
+
+        let token = self.get_access_token().await?;
+        let url = format!(
+            "{}/b?project={}",
+            GCS_API_V1,
+            urlencoding::encode(project_id),
+        );
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Content-Type", "application/json")
+            .json(&serde_json::json!({"name": name}))
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("GCS create bucket failed: {}", e)))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Internal(format!(
+                "GCS create bucket failed with status {}: {}",
+                status, body
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn supports_containers(&self) -> bool {
+        true
+    }
+
     async fn list(&self, prefix: &str) -> AppResult<Vec<String>> {
         let full_prefix = self.object_path(prefix);
         let token = self.get_access_token().await?;
@@ -455,6 +584,7 @@ mod tests {
             client_email: "test@test-project.iam.gserviceaccount.com".to_string(),
             private_key_pem: pem,
             token_uri: Some("http://127.0.0.1:19997/token".to_string()),
+            gcp_project_id: None,
         }
     }
 

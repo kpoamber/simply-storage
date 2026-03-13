@@ -4,7 +4,8 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::SyncConfig;
-use crate::db::models::{CreateFileLocation, FileLocation, SyncTask};
+use crate::db::models::{CreateFileLocation, FileLocation, ProjectStorage, Storage, SyncTask};
+use crate::storage::registry::create_backend;
 use crate::storage::StorageRegistry;
 
 /// Background sync worker that processes pending sync tasks.
@@ -17,6 +18,7 @@ pub struct SyncWorker {
     pool: PgPool,
     registry: Arc<StorageRegistry>,
     config: SyncConfig,
+    hmac_secret: String,
     cancel_token: CancellationToken,
 }
 
@@ -25,12 +27,14 @@ impl SyncWorker {
         pool: PgPool,
         registry: Arc<StorageRegistry>,
         config: SyncConfig,
+        hmac_secret: String,
         cancel_token: CancellationToken,
     ) -> Self {
         Self {
             pool,
             registry,
             config,
+            hmac_secret,
             cancel_token,
         }
     }
@@ -41,6 +45,7 @@ impl SyncWorker {
         pool: PgPool,
         registry: Arc<StorageRegistry>,
         config: SyncConfig,
+        hmac_secret: String,
         cancel_token: CancellationToken,
     ) -> Vec<tokio::task::JoinHandle<()>> {
         let num_workers = config.num_workers;
@@ -51,6 +56,7 @@ impl SyncWorker {
                 pool.clone(),
                 registry.clone(),
                 config.clone(),
+                hmac_secret.clone(),
                 cancel_token.clone(),
             );
 
@@ -177,14 +183,65 @@ impl SyncWorker {
         }
     }
 
+    /// Resolve the backend for a storage, applying any container/prefix overrides
+    /// from the project_storages assignment.
+    async fn resolve_backend(
+        &self,
+        storage_id: uuid::Uuid,
+        project_id: Option<uuid::Uuid>,
+    ) -> Result<Arc<dyn crate::storage::traits::StorageBackend>, crate::error::AppError> {
+        if let Some(pid) = project_id {
+            let storage = Storage::find_by_id(&self.pool, storage_id).await?;
+            if let Some(ps) =
+                ProjectStorage::find_for_project_and_storage(&self.pool, pid, storage_id).await?
+            {
+                if ps.container_override.is_some() || ps.prefix_override.is_some() {
+                    let mut config = storage.config.clone();
+                    if let Some(ref container) = ps.container_override {
+                        match storage.storage_type.as_str() {
+                            "s3" => {
+                                config["bucket"] =
+                                    serde_json::Value::String(container.clone());
+                            }
+                            "azure" => {
+                                config["container"] =
+                                    serde_json::Value::String(container.clone());
+                            }
+                            "gcs" => {
+                                config["bucket"] =
+                                    serde_json::Value::String(container.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(ref prefix) = ps.prefix_override {
+                        config["prefix"] = serde_json::Value::String(prefix.clone());
+                    }
+                    return create_backend(&storage.storage_type, &config, &self.hmac_secret)
+                        .await;
+                }
+            }
+        }
+        self.registry.get(&storage_id).await
+    }
+
     /// Execute the actual sync: download from source storage, upload to target storage,
     /// and create/update the file_location record.
     async fn execute_sync(&self, task: &SyncTask) -> Result<(), crate::error::AppError> {
-        // Get source backend
-        let source_backend = self.registry.get(&task.source_storage_id).await?;
+        // Look up a project_id associated with this file to resolve container overrides
+        let project_id: Option<uuid::Uuid> = sqlx::query_as::<_, (uuid::Uuid,)>(
+            "SELECT project_id FROM file_references WHERE file_id = $1 LIMIT 1",
+        )
+        .bind(task.file_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(|r| r.0);
 
-        // Get target backend
-        let target_backend = self.registry.get(&task.target_storage_id).await?;
+        // Get source backend (with overrides if applicable)
+        let source_backend = self.resolve_backend(task.source_storage_id, project_id).await?;
+
+        // Get target backend (with overrides if applicable)
+        let target_backend = self.resolve_backend(task.target_storage_id, project_id).await?;
 
         // Find the storage path from the source file_location
         let source_locations =
@@ -470,7 +527,7 @@ mod tests {
         // Process the sync
         let config = test_sync_config();
         let cancel_token = CancellationToken::new();
-        let worker = SyncWorker::new(pool.clone(), registry, config, cancel_token);
+        let worker = SyncWorker::new(pool.clone(), registry, config, "test-secret".to_string(), cancel_token);
         worker.process_task(&claimed[0], 0).await;
 
         // Verify task is completed
@@ -547,6 +604,7 @@ mod tests {
             pool,
             registry,
             config,
+            "test-secret".to_string(),
             cancel_token.clone(),
         );
 

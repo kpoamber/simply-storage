@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use std::time::Duration;
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 /// Core abstraction for all storage backends.
 ///
@@ -35,4 +35,22 @@ pub trait StorageBackend: Send + Sync {
 
     /// List files under the given prefix.
     async fn list(&self, prefix: &str) -> AppResult<Vec<String>>;
+
+    /// List available containers/buckets on this storage backend.
+    /// Returns an empty vec for backends that don't support this concept.
+    async fn list_containers(&self) -> AppResult<Vec<String>> {
+        Ok(vec![])
+    }
+
+    /// Create a new container/bucket on this storage backend.
+    async fn create_container(&self, _name: &str) -> AppResult<()> {
+        Err(AppError::BadRequest(
+            "This storage backend does not support container management".to_string(),
+        ))
+    }
+
+    /// Whether this backend supports container/bucket management.
+    fn supports_containers(&self) -> bool {
+        false
+    }
 }
