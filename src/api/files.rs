@@ -89,6 +89,36 @@ async fn check_file_access(
     Ok(())
 }
 
+/// Check that the user has write access (owner or admin) to at least one project referencing this file.
+async fn check_file_write_access(
+    pool: &PgPool,
+    file_id: Uuid,
+    user: &AuthenticatedUser,
+) -> Result<(), AppError> {
+    if user.role == "admin" {
+        return Ok(());
+    }
+    let row: (bool,) = sqlx::query_as(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM file_references fr
+            JOIN projects p ON p.id = fr.project_id
+            WHERE fr.file_id = $1 AND p.deleted_at IS NULL
+            AND p.owner_id = $2
+        )"#,
+    )
+    .bind(file_id)
+    .bind(user.user_id)
+    .fetch_one(pool)
+    .await?;
+
+    if !row.0 {
+        return Err(AppError::Forbidden(
+            "Access denied: owner or admin required".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 // ─── Handlers ───────────────────────────────────────────────────────────────────
 
 async fn upload_file(
@@ -289,7 +319,7 @@ async fn restore_file(
     user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let file_id = path.into_inner();
-    check_file_access(pool.get_ref(), file_id, &user).await?;
+    check_file_write_access(pool.get_ref(), file_id, &user).await?;
 
     let task = tier_service.restore_file(file_id).await?;
     Ok(HttpResponse::Accepted().json(task))
