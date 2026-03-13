@@ -1139,7 +1139,7 @@ pub struct User {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct CreateUser {
     pub username: String,
     pub password_hash: String,
@@ -1201,7 +1201,7 @@ pub struct RefreshToken {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct CreateRefreshToken {
     pub user_id: Uuid,
     pub token_hash: String,
@@ -1261,7 +1261,7 @@ impl RefreshToken {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
-fn is_unique_violation(e: &sqlx::Error) -> bool {
+pub fn is_unique_violation(e: &sqlx::Error) -> bool {
     if let sqlx::Error::Database(db_err) = e {
         // PostgreSQL unique_violation error code
         return db_err.code().as_deref() == Some("23505");

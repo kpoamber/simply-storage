@@ -1,6 +1,6 @@
 use actix_web::{App, HttpServer, web};
 use innovare_storage::config::AppConfig;
-use innovare_storage::db::models::Node;
+use innovare_storage::db::models::{Node, RefreshToken};
 use innovare_storage::services::{AuthService, BulkService, FileService, TierService};
 use innovare_storage::storage::StorageRegistry;
 use innovare_storage::workers::{SyncWorker, TierWorker};
@@ -154,6 +154,16 @@ fn spawn_heartbeat(
                 _ = interval.tick() => {
                     if let Err(e) = Node::heartbeat(&pool, &node_id).await {
                         tracing::warn!(node_id = %node_id, "Heartbeat failed: {}", e);
+                    }
+                    // Periodically clean up expired refresh tokens
+                    match RefreshToken::delete_expired(&pool).await {
+                        Ok(count) if count > 0 => {
+                            tracing::info!(count, "Cleaned up expired refresh tokens");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to clean up expired refresh tokens: {}", e);
+                        }
+                        _ => {}
                     }
                 }
             }

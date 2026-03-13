@@ -37,6 +37,7 @@ Multiple stateless app instances run behind nginx and share state through distri
 - **Hot/cold tiering** - Configurable per-project archival policy based on last access time
 - **Temporary signed links** - HMAC-signed download/preview URLs with configurable expiry
 - **Horizontal scaling** - Add app instances behind nginx; new nodes join via config sync from existing nodes
+- **Authentication & authorization** - JWT-based auth with access/refresh tokens, role-based access control (admin/user), project ownership
 - **Admin dashboard** - React frontend for managing projects, storages, files, and monitoring sync tasks
 - **Bulk operations** - Sync-all to a storage, export storage as tar.gz archive
 
@@ -54,6 +55,7 @@ Multiple stateless app instances run behind nginx and share state through distri
 | Backend | Rust, Actix-Web 4, Tokio |
 | Database | PostgreSQL + Citus |
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS |
+| Authentication | jsonwebtoken (JWT), argon2 (password hashing) |
 | Storage SDKs | aws-sdk-s3, reqwest (WebDAV), suppaftp, russh-sftp, pavao (Samba) |
 | Containerization | Docker (multi-stage build) |
 | Load Balancer | Nginx |
@@ -139,6 +141,11 @@ num_workers = 4              # Number of background sync workers
 max_retries = 5              # Max retries for failed sync tasks
 poll_interval_secs = 5       # How often workers poll for pending tasks
 tier_scan_interval_secs = 300  # How often to scan for files to archive
+
+[auth]
+jwt_secret = "change-me-jwt-secret-in-production"  # JWT signing secret (MUST change in production)
+access_token_ttl_secs = 900        # Access token lifetime (15 minutes)
+refresh_token_ttl_secs = 604800    # Refresh token lifetime (7 days)
 ```
 
 ### Environment Variable Examples
@@ -149,10 +156,25 @@ APP_DATABASE__URL=postgres://user:pass@db:5432/mydb
 APP_DATABASE__MAX_CONNECTIONS=20
 APP_STORAGE__HMAC_SECRET=my-secret-key
 APP_SYNC__NUM_WORKERS=8
+APP_AUTH__JWT_SECRET=my-jwt-secret
+APP_AUTH__ACCESS_TOKEN_TTL_SECS=900
+APP_AUTH__REFRESH_TOKEN_TTL_SECS=604800
 RUST_LOG=info  # Log level: trace, debug, info, warn, error
 ```
 
 ## API Endpoints
+
+All API endpoints (except `/health` and `/api/auth/*`) require authentication via a JWT access token passed in the `Authorization: Bearer <token>` header. Storage, bulk, and system management endpoints require `admin` role. Project and file endpoints enforce owner-or-admin access.
+
+### Authentication
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/auth/register` | Register new user (first user becomes admin) |
+| POST | `/api/auth/login` | Login with username/password, returns access + refresh tokens |
+| POST | `/api/auth/refresh` | Refresh access token using refresh token (rotates refresh token) |
+| GET | `/api/auth/me` | Get current user info (requires auth) |
+| POST | `/api/auth/logout` | Revoke refresh token |
 
 ### Projects
 
@@ -259,9 +281,12 @@ See [deploy/README-deploy.md](deploy/README-deploy.md) for the full deployment g
 
 ```
 src/
-├── api/            # HTTP route handlers (files, projects, storages, bulk)
+├── api/            # HTTP route handlers (auth, files, projects, storages, bulk)
+│   ├── auth.rs     # JWT auth middleware (AuthenticatedUser extractor)
+│   └── auth_routes.rs  # Auth endpoints (register, login, refresh, logout)
 ├── db/             # Database models and CRUD operations
-├── services/       # Business logic (file_service, bulk_service, tier_service)
+├── services/       # Business logic (file_service, bulk_service, tier_service, auth_service)
+│   └── auth_service.rs  # JWT/password hashing service
 ├── storage/        # Storage backend implementations (s3, azure, gcs, ftp, sftp, samba, hetzner, local)
 ├── workers/        # Background workers (sync_worker, tier_worker)
 ├── config.rs       # Configuration loading (TOML + env vars)
@@ -273,7 +298,8 @@ frontend/
 ├── src/
 │   ├── api/        # API client (axios) and TypeScript types
 │   ├── components/ # Reusable components (Layout, Sidebar, StorageForm)
-│   └── pages/      # Page components (Dashboard, Projects, Storages, SyncTasks)
+│   ├── contexts/   # React contexts (AuthContext)
+│   └── pages/      # Page components (Dashboard, Projects, Storages, SyncTasks, Login)
 ├── package.json
 ├── vite.config.ts
 └── tailwind.config.js

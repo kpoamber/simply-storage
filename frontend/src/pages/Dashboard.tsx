@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Files, HardDrive, RefreshCw, Server } from 'lucide-react';
 import apiClient from '../api/client';
 import { SystemStats, StorageBackend, formatBytes } from '../api/types';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Node {
   id: string;
@@ -13,51 +14,69 @@ interface Node {
 }
 
 export default function Dashboard() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
   const { data: stats, isLoading: statsLoading } = useQuery<SystemStats>({
     queryKey: ['system-stats'],
     queryFn: () => apiClient.get('/system/stats').then(r => r.data),
+    enabled: isAdmin,
   });
 
   const { data: storages, isLoading: storagesLoading } = useQuery<StorageBackend[]>({
     queryKey: ['storages'],
     queryFn: () => apiClient.get('/storages').then(r => r.data),
+    enabled: isAdmin,
   });
 
   const { data: nodes, isLoading: nodesLoading } = useQuery<Node[]>({
     queryKey: ['nodes'],
     queryFn: () => apiClient.get('/system/nodes').then(r => r.data),
     refetchInterval: 30000,
+    enabled: isAdmin,
   });
 
   return (
     <div>
       <h2 className="text-2xl font-semibold text-gray-800">Dashboard</h2>
-      <p className="mt-1 text-gray-500">System overview and statistics.</p>
+      <p className="mt-1 text-gray-500">
+        {isAdmin ? 'System overview and statistics.' : 'Welcome to Innovare Storage.'}
+      </p>
 
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          icon={<Files className="h-6 w-6 text-blue-600" />}
-          label="Total Files"
-          value={statsLoading ? '...' : String(stats?.total_files ?? 0)}
-        />
-        <StatCard
-          icon={<HardDrive className="h-6 w-6 text-green-600" />}
-          label="Storage Used"
-          value={statsLoading ? '...' : formatBytes(stats?.total_storage_used ?? 0)}
-        />
-        <StatCard
-          icon={<RefreshCw className="h-6 w-6 text-orange-600" />}
-          label="Pending Sync Tasks"
-          value={statsLoading ? '...' : String(stats?.pending_sync_tasks ?? 0)}
-        />
-        <StatCard
-          icon={<Server className="h-6 w-6 text-purple-600" />}
-          label="Active Nodes"
-          value={nodesLoading ? '...' : String(nodes?.length ?? 0)}
-        />
-      </div>
+      {!isAdmin && (
+        <div className="mt-6 rounded-lg border border-gray-200 bg-white p-6">
+          <p className="text-gray-600">Navigate to <strong>Projects</strong> to manage your files.</p>
+        </div>
+      )}
 
-      <div className="mt-8">
+      {isAdmin && (
+        <>
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard
+              icon={<Files className="h-6 w-6 text-blue-600" />}
+              label="Total Files"
+              value={statsLoading ? '...' : String(stats?.total_files ?? 0)}
+            />
+            <StatCard
+              icon={<HardDrive className="h-6 w-6 text-green-600" />}
+              label="Storage Used"
+              value={statsLoading ? '...' : formatBytes(stats?.total_storage_used ?? 0)}
+            />
+            <StatCard
+              icon={<RefreshCw className="h-6 w-6 text-orange-600" />}
+              label="Pending Sync Tasks"
+              value={statsLoading ? '...' : String(stats?.pending_sync_tasks ?? 0)}
+            />
+            <StatCard
+              icon={<Server className="h-6 w-6 text-purple-600" />}
+              label="Active Nodes"
+              value={nodesLoading ? '...' : String(nodes?.length ?? 0)}
+            />
+          </div>
+        </>
+      )}
+
+      {isAdmin && <div className="mt-8">
         <h3 className="text-lg font-medium text-gray-700">Storage Health</h3>
         {storagesLoading ? (
           <p className="mt-2 text-gray-400">Loading storages...</p>
@@ -99,7 +118,7 @@ export default function Dashboard() {
             </table>
           </div>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

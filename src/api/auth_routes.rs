@@ -4,7 +4,7 @@ use serde::Deserialize;
 use sqlx::PgPool;
 
 use crate::api::auth::AuthenticatedUser;
-use crate::db::models::{CreateRefreshToken, CreateUser, RefreshToken, User};
+use crate::db::models::{is_unique_violation, CreateRefreshToken, CreateUser, RefreshToken, User};
 use crate::error::AppError;
 use crate::services::auth_service::AuthService;
 
@@ -47,14 +47,16 @@ async fn register(
         ));
     }
 
-    // Check if username already exists
-    if User::find_by_username(pool.get_ref(), &body.username).await?.is_some() {
-        return Err(AppError::Conflict(
-            "Username already exists".to_string(),
+    if body.password.len() > 1024 {
+        return Err(AppError::BadRequest(
+            "Password must not exceed 1024 characters".to_string(),
         ));
     }
 
     // First registered user gets admin role
+    // Note: there is a small race window where two concurrent first-registrations
+    // could both see count==0 and both get admin role. This is acceptable for
+    // initial setup; in production, use a single admin seed or a serializable transaction.
     let user_count = User::count(pool.get_ref()).await?;
     let role = if user_count == 0 { "admin" } else { "user" };
 
@@ -62,7 +64,7 @@ async fn register(
         .hash_password(&body.password)
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
 
-    let user = User::create(
+    let user = match User::create(
         pool.get_ref(),
         &CreateUser {
             username: body.username.clone(),
@@ -70,7 +72,16 @@ async fn register(
             role: role.to_string(),
         },
     )
-    .await?;
+    .await
+    {
+        Ok(user) => user,
+        Err(AppError::Database(ref e)) if is_unique_violation(e) => {
+            return Err(AppError::Conflict(
+                "Username already exists".to_string(),
+            ));
+        }
+        Err(e) => return Err(e),
+    };
 
     // Generate tokens
     let access_token = auth_service

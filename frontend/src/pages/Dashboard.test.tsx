@@ -11,6 +11,12 @@ vi.mock('../api/client', () => ({
     put: vi.fn(),
     delete: vi.fn(),
   },
+  setAuthInterceptors: vi.fn(),
+}));
+
+const mockUseAuth = vi.fn();
+vi.mock('../contexts/AuthContext', () => ({
+  useAuth: () => mockUseAuth(),
 }));
 
 import apiClient from '../api/client';
@@ -32,6 +38,13 @@ function renderDashboard() {
 describe('Dashboard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseAuth.mockReturnValue({
+      user: { id: '1', username: 'admin', role: 'admin', created_at: '', updated_at: '' },
+      isLoading: false,
+      login: vi.fn(),
+      register: vi.fn(),
+      logout: vi.fn(),
+    });
   });
 
   it('renders heading and subtitle', () => {
@@ -41,13 +54,28 @@ describe('Dashboard', () => {
     expect(screen.getByText('System overview and statistics.')).toBeInTheDocument();
   });
 
-  it('renders stat card labels', () => {
+  it('renders stat card labels for admin', () => {
     mockGet.mockRejectedValue(new Error('Network error'));
     renderDashboard();
     expect(screen.getByText('Total Files')).toBeInTheDocument();
     expect(screen.getByText('Storage Used')).toBeInTheDocument();
     expect(screen.getByText('Pending Sync Tasks')).toBeInTheDocument();
     expect(screen.getByText('Active Nodes')).toBeInTheDocument();
+  });
+
+  it('shows user dashboard for non-admin', () => {
+    mockUseAuth.mockReturnValue({
+      user: { id: '2', username: 'user1', role: 'user', created_at: '', updated_at: '' },
+      isLoading: false,
+      login: vi.fn(),
+      register: vi.fn(),
+      logout: vi.fn(),
+    });
+    mockGet.mockRejectedValue(new Error('Network error'));
+    renderDashboard();
+    expect(screen.getByText('Dashboard')).toBeInTheDocument();
+    expect(screen.getByText('Welcome to Innovare Storage.')).toBeInTheDocument();
+    expect(screen.queryByText('Total Files')).not.toBeInTheDocument();
   });
 
   it('shows stat values after data loads', async () => {
