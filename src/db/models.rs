@@ -1292,6 +1292,186 @@ impl RefreshToken {
     }
 }
 
+// ─── UserProject ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct UserProject {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub project_id: Uuid,
+    pub created_at: DateTime<Utc>,
+}
+
+impl UserProject {
+    pub async fn create(pool: &PgPool, user_id: Uuid, project_id: Uuid) -> AppResult<UserProject> {
+        let row = sqlx::query_as::<_, UserProject>(
+            r#"INSERT INTO user_projects (user_id, project_id)
+               VALUES ($1, $2)
+               RETURNING *"#,
+        )
+        .bind(user_id)
+        .bind(project_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            if is_unique_violation(&e) {
+                AppError::Conflict("User is already assigned to this project".to_string())
+            } else {
+                AppError::Database(e)
+            }
+        })?;
+
+        Ok(row)
+    }
+
+    pub async fn list_for_project(pool: &PgPool, project_id: Uuid) -> AppResult<Vec<User>> {
+        let rows = sqlx::query_as::<_, User>(
+            r#"SELECT u.* FROM users u
+               JOIN user_projects up ON up.user_id = u.id
+               WHERE up.project_id = $1
+               ORDER BY u.username ASC"#,
+        )
+        .bind(project_id)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Project>> {
+        let rows = sqlx::query_as::<_, Project>(
+            r#"SELECT p.* FROM projects p
+               JOIN user_projects up ON up.project_id = p.id
+               WHERE up.user_id = $1 AND p.deleted_at IS NULL
+               ORDER BY p.created_at DESC"#,
+        )
+        .bind(user_id)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    pub async fn delete(pool: &PgPool, user_id: Uuid, project_id: Uuid) -> AppResult<()> {
+        let result = sqlx::query(
+            "DELETE FROM user_projects WHERE user_id = $1 AND project_id = $2",
+        )
+        .bind(user_id)
+        .bind(project_id)
+        .execute(pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(
+                "User project assignment not found".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn is_member(pool: &PgPool, user_id: Uuid, project_id: Uuid) -> AppResult<bool> {
+        let row: (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM user_projects WHERE user_id = $1 AND project_id = $2)",
+        )
+        .bind(user_id)
+        .bind(project_id)
+        .fetch_one(pool)
+        .await?;
+
+        Ok(row.0)
+    }
+}
+
+// ─── UserStorage ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct UserStorage {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub storage_id: Uuid,
+    pub created_at: DateTime<Utc>,
+}
+
+impl UserStorage {
+    pub async fn create(pool: &PgPool, user_id: Uuid, storage_id: Uuid) -> AppResult<UserStorage> {
+        let row = sqlx::query_as::<_, UserStorage>(
+            r#"INSERT INTO user_storages (user_id, storage_id)
+               VALUES ($1, $2)
+               RETURNING *"#,
+        )
+        .bind(user_id)
+        .bind(storage_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            if is_unique_violation(&e) {
+                AppError::Conflict("User is already assigned to this storage".to_string())
+            } else {
+                AppError::Database(e)
+            }
+        })?;
+
+        Ok(row)
+    }
+
+    pub async fn list_for_storage(pool: &PgPool, storage_id: Uuid) -> AppResult<Vec<User>> {
+        let rows = sqlx::query_as::<_, User>(
+            r#"SELECT u.* FROM users u
+               JOIN user_storages us ON us.user_id = u.id
+               WHERE us.storage_id = $1
+               ORDER BY u.username ASC"#,
+        )
+        .bind(storage_id)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Storage>> {
+        let rows = sqlx::query_as::<_, Storage>(
+            r#"SELECT s.* FROM storages s
+               JOIN user_storages us ON us.storage_id = s.id
+               WHERE us.user_id = $1
+               ORDER BY s.created_at DESC"#,
+        )
+        .bind(user_id)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    pub async fn delete(pool: &PgPool, user_id: Uuid, storage_id: Uuid) -> AppResult<()> {
+        let result = sqlx::query(
+            "DELETE FROM user_storages WHERE user_id = $1 AND storage_id = $2",
+        )
+        .bind(user_id)
+        .bind(storage_id)
+        .execute(pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(
+                "User storage assignment not found".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn is_member(pool: &PgPool, user_id: Uuid, storage_id: Uuid) -> AppResult<bool> {
+        let row: (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM user_storages WHERE user_id = $1 AND storage_id = $2)",
+        )
+        .bind(user_id)
+        .bind(storage_id)
+        .fetch_one(pool)
+        .await?;
+
+        Ok(row.0)
+    }
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 pub fn is_unique_violation(e: &sqlx::Error) -> bool {
@@ -1840,5 +2020,212 @@ mod tests {
         // List all should also include it
         let all = Node::list_all(&pool).await.unwrap();
         assert!(all.iter().any(|n| n.node_id == node_id));
+    }
+
+    #[test]
+    fn test_user_project_serialization() {
+        let now = Utc::now();
+        let up = UserProject {
+            id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            created_at: now,
+        };
+
+        let json = serde_json::to_value(&up).unwrap();
+        assert!(!json["user_id"].is_null());
+        assert!(!json["project_id"].is_null());
+        assert!(!json["created_at"].is_null());
+    }
+
+    #[test]
+    fn test_user_storage_serialization() {
+        let now = Utc::now();
+        let us = UserStorage {
+            id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            storage_id: Uuid::new_v4(),
+            created_at: now,
+        };
+
+        let json = serde_json::to_value(&us).unwrap();
+        assert!(!json["user_id"].is_null());
+        assert!(!json["storage_id"].is_null());
+        assert!(!json["created_at"].is_null());
+    }
+
+    #[test]
+    fn test_user_project_deserialization() {
+        let user_id = Uuid::new_v4();
+        let project_id = Uuid::new_v4();
+        let json = serde_json::json!({
+            "id": Uuid::new_v4(),
+            "user_id": user_id,
+            "project_id": project_id,
+            "created_at": "2026-01-01T00:00:00Z"
+        });
+        let up: UserProject = serde_json::from_value(json).unwrap();
+        assert_eq!(up.user_id, user_id);
+        assert_eq!(up.project_id, project_id);
+    }
+
+    #[test]
+    fn test_user_storage_deserialization() {
+        let user_id = Uuid::new_v4();
+        let storage_id = Uuid::new_v4();
+        let json = serde_json::json!({
+            "id": Uuid::new_v4(),
+            "user_id": user_id,
+            "storage_id": storage_id,
+            "created_at": "2026-01-01T00:00:00Z"
+        });
+        let us: UserStorage = serde_json::from_value(json).unwrap();
+        assert_eq!(us.user_id, user_id);
+        assert_eq!(us.storage_id, storage_id);
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_user_project_crud() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        // Create a user
+        let user = User::create(
+            &pool,
+            &CreateUser {
+                username: format!("up-test-{}", Uuid::new_v4()),
+                password_hash: "hash".to_string(),
+                role: "user".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        // Create a project
+        let project = Project::create(
+            &pool,
+            &CreateProject {
+                name: "UP Test Project".to_string(),
+                slug: format!("up-test-{}", Uuid::new_v4()),
+                hot_to_cold_days: None,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Assign user to project
+        let assignment = UserProject::create(&pool, user.id, project.id).await.unwrap();
+        assert_eq!(assignment.user_id, user.id);
+        assert_eq!(assignment.project_id, project.id);
+
+        // is_member should be true
+        assert!(UserProject::is_member(&pool, user.id, project.id).await.unwrap());
+
+        // list_for_project should include our user
+        let users = UserProject::list_for_project(&pool, project.id).await.unwrap();
+        assert!(users.iter().any(|u| u.id == user.id));
+
+        // list_for_user should include our project
+        let projects = UserProject::list_for_user(&pool, user.id).await.unwrap();
+        assert!(projects.iter().any(|p| p.id == project.id));
+
+        // Duplicate assignment should return Conflict
+        let dup = UserProject::create(&pool, user.id, project.id).await;
+        assert!(dup.is_err());
+
+        // Delete assignment
+        UserProject::delete(&pool, user.id, project.id).await.unwrap();
+        assert!(!UserProject::is_member(&pool, user.id, project.id).await.unwrap());
+
+        // Delete non-existent assignment should error
+        let del = UserProject::delete(&pool, user.id, project.id).await;
+        assert!(del.is_err());
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_user_storage_crud() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        // Create a user
+        let user = User::create(
+            &pool,
+            &CreateUser {
+                username: format!("us-test-{}", Uuid::new_v4()),
+                password_hash: "hash".to_string(),
+                role: "user".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        // Create a storage
+        let storage = Storage::create(
+            &pool,
+            &CreateStorage {
+                name: format!("US Test Storage {}", Uuid::new_v4()),
+                storage_type: "local".to_string(),
+                config: serde_json::json!({"path": "/tmp/test"}),
+                is_hot: Some(true),
+                project_id: None,
+                enabled: Some(true),
+            },
+        )
+        .await
+        .unwrap();
+
+        // Assign user to storage
+        let assignment = UserStorage::create(&pool, user.id, storage.id).await.unwrap();
+        assert_eq!(assignment.user_id, user.id);
+        assert_eq!(assignment.storage_id, storage.id);
+
+        // is_member should be true
+        assert!(UserStorage::is_member(&pool, user.id, storage.id).await.unwrap());
+
+        // list_for_storage should include our user
+        let users = UserStorage::list_for_storage(&pool, storage.id).await.unwrap();
+        assert!(users.iter().any(|u| u.id == user.id));
+
+        // list_for_user should include our storage
+        let storages = UserStorage::list_for_user(&pool, user.id).await.unwrap();
+        assert!(storages.iter().any(|s| s.id == storage.id));
+
+        // Duplicate assignment should return Conflict
+        let dup = UserStorage::create(&pool, user.id, storage.id).await;
+        assert!(dup.is_err());
+
+        // Delete assignment
+        UserStorage::delete(&pool, user.id, storage.id).await.unwrap();
+        assert!(!UserStorage::is_member(&pool, user.id, storage.id).await.unwrap());
+
+        // Delete non-existent assignment should error
+        let del = UserStorage::delete(&pool, user.id, storage.id).await;
+        assert!(del.is_err());
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_migration_007_tables_exist() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        let tables: Vec<(String,)> = sqlx::query_as(
+            r#"SELECT table_name::text FROM information_schema.tables
+               WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+               ORDER BY table_name"#,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        let table_names: Vec<&str> = tables.iter().map(|t| t.0.as_str()).collect();
+        assert!(table_names.contains(&"user_projects"));
+        assert!(table_names.contains(&"user_storages"));
     }
 }

@@ -168,6 +168,8 @@ mod tests {
             jwt_secret: "test-secret-for-auth-extractor".to_string(),
             access_token_ttl_secs: 0, // expires immediately
             refresh_token_ttl_secs: 604800,
+            default_admin_username: "admin".to_string(),
+            default_admin_password: "admin123".to_string(),
         });
         let user_id = Uuid::new_v4();
         let token = auth_service.generate_access_token(user_id, "user").unwrap();
