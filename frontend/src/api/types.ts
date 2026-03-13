@@ -208,6 +208,26 @@ export interface SearchSummary {
   timeline: TimelineEntry[];
 }
 
+export interface BulkDeleteRequest {
+  metadata_filters?: MetadataFilterNode;
+  created_before?: string;
+  created_after?: string;
+  size_min?: number;
+  size_max?: number;
+  last_accessed_before?: string;
+}
+
+export interface BulkDeletePreview {
+  matching_references: number;
+  total_size: number;
+}
+
+export interface BulkDeleteResult {
+  deleted_references: number;
+  orphaned_files_cleaned: number;
+  freed_bytes: number;
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes <= 0) return '0 B';
   const k = 1024;

@@ -173,17 +173,17 @@ Add support for user-defined metadata (JSON key/value) on file uploads, with fas
 - Modify: `frontend/src/api/client.ts`
 - Modify: `frontend/src/App.tsx`
 
-- [ ] Add bulk delete API functions to client.ts (preview + execute)
-- [ ] Add TypeScript types for bulk delete request/response
-- [ ] Create ProjectBulkDelete page with:
+- [x] Add bulk delete API functions to client.ts (preview + execute)
+- [x] Add TypeScript types for bulk delete request/response
+- [x] Create ProjectBulkDelete page with:
   - Filter form: date range pickers (created_before/after, last_accessed_before), size range inputs (min/max), metadata filter builder (reuse from search page)
   - "Preview" button: shows count and total size of files matching filters
   - "Delete" button: requires confirmation dialog, shows preview count, then executes deletion
   - Result display: shows deleted count, orphans cleaned, freed space
-- [ ] Add route `/projects/:id/bulk-delete` in App.tsx (admin/owner only)
-- [ ] Add "Bulk Delete" link in project context navigation
-- [ ] Write tests: filter form renders, preview triggers API call, confirmation dialog appears, delete executes after confirmation
-- [ ] Run frontend test suite - must pass before task 9
+- [x] Add route `/projects/:id/bulk-delete` in App.tsx (admin/owner only)
+- [x] Add "Bulk Delete" link in project context navigation
+- [x] Write tests: filter form renders, preview triggers API call, confirmation dialog appears, delete executes after confirmation
+- [x] Run frontend test suite - must pass before task 9
 
 ### Task 9: Verify acceptance criteria
 

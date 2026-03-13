@@ -128,4 +128,18 @@ export async function searchSummary(projectId: string, filters?: import('./types
   );
 }
 
+export async function bulkDeletePreview(projectId: string, filters: import('./types').BulkDeleteRequest) {
+  return apiClient.post<import('./types').BulkDeletePreview>(
+    `/projects/${projectId}/files/bulk-delete/preview`,
+    filters,
+  );
+}
+
+export async function bulkDeleteExecute(projectId: string, filters: import('./types').BulkDeleteRequest) {
+  return apiClient.post<import('./types').BulkDeleteResult>(
+    `/projects/${projectId}/files/bulk-delete`,
+    filters,
+  );
+}
+
 export default apiClient;

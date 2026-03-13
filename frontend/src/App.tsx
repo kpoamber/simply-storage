@@ -12,6 +12,7 @@ import Nodes from './pages/Nodes';
 import Users from './pages/Users';
 import UserDetail from './pages/UserDetail';
 import ProjectSearch from './pages/ProjectSearch';
+import ProjectBulkDelete from './pages/ProjectBulkDelete';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -57,6 +58,7 @@ function AppRoutes() {
         <Route path="projects" element={<Projects />} />
         <Route path="projects/:id" element={<ProjectDetail />} />
         <Route path="projects/:id/search" element={<ProjectSearch />} />
+        <Route path="projects/:id/bulk-delete" element={<ProjectBulkDelete />} />
         <Route path="storages" element={<Storages />} />
         <Route path="storages/:id" element={<StorageDetail />} />
         <Route path="sync-tasks" element={<SyncTasks />} />

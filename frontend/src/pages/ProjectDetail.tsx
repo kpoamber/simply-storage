@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Upload, Download, Link2, ArchiveRestore, Trash2,
-  ChevronLeft, ChevronRight, Search, Check, Plus, X, Pencil, ChevronDown, ChevronUp,
+  ChevronLeft, ChevronRight, Search, Check, Plus, X, Pencil, ChevronDown, ChevronUp, AlertTriangle,
 } from 'lucide-react';
 import apiClient, { uploadFile } from '../api/client';
 import { ProjectWithStats, FileReference, TempLinkResponse, StorageBackend, ProjectStorageAssignment, AuthUser, MemberInfo, formatBytes } from '../api/types';
@@ -70,6 +70,15 @@ export default function ProjectDetail() {
         >
           <Search className="h-4 w-4" /> Search Files
         </Link>
+        {canWrite && (
+          <Link
+            to={`/projects/${id}/bulk-delete`}
+            className="flex items-center gap-1 rounded bg-red-50 px-3 py-1.5 text-sm text-red-700 hover:bg-red-100"
+            data-testid="bulk-delete-link"
+          >
+            <AlertTriangle className="h-4 w-4" /> Bulk Delete
+          </Link>
+        )}
       </div>
 
       {canWrite && <ProjectSettingsForm project={project} />}
