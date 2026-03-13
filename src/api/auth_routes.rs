@@ -266,7 +266,11 @@ async fn get_user(
 
     let user = User::find_by_id(pool.get_ref(), user_id).await?;
     let projects = UserProject::list_for_user(pool.get_ref(), user_id).await?;
-    let storages = UserStorage::list_for_user(pool.get_ref(), user_id).await?;
+    let storages: Vec<_> = UserStorage::list_for_user(pool.get_ref(), user_id)
+        .await?
+        .into_iter()
+        .map(|s| s.redacted())
+        .collect();
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "user": user,
@@ -333,6 +337,8 @@ async fn update_user(
             .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
 
         updated_user = User::update_password_hash(pool.get_ref(), user_id, &password_hash).await?;
+        // Invalidate refresh tokens so sessions using old password are revoked
+        RefreshToken::delete_by_user_id(pool.get_ref(), user_id).await?;
     }
 
     Ok(HttpResponse::Ok().json(updated_user))

@@ -273,7 +273,7 @@ function StorageMembersSection({ storageId }: { storageId: string }) {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Username</th>
-                <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Assigned</th>
+                <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Created</th>
                 <th className="px-4 py-2 text-center text-xs font-medium uppercase text-gray-500">Actions</th>
               </tr>
             </thead>

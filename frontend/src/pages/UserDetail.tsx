@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, X, KeyRound } from 'lucide-react';
@@ -91,6 +91,7 @@ function EditUserSection({
 }) {
   const queryClient = useQueryClient();
   const [role, setRole] = useState(currentRole);
+  useEffect(() => { setRole(currentRole); }, [currentRole]);
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
