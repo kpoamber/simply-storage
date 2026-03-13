@@ -105,8 +105,8 @@ Add support for user-defined metadata (JSON key/value) on file uploads, with fas
 - Modify: `src/db/models.rs`
 - Modify: `src/services/file_service.rs`
 
-- [ ] Add `POST /api/projects/{project_id}/files/bulk-delete` endpoint (require owner or admin)
-- [ ] Accept filter parameters as JSON body:
+- [x] Add `POST /api/projects/{project_id}/files/bulk-delete` endpoint (require owner or admin)
+- [x] Accept filter parameters as JSON body:
   ```
   {
     "metadata_filters": { "and": [...] },    // optional, same DSL as search
@@ -117,12 +117,12 @@ Add support for user-defined metadata (JSON key/value) on file uploads, with fas
     "last_accessed_before": "2025-06-01T00:00:00" // optional
   }
   ```
-- [ ] Require at least one filter (reject empty filter request with 400)
-- [ ] Add preview mode: `POST /api/projects/{project_id}/files/bulk-delete/preview` returns count and total size of matching files without deleting
-- [ ] Implement deletion: delete matching file_references, then clean up orphaned files (files with zero remaining references) and their physical storage files + file_locations
-- [ ] Return result: `{ deleted_references: N, orphaned_files_cleaned: M, freed_bytes: X }`
-- [ ] Write tests: preview returns correct count, bulk delete removes matching references, orphan cleanup works, empty filter rejected, authorization checked
-- [ ] Run project test suite - must pass before task 6
+- [x] Require at least one filter (reject empty filter request with 400)
+- [x] Add preview mode: `POST /api/projects/{project_id}/files/bulk-delete/preview` returns count and total size of matching files without deleting
+- [x] Implement deletion: delete matching file_references, then clean up orphaned files (files with zero remaining references) and their physical storage files + file_locations
+- [x] Return result: `{ deleted_references: N, orphaned_files_cleaned: M, freed_bytes: X }`
+- [x] Write tests: preview returns correct count, bulk delete removes matching references, orphan cleanup works, empty filter rejected, authorization checked
+- [x] Run project test suite - must pass before task 6
 
 ### Task 6: Frontend - metadata on upload and display
 

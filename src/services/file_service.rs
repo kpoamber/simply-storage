@@ -5,8 +5,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::db::models::{
-    is_unique_violation, CreateFile, CreateFileLocation, CreateFileReference, CreateSyncTask, File,
-    FileLocation, FileReference, ProjectStorage, Storage, SyncTask,
+    is_unique_violation, BulkDeleteFilters, BulkDeletePreview, BulkDeleteResult, CreateFile,
+    CreateFileLocation, CreateFileReference, CreateSyncTask, File, FileLocation, FileReference,
+    ProjectStorage, Storage, SyncTask,
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::registry::create_backend;
@@ -331,6 +332,89 @@ impl FileService {
             "No storage backends are registered and available".to_string(),
         ))
     }
+
+    /// Preview bulk delete: returns count and total size of matching file references.
+    pub async fn bulk_delete_preview(
+        &self,
+        project_id: Uuid,
+        filters: &BulkDeleteFilters,
+    ) -> AppResult<BulkDeletePreview> {
+        FileReference::preview_bulk_delete(&self.pool, project_id, filters).await
+    }
+
+    /// Execute bulk delete: delete matching file references, clean up orphaned files
+    /// and their physical storage, and return the result.
+    pub async fn bulk_delete(
+        &self,
+        project_id: Uuid,
+        filters: &BulkDeleteFilters,
+    ) -> AppResult<BulkDeleteResult> {
+        // Step 1: Delete matching file_references, collect affected file_ids
+        let (deleted_count, file_ids) =
+            FileReference::execute_bulk_delete(&self.pool, project_id, filters).await?;
+
+        if deleted_count == 0 {
+            return Ok(BulkDeleteResult {
+                deleted_references: 0,
+                orphaned_files_cleaned: 0,
+                freed_bytes: 0,
+            });
+        }
+
+        // Step 2: Deduplicate file_ids and find orphans (zero remaining references)
+        let unique_file_ids: Vec<Uuid> = {
+            let mut set = std::collections::HashSet::new();
+            file_ids.into_iter().filter(|id| set.insert(*id)).collect()
+        };
+        let orphaned_ids =
+            File::find_orphaned_from_ids(&self.pool, &unique_file_ids).await?;
+
+        let mut freed_bytes = 0i64;
+
+        // Step 3: For each orphaned file, clean up physical storage + DB records
+        for file_id in &orphaned_ids {
+            // Get file size for freed_bytes calculation
+            if let Ok(file) = File::find_by_id(&self.pool, *file_id).await {
+                freed_bytes += file.size;
+            }
+
+            // Get all locations for physical cleanup
+            let locations = FileLocation::find_all_for_file(&self.pool, *file_id)
+                .await
+                .unwrap_or_default();
+
+            // Delete from storage backends (best effort)
+            for location in &locations {
+                if let Ok(backend) = self.registry.get(&location.storage_id).await {
+                    if let Err(e) = backend.delete(&location.storage_path).await {
+                        tracing::warn!(
+                            file_id = %file_id,
+                            storage_id = %location.storage_id,
+                            error = %e,
+                            "Failed to delete physical file during bulk cleanup"
+                        );
+                    }
+                }
+            }
+
+            // Delete file_locations and file record from DB
+            sqlx::query("DELETE FROM file_locations WHERE file_id = $1")
+                .bind(file_id)
+                .execute(&self.pool)
+                .await?;
+
+            sqlx::query("DELETE FROM files WHERE id = $1")
+                .bind(file_id)
+                .execute(&self.pool)
+                .await?;
+        }
+
+        Ok(BulkDeleteResult {
+            deleted_references: deleted_count,
+            orphaned_files_cleaned: orphaned_ids.len() as i64,
+            freed_bytes,
+        })
+    }
 }
 
 /// Compute SHA-256 hash of the given data, returning the hex-encoded string.
@@ -472,6 +556,53 @@ mod tests {
 
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["file_reference"]["metadata"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn test_bulk_delete_preview_serialization() {
+        let preview = crate::db::models::BulkDeletePreview {
+            matching_references: 50,
+            total_size: 104857600,
+        };
+        let json = serde_json::to_value(&preview).unwrap();
+        assert_eq!(json["matching_references"], 50);
+        assert_eq!(json["total_size"], 104857600);
+    }
+
+    #[test]
+    fn test_bulk_delete_result_serialization() {
+        let result = crate::db::models::BulkDeleteResult {
+            deleted_references: 20,
+            orphaned_files_cleaned: 15,
+            freed_bytes: 52428800,
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["deleted_references"], 20);
+        assert_eq!(json["orphaned_files_cleaned"], 15);
+        assert_eq!(json["freed_bytes"], 52428800);
+    }
+
+    #[test]
+    fn test_bulk_delete_filters_has_any_filter() {
+        let empty = crate::db::models::BulkDeleteFilters {
+            metadata_filters: None,
+            created_before: None,
+            created_after: None,
+            size_min: None,
+            size_max: None,
+            last_accessed_before: None,
+        };
+        assert!(!empty.has_any_filter());
+
+        let with_size = crate::db::models::BulkDeleteFilters {
+            metadata_filters: None,
+            created_before: None,
+            created_after: None,
+            size_min: Some(1024),
+            size_max: None,
+            last_accessed_before: None,
+        };
+        assert!(with_size.has_any_filter());
     }
 
     #[tokio::test]

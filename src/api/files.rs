@@ -12,7 +12,8 @@ use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::db::models::{
-    File, FileLocation, FileReference, MetadataFilter, Project, Storage, UserProject,
+    BulkDeleteFilters, File, FileLocation, FileReference, MetadataFilter, Project, Storage,
+    UserProject,
 };
 use crate::error::AppError;
 use crate::services::{FileService, TierService};
@@ -454,6 +455,56 @@ async fn search_summary(
     Ok(HttpResponse::Ok().json(summary))
 }
 
+// ─── Bulk delete ──────────────────────────────────────────────────────────────
+
+async fn bulk_delete_preview(
+    pool: web::Data<PgPool>,
+    path: web::Path<Uuid>,
+    user: AuthenticatedUser,
+    body: web::Json<BulkDeleteFilters>,
+    file_service: web::Data<FileService>,
+) -> Result<HttpResponse, AppError> {
+    let project_id = path.into_inner();
+
+    // Verify project exists and user is owner or admin
+    let project = Project::find_by_id(pool.get_ref(), project_id).await?;
+    user.require_owner_or_admin(project.owner_id)?;
+
+    let filters = body.into_inner();
+    if !filters.has_any_filter() {
+        return Err(AppError::BadRequest(
+            "At least one filter is required for bulk delete".to_string(),
+        ));
+    }
+
+    let preview = file_service.bulk_delete_preview(project_id, &filters).await?;
+    Ok(HttpResponse::Ok().json(preview))
+}
+
+async fn bulk_delete(
+    pool: web::Data<PgPool>,
+    path: web::Path<Uuid>,
+    user: AuthenticatedUser,
+    body: web::Json<BulkDeleteFilters>,
+    file_service: web::Data<FileService>,
+) -> Result<HttpResponse, AppError> {
+    let project_id = path.into_inner();
+
+    // Verify project exists and user is owner or admin
+    let project = Project::find_by_id(pool.get_ref(), project_id).await?;
+    user.require_owner_or_admin(project.owner_id)?;
+
+    let filters = body.into_inner();
+    if !filters.has_any_filter() {
+        return Err(AppError::BadRequest(
+            "At least one filter is required for bulk delete".to_string(),
+        ));
+    }
+
+    let result = file_service.bulk_delete(project_id, &filters).await?;
+    Ok(HttpResponse::Ok().json(result))
+}
+
 // ─── Local temp URL download ─────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -538,6 +589,14 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     .service(
         web::resource("/projects/{project_id}/files/search/summary")
             .route(web::post().to(search_summary)),
+    )
+    .service(
+        web::resource("/projects/{project_id}/files/bulk-delete/preview")
+            .route(web::post().to(bulk_delete_preview)),
+    )
+    .service(
+        web::resource("/projects/{project_id}/files/bulk-delete")
+            .route(web::post().to(bulk_delete)),
     )
     .service(
         web::resource("/files/{id}")
@@ -905,6 +964,86 @@ mod tests {
         assert_eq!(json["timeline"][0]["date"], "2026-03-01");
     }
 
+    // ─── Bulk delete tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_bulk_delete_filters_deserialization_with_all_fields() {
+        let json = serde_json::json!({
+            "metadata_filters": {
+                "and": [
+                    {"key": "env", "value": "prod"},
+                    {"not": {"key": "status", "value": "deprecated"}}
+                ]
+            },
+            "created_before": "2026-01-01T00:00:00Z",
+            "created_after": "2025-01-01T00:00:00Z",
+            "size_min": 1048576,
+            "size_max": 10485760,
+            "last_accessed_before": "2025-06-01T00:00:00Z"
+        });
+        let filters: crate::db::models::BulkDeleteFilters =
+            serde_json::from_value(json).unwrap();
+        assert!(filters.metadata_filters.is_some());
+        assert!(filters.created_before.is_some());
+        assert!(filters.created_after.is_some());
+        assert_eq!(filters.size_min, Some(1048576));
+        assert_eq!(filters.size_max, Some(10485760));
+        assert!(filters.last_accessed_before.is_some());
+    }
+
+    #[test]
+    fn test_bulk_delete_filters_empty_rejected() {
+        let json = serde_json::json!({});
+        let filters: crate::db::models::BulkDeleteFilters =
+            serde_json::from_value(json).unwrap();
+        assert!(!filters.has_any_filter());
+    }
+
+    #[test]
+    fn test_bulk_delete_filters_metadata_only() {
+        let json = serde_json::json!({
+            "metadata_filters": {"key": "env", "value": "staging"}
+        });
+        let filters: crate::db::models::BulkDeleteFilters =
+            serde_json::from_value(json).unwrap();
+        assert!(filters.has_any_filter());
+    }
+
+    #[test]
+    fn test_bulk_delete_filters_date_only() {
+        let json = serde_json::json!({
+            "created_before": "2026-06-01T00:00:00Z"
+        });
+        let filters: crate::db::models::BulkDeleteFilters =
+            serde_json::from_value(json).unwrap();
+        assert!(filters.has_any_filter());
+        assert!(filters.created_before.is_some());
+    }
+
+    #[test]
+    fn test_bulk_delete_preview_response_shape() {
+        let preview = crate::db::models::BulkDeletePreview {
+            matching_references: 25,
+            total_size: 5242880,
+        };
+        let json = serde_json::to_value(&preview).unwrap();
+        assert_eq!(json["matching_references"], 25);
+        assert_eq!(json["total_size"], 5242880);
+    }
+
+    #[test]
+    fn test_bulk_delete_result_response_shape() {
+        let result = crate::db::models::BulkDeleteResult {
+            deleted_references: 10,
+            orphaned_files_cleaned: 3,
+            freed_bytes: 1048576,
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["deleted_references"], 10);
+        assert_eq!(json["orphaned_files_cleaned"], 3);
+        assert_eq!(json["freed_bytes"], 1048576);
+    }
+
     // ─── Auth enforcement tests ───────────────────────────────────────────────
 
     use crate::config::AuthConfig;
@@ -1039,6 +1178,50 @@ mod tests {
         let req = actix_web::test::TestRequest::post()
             .uri(&format!("/projects/{}/files/search", id))
             .set_json(serde_json::json!({}))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_bulk_delete_preview_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/projects/{project_id}/files/bulk-delete/preview",
+                    actix_web::web::post().to(bulk_delete_preview),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::post()
+            .uri(&format!("/projects/{}/files/bulk-delete/preview", id))
+            .set_json(serde_json::json!({"size_min": 1024}))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_bulk_delete_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/projects/{project_id}/files/bulk-delete",
+                    actix_web::web::post().to(bulk_delete),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::post()
+            .uri(&format!("/projects/{}/files/bulk-delete", id))
+            .set_json(serde_json::json!({"size_min": 1024}))
             .to_request();
         let resp = actix_web::test::call_service(&app, req).await;
         assert_eq!(resp.status(), 401);

@@ -792,6 +792,232 @@ pub struct TimelineEntry {
     pub size: i64,
 }
 
+// ─── Bulk Delete ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BulkDeleteFilters {
+    pub metadata_filters: Option<MetadataFilter>,
+    pub created_before: Option<DateTime<Utc>>,
+    pub created_after: Option<DateTime<Utc>>,
+    pub size_min: Option<i64>,
+    pub size_max: Option<i64>,
+    pub last_accessed_before: Option<DateTime<Utc>>,
+}
+
+impl BulkDeleteFilters {
+    pub fn has_any_filter(&self) -> bool {
+        self.metadata_filters.is_some()
+            || self.created_before.is_some()
+            || self.created_after.is_some()
+            || self.size_min.is_some()
+            || self.size_max.is_some()
+            || self.last_accessed_before.is_some()
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct BulkDeletePreview {
+    pub matching_references: i64,
+    pub total_size: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BulkDeleteResult {
+    pub deleted_references: i64,
+    pub orphaned_files_cleaned: i64,
+    pub freed_bytes: i64,
+}
+
+/// Helper to build the WHERE clause and arguments for bulk delete queries.
+/// Returns (where_clause, needs_files_join).
+/// The caller must bind args in this order: project_id, then metadata params,
+/// then created_before, created_after, size_min, size_max, last_accessed_before.
+fn build_bulk_delete_clause(
+    filters: &BulkDeleteFilters,
+    start_param: usize,
+) -> AppResult<(String, Vec<serde_json::Value>, bool, usize)> {
+    let mut conditions = Vec::new();
+    let mut needs_files_join = false;
+    let mut param_idx = start_param;
+
+    // Metadata filter
+    let mut metadata_params = Vec::new();
+    if let Some(ref mf) = filters.metadata_filters {
+        let mut compiler = MetadataFilterCompiler::new(param_idx);
+        let clause = compiler.compile(mf)?;
+        conditions.push(clause);
+        metadata_params = compiler.into_params();
+        param_idx += metadata_params.len();
+    }
+
+    if filters.created_before.is_some() {
+        conditions.push(format!("fr.created_at < ${}", param_idx));
+        param_idx += 1;
+    }
+
+    if filters.created_after.is_some() {
+        conditions.push(format!("fr.created_at > ${}", param_idx));
+        param_idx += 1;
+    }
+
+    if filters.size_min.is_some() {
+        conditions.push(format!("f.size >= ${}", param_idx));
+        param_idx += 1;
+        needs_files_join = true;
+    }
+
+    if filters.size_max.is_some() {
+        conditions.push(format!("f.size <= ${}", param_idx));
+        param_idx += 1;
+        needs_files_join = true;
+    }
+
+    if filters.last_accessed_before.is_some() {
+        conditions.push(format!(
+            "NOT EXISTS (SELECT 1 FROM file_locations fl WHERE fl.file_id = fr.file_id AND fl.last_accessed_at >= ${})",
+            param_idx
+        ));
+        param_idx += 1;
+    }
+
+    let where_clause = if conditions.is_empty() {
+        "TRUE".to_string()
+    } else {
+        conditions.join(" AND ")
+    };
+
+    Ok((where_clause, metadata_params, needs_files_join, param_idx))
+}
+
+/// Bind all bulk delete filter parameters to a PgArguments instance.
+fn bind_bulk_delete_args(
+    args: &mut sqlx::postgres::PgArguments,
+    project_id: Uuid,
+    filters: &BulkDeleteFilters,
+    metadata_params: &[serde_json::Value],
+) -> AppResult<()> {
+    use sqlx::Arguments;
+    args.add(project_id)
+        .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+    for param in metadata_params {
+        args.add(param)
+            .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+    }
+    if let Some(ref v) = filters.created_before {
+        args.add(v)
+            .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+    }
+    if let Some(ref v) = filters.created_after {
+        args.add(v)
+            .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+    }
+    if let Some(ref v) = filters.size_min {
+        args.add(v)
+            .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+    }
+    if let Some(ref v) = filters.size_max {
+        args.add(v)
+            .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+    }
+    if let Some(ref v) = filters.last_accessed_before {
+        args.add(v)
+            .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+    }
+    Ok(())
+}
+
+impl FileReference {
+    /// Preview bulk delete: returns count and total size of matching file references.
+    pub async fn preview_bulk_delete(
+        pool: &PgPool,
+        project_id: Uuid,
+        filters: &BulkDeleteFilters,
+    ) -> AppResult<BulkDeletePreview> {
+        let (where_clause, metadata_params, _needs_files_join, _next_idx) =
+            build_bulk_delete_clause(filters, 2)?;
+
+        // Always join files for total_size
+        let sql = format!(
+            r#"SELECT COUNT(*)::bigint, COALESCE(SUM(f.size), 0)::bigint
+            FROM file_references fr
+            JOIN files f ON f.id = fr.file_id
+            WHERE fr.project_id = $1 AND {}"#,
+            where_clause
+        );
+
+        let mut args = sqlx::postgres::PgArguments::default();
+        bind_bulk_delete_args(&mut args, project_id, filters, &metadata_params)?;
+
+        let row: (i64, i64) = sqlx::query_as_with(&sql, args)
+            .fetch_one(pool)
+            .await?;
+
+        Ok(BulkDeletePreview {
+            matching_references: row.0,
+            total_size: row.1,
+        })
+    }
+
+    /// Execute bulk delete: delete matching file references and return their file_ids.
+    /// Returns (deleted_count, affected_file_ids).
+    pub async fn execute_bulk_delete(
+        pool: &PgPool,
+        project_id: Uuid,
+        filters: &BulkDeleteFilters,
+    ) -> AppResult<(i64, Vec<Uuid>)> {
+        let (where_clause, metadata_params, needs_files_join, _next_idx) =
+            build_bulk_delete_clause(filters, 2)?;
+
+        let subquery_from = if needs_files_join {
+            "file_references fr JOIN files f ON f.id = fr.file_id"
+        } else {
+            "file_references fr"
+        };
+
+        let sql = format!(
+            r#"DELETE FROM file_references WHERE id IN (
+                SELECT fr.id FROM {}
+                WHERE fr.project_id = $1 AND {}
+            ) RETURNING file_id"#,
+            subquery_from, where_clause
+        );
+
+        let mut args = sqlx::postgres::PgArguments::default();
+        bind_bulk_delete_args(&mut args, project_id, filters, &metadata_params)?;
+
+        let rows: Vec<(Uuid,)> = sqlx::query_as_with(&sql, args)
+            .fetch_all(pool)
+            .await?;
+
+        let file_ids: Vec<Uuid> = rows.iter().map(|r| r.0).collect();
+        let deleted_count = file_ids.len() as i64;
+
+        Ok((deleted_count, file_ids))
+    }
+}
+
+impl File {
+    /// Find file IDs from the given list that have zero remaining file_references.
+    pub async fn find_orphaned_from_ids(pool: &PgPool, file_ids: &[Uuid]) -> AppResult<Vec<Uuid>> {
+        if file_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows: Vec<(Uuid,)> = sqlx::query_as(
+            r#"SELECT f.id FROM files f
+               WHERE f.id = ANY($1)
+               AND NOT EXISTS (
+                   SELECT 1 FROM file_references fr WHERE fr.file_id = f.id
+               )"#,
+        )
+        .bind(file_ids)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+}
+
 // ─── FileLocation ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -2289,6 +2515,186 @@ mod tests {
         assert_eq!(json["date"], "2026-03-14");
         assert_eq!(json["count"], 5);
         assert_eq!(json["size"], 2048);
+    }
+
+    // ─── Bulk delete tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_bulk_delete_filters_has_any_filter_all_none() {
+        let filters = BulkDeleteFilters {
+            metadata_filters: None,
+            created_before: None,
+            created_after: None,
+            size_min: None,
+            size_max: None,
+            last_accessed_before: None,
+        };
+        assert!(!filters.has_any_filter());
+    }
+
+    #[test]
+    fn test_bulk_delete_filters_has_any_filter_metadata() {
+        let filters = BulkDeleteFilters {
+            metadata_filters: Some(MetadataFilter::Leaf {
+                key: "env".to_string(),
+                value: serde_json::json!("prod"),
+            }),
+            created_before: None,
+            created_after: None,
+            size_min: None,
+            size_max: None,
+            last_accessed_before: None,
+        };
+        assert!(filters.has_any_filter());
+    }
+
+    #[test]
+    fn test_bulk_delete_filters_has_any_filter_size() {
+        let filters = BulkDeleteFilters {
+            metadata_filters: None,
+            created_before: None,
+            created_after: None,
+            size_min: Some(1024),
+            size_max: None,
+            last_accessed_before: None,
+        };
+        assert!(filters.has_any_filter());
+    }
+
+    #[test]
+    fn test_bulk_delete_filters_has_any_filter_dates() {
+        let filters = BulkDeleteFilters {
+            metadata_filters: None,
+            created_before: Some(Utc::now()),
+            created_after: None,
+            size_min: None,
+            size_max: None,
+            last_accessed_before: None,
+        };
+        assert!(filters.has_any_filter());
+    }
+
+    #[test]
+    fn test_bulk_delete_filters_deserialization() {
+        let json = serde_json::json!({
+            "metadata_filters": {"key": "env", "value": "prod"},
+            "created_before": "2026-06-01T00:00:00Z",
+            "size_min": 1048576
+        });
+        let filters: BulkDeleteFilters = serde_json::from_value(json).unwrap();
+        assert!(filters.metadata_filters.is_some());
+        assert!(filters.created_before.is_some());
+        assert_eq!(filters.size_min, Some(1048576));
+        assert!(filters.created_after.is_none());
+        assert!(filters.size_max.is_none());
+        assert!(filters.last_accessed_before.is_none());
+    }
+
+    #[test]
+    fn test_bulk_delete_filters_deserialization_empty() {
+        let json = serde_json::json!({});
+        let filters: BulkDeleteFilters = serde_json::from_value(json).unwrap();
+        assert!(!filters.has_any_filter());
+    }
+
+    #[test]
+    fn test_bulk_delete_preview_serialization() {
+        let preview = BulkDeletePreview {
+            matching_references: 42,
+            total_size: 10485760,
+        };
+        let json = serde_json::to_value(&preview).unwrap();
+        assert_eq!(json["matching_references"], 42);
+        assert_eq!(json["total_size"], 10485760);
+    }
+
+    #[test]
+    fn test_bulk_delete_result_serialization() {
+        let result = BulkDeleteResult {
+            deleted_references: 15,
+            orphaned_files_cleaned: 8,
+            freed_bytes: 5242880,
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["deleted_references"], 15);
+        assert_eq!(json["orphaned_files_cleaned"], 8);
+        assert_eq!(json["freed_bytes"], 5242880);
+    }
+
+    #[test]
+    fn test_build_bulk_delete_clause_metadata_only() {
+        let filters = BulkDeleteFilters {
+            metadata_filters: Some(MetadataFilter::Leaf {
+                key: "env".to_string(),
+                value: serde_json::json!("prod"),
+            }),
+            created_before: None,
+            created_after: None,
+            size_min: None,
+            size_max: None,
+            last_accessed_before: None,
+        };
+        let (clause, params, needs_join, _) = build_bulk_delete_clause(&filters, 2).unwrap();
+        assert_eq!(clause, "metadata @> $2::jsonb");
+        assert_eq!(params.len(), 1);
+        assert!(!needs_join);
+    }
+
+    #[test]
+    fn test_build_bulk_delete_clause_size_filters() {
+        let filters = BulkDeleteFilters {
+            metadata_filters: None,
+            created_before: None,
+            created_after: None,
+            size_min: Some(1024),
+            size_max: Some(10240),
+            last_accessed_before: None,
+        };
+        let (clause, params, needs_join, _) = build_bulk_delete_clause(&filters, 2).unwrap();
+        assert_eq!(clause, "f.size >= $2 AND f.size <= $3");
+        assert!(params.is_empty());
+        assert!(needs_join);
+    }
+
+    #[test]
+    fn test_build_bulk_delete_clause_combined() {
+        let filters = BulkDeleteFilters {
+            metadata_filters: Some(MetadataFilter::Leaf {
+                key: "env".to_string(),
+                value: serde_json::json!("prod"),
+            }),
+            created_before: Some(Utc::now()),
+            created_after: None,
+            size_min: Some(1024),
+            size_max: None,
+            last_accessed_before: Some(Utc::now()),
+        };
+        let (clause, params, needs_join, next_idx) =
+            build_bulk_delete_clause(&filters, 2).unwrap();
+        // $2 = metadata, $3 = created_before, $4 = size_min, $5 = last_accessed_before
+        assert!(clause.contains("metadata @> $2::jsonb"));
+        assert!(clause.contains("fr.created_at < $3"));
+        assert!(clause.contains("f.size >= $4"));
+        assert!(clause.contains("fl.last_accessed_at >= $5"));
+        assert_eq!(params.len(), 1);
+        assert!(needs_join);
+        assert_eq!(next_idx, 6);
+    }
+
+    #[test]
+    fn test_build_bulk_delete_clause_last_accessed_before() {
+        let filters = BulkDeleteFilters {
+            metadata_filters: None,
+            created_before: None,
+            created_after: None,
+            size_min: None,
+            size_max: None,
+            last_accessed_before: Some(Utc::now()),
+        };
+        let (clause, _, needs_join, _) = build_bulk_delete_clause(&filters, 2).unwrap();
+        assert!(clause.contains("NOT EXISTS"));
+        assert!(clause.contains("fl.last_accessed_at >= $2"));
+        assert!(!needs_join);
     }
 
     #[test]
