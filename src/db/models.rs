@@ -1243,6 +1243,19 @@ impl RefreshToken {
         Ok(())
     }
 
+    /// Atomically delete a refresh token by hash and return it.
+    /// Returns None if the token was already consumed or doesn't exist.
+    pub async fn consume_by_hash(pool: &PgPool, token_hash: &str) -> AppResult<Option<RefreshToken>> {
+        let row = sqlx::query_as::<_, RefreshToken>(
+            "DELETE FROM refresh_tokens WHERE token_hash = $1 AND expires_at > NOW() RETURNING *",
+        )
+        .bind(token_hash)
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(row)
+    }
+
     pub async fn delete_by_hash(pool: &PgPool, token_hash: &str) -> AppResult<()> {
         sqlx::query("DELETE FROM refresh_tokens WHERE token_hash = $1")
             .bind(token_hash)

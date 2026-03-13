@@ -41,6 +41,18 @@ async fn register(
         ));
     }
 
+    let username = body.username.trim();
+    if username.len() < 3 || username.len() > 64 {
+        return Err(AppError::BadRequest(
+            "Username must be between 3 and 64 characters".to_string(),
+        ));
+    }
+    if !username.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        return Err(AppError::BadRequest(
+            "Username may only contain letters, digits, underscores, hyphens, and dots".to_string(),
+        ));
+    }
+
     if body.password.len() < 6 {
         return Err(AppError::BadRequest(
             "Password must be at least 6 characters".to_string(),
@@ -67,7 +79,7 @@ async fn register(
     let user = match User::create(
         pool.get_ref(),
         &CreateUser {
-            username: body.username.clone(),
+            username: username.to_string(),
             password_hash,
             role: role.to_string(),
         },
@@ -159,17 +171,23 @@ async fn refresh(
 ) -> Result<HttpResponse, AppError> {
     let token_hash = AuthService::hash_refresh_token(&body.refresh_token);
 
-    let stored_token = RefreshToken::find_by_hash(pool.get_ref(), &token_hash)
+    // Atomically consume the refresh token (delete + return in one query).
+    // This prevents race conditions where two concurrent requests both use
+    // the same refresh token before either deletes it.
+    let stored_token = RefreshToken::consume_by_hash(pool.get_ref(), &token_hash)
         .await?
         .ok_or_else(|| {
             AppError::Unauthorized("Invalid or expired refresh token".to_string())
         })?;
 
-    // Delete old refresh token
-    RefreshToken::delete_by_hash(pool.get_ref(), &token_hash).await?;
-
-    // Get user
-    let user = User::find_by_id(pool.get_ref(), stored_token.user_id).await?;
+    // Get user - if account was deleted, return 401 (not 404)
+    let user = match User::find_by_id(pool.get_ref(), stored_token.user_id).await {
+        Ok(u) => u,
+        Err(AppError::NotFound(_)) => {
+            return Err(AppError::Unauthorized("Account no longer exists".to_string()));
+        }
+        Err(e) => return Err(e),
+    };
 
     // Generate new tokens
     let access_token = auth_service

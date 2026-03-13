@@ -18,6 +18,10 @@ async fn main() -> std::io::Result<()> {
         AppConfig::load_from("__nonexistent__").expect("defaults should always work")
     });
 
+    if config.auth.jwt_secret == "change-me-jwt-secret-in-production" {
+        tracing::warn!("JWT secret is set to the default value! Set APP_AUTH__JWT_SECRET to a secure random string before deploying to production.");
+    }
+
     tracing::info!(
         "Starting server on {}:{}",
         config.server.host,
