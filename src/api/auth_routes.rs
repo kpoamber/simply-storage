@@ -312,6 +312,7 @@ async fn update_user(
 
     let mut updated_user = user;
 
+    // Validate all inputs before making any changes
     if let Some(ref role) = body.role {
         if role != "admin" && role != "user" {
             return Err(AppError::BadRequest(
@@ -325,13 +326,9 @@ async fn update_user(
                 "Cannot demote your own admin account".to_string(),
             ));
         }
-
-        updated_user = User::update_role(pool.get_ref(), user_id, role).await?;
-        // Invalidate refresh tokens so the user must re-authenticate with the new role
-        RefreshToken::delete_by_user_id(pool.get_ref(), user_id).await?;
     }
 
-    if let Some(ref password) = body.password {
+    let password_hash = if let Some(ref password) = body.password {
         if password.len() < 6 {
             return Err(AppError::BadRequest(
                 "Password must be at least 6 characters".to_string(),
@@ -342,13 +339,26 @@ async fn update_user(
                 "Password must not exceed 1024 characters".to_string(),
             ));
         }
+        Some(
+            auth_service
+                .hash_password(password)
+                .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?,
+        )
+    } else {
+        None
+    };
 
-        let password_hash = auth_service
-            .hash_password(password)
-            .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
+    // Apply updates
+    if let Some(ref role) = body.role {
+        updated_user = User::update_role(pool.get_ref(), user_id, role).await?;
+    }
 
-        updated_user = User::update_password_hash(pool.get_ref(), user_id, &password_hash).await?;
-        // Invalidate refresh tokens so sessions using old password are revoked
+    if let Some(ref hash) = password_hash {
+        updated_user = User::update_password_hash(pool.get_ref(), user_id, hash).await?;
+    }
+
+    // Invalidate refresh tokens once if either role or password changed
+    if body.role.is_some() || body.password.is_some() {
         RefreshToken::delete_by_user_id(pool.get_ref(), user_id).await?;
     }
 
