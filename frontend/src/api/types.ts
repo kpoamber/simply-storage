@@ -121,6 +121,23 @@ export interface AuthUser {
   updated_at: string;
 }
 
+export interface UserWithAssignments {
+  user: AuthUser;
+  projects: Project[];
+  storages: StorageBackend[];
+}
+
+export interface CreateUserInput {
+  username: string;
+  password: string;
+  role: string;
+}
+
+export interface UpdateUserInput {
+  role?: string;
+  password?: string;
+}
+
 export interface LoginRequest {
   username: string;
   password: string;

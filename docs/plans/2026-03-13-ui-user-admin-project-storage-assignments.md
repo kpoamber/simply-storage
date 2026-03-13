@@ -71,16 +71,16 @@ Add full user management UI to the admin dashboard with many-to-many user-to-pro
 - Modify: `src/api/projects.rs`
 - Modify: `src/api/storages.rs`
 
-- [ ] Add project member endpoints (admin-only):
+- [x] Add project member endpoints (admin-only):
   - GET /api/projects/{id}/members -> list users assigned to project
   - POST /api/projects/{id}/members -> assign user `{ user_id }`, return 409 if already assigned
   - DELETE /api/projects/{id}/members/{user_id} -> remove assignment
-- [ ] Add storage member endpoints (admin-only):
+- [x] Add storage member endpoints (admin-only):
   - GET /api/storages/{id}/members -> list users assigned to storage
   - POST /api/storages/{id}/members -> assign user `{ user_id }`, return 409 if already assigned
   - DELETE /api/storages/{id}/members/{user_id} -> remove assignment
-- [ ] Write tests for member endpoints
-- [ ] Run `cargo test` - must pass before task 4
+- [x] Write tests for member endpoints
+- [x] Run `cargo test` - must pass before task 4
 
 ### Task 4: Update authorization logic
 
@@ -89,16 +89,16 @@ Add full user management UI to the admin dashboard with many-to-many user-to-pro
 - Modify: `src/api/projects.rs`
 - Modify: `src/api/storages.rs`
 
-- [ ] Add `is_member_of_project(pool, user_id, project_id) -> bool` check to auth helper or use UserProject::is_member
-- [ ] Update project access: allow access if user is owner OR admin OR member (via user_projects)
+- [x] Add `is_member_of_project(pool, user_id, project_id) -> bool` check to auth helper or use UserProject::is_member
+- [x] Update project access: allow access if user is owner OR admin OR member (via user_projects)
   - Update GET /api/projects to also return projects where user is a member (not just owned)
   - Update GET/PUT/DELETE /api/projects/{id} to allow members (read access for members, write for owner/admin)
   - Members get read access (view project, list files, download). Owner/admin get write access (update, delete, upload, manage storages)
-- [ ] Update storage access: allow read access if user is assigned via user_storages (admin retains full access)
+- [x] Update storage access: allow read access if user is assigned via user_storages (admin retains full access)
   - GET /api/storages - for non-admin users, return only assigned storages
   - GET /api/storages/{id} - allow if member
-- [ ] Write tests for authorization changes
-- [ ] Run `cargo test` - must pass before task 5
+- [x] Write tests for authorization changes
+- [x] Run `cargo test` - must pass before task 5
 
 ### Task 5: Frontend - Users management page
 
@@ -108,20 +108,20 @@ Add full user management UI to the admin dashboard with many-to-many user-to-pro
 - Modify: `frontend/src/App.tsx`
 - Modify: `frontend/src/components/Sidebar.tsx`
 
-- [ ] Add TypeScript types to types.ts:
+- [x] Add TypeScript types to types.ts:
   - `UserWithAssignments { user: AuthUser, projects: Project[], storages: StorageBackend[] }`
   - `CreateUserInput { username, password, role }`
   - `UpdateUserInput { role?, password? }`
-- [ ] Create Users.tsx page:
+- [x] Create Users.tsx page:
   - Users table: username, role (badge), created_at, actions (edit, delete)
   - Create user form (inline or modal): username, password, role dropdown
   - Delete user with confirmation (prevent deleting self)
   - Role badge: admin (purple), user (gray)
   - Admin-only page
-- [ ] Add /users route to App.tsx (protected, admin-only)
-- [ ] Add Users nav item to Sidebar.tsx (admin-only, with Users icon from lucide-react)
-- [ ] Write tests for Users page (render, create, delete)
-- [ ] Run `cd frontend && npm test` - must pass before task 6
+- [x] Add /users route to App.tsx (protected, admin-only)
+- [x] Add Users nav item to Sidebar.tsx (admin-only, with Users icon from lucide-react)
+- [x] Write tests for Users page (render, create, delete)
+- [x] Run `cd frontend && npm test` - must pass before task 6
 
 ### Task 6: Frontend - User detail with assignments
 
@@ -129,17 +129,17 @@ Add full user management UI to the admin dashboard with many-to-many user-to-pro
 - Create: `frontend/src/pages/UserDetail.tsx`
 - Modify: `frontend/src/App.tsx`
 
-- [ ] Create UserDetail.tsx page:
+- [x] Create UserDetail.tsx page:
   - User info header: username, role, created_at
   - Edit user section: change role dropdown, reset password button/form
   - Projects section: table of assigned projects with remove button, "Add project" button opening a dropdown/modal of unassigned projects
   - Storages section: table of assigned storages with remove button, "Add storage" button opening a dropdown/modal of unassigned storages
   - Use React Query for fetching user detail, projects list, storages list
   - Mutations for add/remove assignments with cache invalidation
-- [ ] Add /users/:id route to App.tsx (protected, admin-only)
-- [ ] Make username in Users.tsx table a link to /users/:id
-- [ ] Write tests for UserDetail page
-- [ ] Run `cd frontend && npm test` - must pass before task 7
+- [x] Add /users/:id route to App.tsx (protected, admin-only)
+- [x] Make username in Users.tsx table a link to /users/:id
+- [x] Write tests for UserDetail page
+- [x] Run `cd frontend && npm test` - must pass before task 7
 
 ### Task 7: Frontend - Members sections on Project and Storage detail pages
 

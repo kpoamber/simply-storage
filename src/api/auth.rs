@@ -12,8 +12,16 @@ pub struct AuthenticatedUser {
 }
 
 impl AuthenticatedUser {
+    pub fn is_admin(&self) -> bool {
+        self.role == "admin"
+    }
+
+    pub fn is_owner(&self, owner_id: Option<Uuid>) -> bool {
+        matches!(owner_id, Some(oid) if oid == self.user_id)
+    }
+
     pub fn require_admin(&self) -> Result<(), AppError> {
-        if self.role == "admin" {
+        if self.is_admin() {
             Ok(())
         } else {
             Err(AppError::Forbidden(
@@ -23,14 +31,12 @@ impl AuthenticatedUser {
     }
 
     pub fn require_owner_or_admin(&self, owner_id: Option<Uuid>) -> Result<(), AppError> {
-        if self.role == "admin" {
-            return Ok(());
-        }
-        match owner_id {
-            Some(oid) if oid == self.user_id => Ok(()),
-            _ => Err(AppError::Forbidden(
+        if self.is_admin() || self.is_owner(owner_id) {
+            Ok(())
+        } else {
+            Err(AppError::Forbidden(
                 "Access denied: not the owner".to_string(),
-            )),
+            ))
         }
     }
 }
@@ -208,6 +214,33 @@ mod tests {
 
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_is_admin() {
+        let admin = AuthenticatedUser {
+            user_id: Uuid::new_v4(),
+            role: "admin".to_string(),
+        };
+        assert!(admin.is_admin());
+
+        let user = AuthenticatedUser {
+            user_id: Uuid::new_v4(),
+            role: "user".to_string(),
+        };
+        assert!(!user.is_admin());
+    }
+
+    #[actix_rt::test]
+    async fn test_is_owner() {
+        let user_id = Uuid::new_v4();
+        let user = AuthenticatedUser {
+            user_id,
+            role: "user".to_string(),
+        };
+        assert!(user.is_owner(Some(user_id)));
+        assert!(!user.is_owner(Some(Uuid::new_v4())));
+        assert!(!user.is_owner(None));
     }
 
     #[actix_rt::test]

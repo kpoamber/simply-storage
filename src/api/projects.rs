@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::db::models::{
     CreateProject, CreateProjectStorage, Project, ProjectStorage, Storage, UpdateProject,
-    UpdateProjectStorage,
+    UpdateProjectStorage, User, UserProject,
 };
 use crate::error::AppError;
 
@@ -23,10 +23,10 @@ async fn list_projects(
     pool: web::Data<PgPool>,
     user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    let projects = if user.role == "admin" {
+    let projects = if user.is_admin() {
         Project::list(pool.get_ref()).await?
     } else {
-        Project::list_for_owner(pool.get_ref(), user.user_id).await?
+        Project::list_accessible(pool.get_ref(), user.user_id).await?
     };
     Ok(HttpResponse::Ok().json(projects))
 }
@@ -38,7 +38,13 @@ async fn get_project(
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
     let project = Project::find_by_id(pool.get_ref(), project_id).await?;
-    user.require_owner_or_admin(project.owner_id)?;
+    // Read access: admin, owner, or member
+    if !user.is_admin() && !user.is_owner(project.owner_id) {
+        let is_member = UserProject::is_member(pool.get_ref(), user.user_id, project_id).await?;
+        if !is_member {
+            return Err(AppError::Forbidden("Access denied: not a member".to_string()));
+        }
+    }
 
     // Get file stats for the project
     let stats_row = sqlx::query(
@@ -103,7 +109,13 @@ async fn list_project_storages(
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
     let project = Project::find_by_id(pool.get_ref(), project_id).await?;
-    user.require_owner_or_admin(project.owner_id)?;
+    // Read access: admin, owner, or member
+    if !user.is_admin() && !user.is_owner(project.owner_id) {
+        let is_member = UserProject::is_member(pool.get_ref(), user.user_id, project_id).await?;
+        if !is_member {
+            return Err(AppError::Forbidden("Access denied: not a member".to_string()));
+        }
+    }
 
     let assignments = ProjectStorage::list_for_project(pool.get_ref(), project_id).await?;
     Ok(HttpResponse::Ok().json(assignments))
@@ -167,6 +179,57 @@ async fn list_available_storages(
     Ok(HttpResponse::Ok().json(redacted))
 }
 
+// ─── Project member (user assignment) endpoints ──────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+struct AddMemberRequest {
+    user_id: Uuid,
+}
+
+async fn list_project_members(
+    pool: web::Data<PgPool>,
+    path: web::Path<Uuid>,
+    user: AuthenticatedUser,
+) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
+    let project_id = path.into_inner();
+    // Verify project exists
+    Project::find_by_id(pool.get_ref(), project_id).await?;
+
+    let members = UserProject::list_for_project(pool.get_ref(), project_id).await?;
+    Ok(HttpResponse::Ok().json(members))
+}
+
+async fn add_project_member(
+    pool: web::Data<PgPool>,
+    path: web::Path<Uuid>,
+    user: AuthenticatedUser,
+    body: web::Json<AddMemberRequest>,
+) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
+    let project_id = path.into_inner();
+    // Verify project and user exist
+    Project::find_by_id(pool.get_ref(), project_id).await?;
+    User::find_by_id(pool.get_ref(), body.user_id).await?;
+
+    let assignment = UserProject::create(pool.get_ref(), body.user_id, project_id).await?;
+    Ok(HttpResponse::Created().json(assignment))
+}
+
+async fn remove_project_member(
+    pool: web::Data<PgPool>,
+    path: web::Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
+    let (project_id, member_user_id) = path.into_inner();
+    UserProject::delete(pool.get_ref(), member_user_id, project_id).await?;
+    Ok(HttpResponse::NoContent().finish())
+}
+
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::resource("/projects")
@@ -192,6 +255,15 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     .service(
         web::resource("/projects/{id}/available-storages")
             .route(web::get().to(list_available_storages)),
+    )
+    .service(
+        web::resource("/projects/{id}/members")
+            .route(web::get().to(list_project_members))
+            .route(web::post().to(add_project_member)),
+    )
+    .service(
+        web::resource("/projects/{id}/members/{user_id}")
+            .route(web::delete().to(remove_project_member)),
     );
 }
 
@@ -339,6 +411,167 @@ mod tests {
             .to_request();
         let resp = actix_web::test::call_service(&app, req).await;
         assert_eq!(resp.status(), 401);
+    }
+
+    // ─── Project member endpoint tests ──────────────────────────────────────
+
+    #[actix_rt::test]
+    async fn test_list_project_members_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/projects/{id}/members",
+                    actix_web::web::get().to(super::list_project_members),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::get()
+            .uri(&format!("/projects/{}/members", id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_list_project_members_requires_admin() {
+        let auth_service = test_auth_service();
+        let user_id = uuid::Uuid::new_v4();
+        let token = auth_service.generate_access_token(user_id, "user").unwrap();
+
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/projects/{id}/members",
+                    actix_web::web::get().to(super::list_project_members),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::get()
+            .uri(&format!("/projects/{}/members", id))
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
+    }
+
+    #[actix_rt::test]
+    async fn test_add_project_member_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/projects/{id}/members",
+                    actix_web::web::post().to(super::add_project_member),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::post()
+            .uri(&format!("/projects/{}/members", id))
+            .set_json(serde_json::json!({"user_id": uuid::Uuid::new_v4()}))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_add_project_member_requires_admin() {
+        let auth_service = test_auth_service();
+        let user_id = uuid::Uuid::new_v4();
+        let token = auth_service.generate_access_token(user_id, "user").unwrap();
+
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/projects/{id}/members",
+                    actix_web::web::post().to(super::add_project_member),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::post()
+            .uri(&format!("/projects/{}/members", id))
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .set_json(serde_json::json!({"user_id": uuid::Uuid::new_v4()}))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
+    }
+
+    #[actix_rt::test]
+    async fn test_remove_project_member_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/projects/{id}/members/{user_id}",
+                    actix_web::web::delete().to(super::remove_project_member),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let user_id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::delete()
+            .uri(&format!("/projects/{}/members/{}", id, user_id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_remove_project_member_requires_admin() {
+        let auth_service = test_auth_service();
+        let caller_id = uuid::Uuid::new_v4();
+        let token = auth_service.generate_access_token(caller_id, "user").unwrap();
+
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/projects/{id}/members/{user_id}",
+                    actix_web::web::delete().to(super::remove_project_member),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let user_id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::delete()
+            .uri(&format!("/projects/{}/members/{}", id, user_id))
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
+    }
+
+    #[test]
+    fn test_add_member_request_deserialization() {
+        let json = serde_json::json!({"user_id": "550e8400-e29b-41d4-a716-446655440000"});
+        let input: super::AddMemberRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            input.user_id.to_string(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+    }
+
+    #[test]
+    fn test_add_member_request_missing_user_id() {
+        let json = serde_json::json!({});
+        let result: Result<super::AddMemberRequest, _> = serde_json::from_value(json);
+        assert!(result.is_err());
     }
 
     #[actix_rt::test]

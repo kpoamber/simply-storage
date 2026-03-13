@@ -9,6 +9,8 @@ import Storages from './pages/Storages';
 import StorageDetail from './pages/StorageDetail';
 import SyncTasks from './pages/SyncTasks';
 import Nodes from './pages/Nodes';
+import Users from './pages/Users';
+import UserDetail from './pages/UserDetail';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -47,6 +49,8 @@ function AppRoutes() {
         <Route path="storages/:id" element={<StorageDetail />} />
         <Route path="sync-tasks" element={<SyncTasks />} />
         <Route path="nodes" element={<Nodes />} />
+        <Route path="users" element={<Users />} />
+        <Route path="users/:id" element={<UserDetail />} />
         <Route
           path="*"
           element={

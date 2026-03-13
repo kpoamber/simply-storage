@@ -5,6 +5,7 @@ import {
   HardDrive,
   RefreshCw,
   Server,
+  Users,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -14,6 +15,7 @@ const navItems = [
   { to: '/storages', label: 'Storages', icon: HardDrive, adminOnly: true },
   { to: '/sync-tasks', label: 'Sync Tasks', icon: RefreshCw, adminOnly: true },
   { to: '/nodes', label: 'Nodes', icon: Server, adminOnly: true },
+  { to: '/users', label: 'Users', icon: Users, adminOnly: true },
 ];
 
 export default function Sidebar() {

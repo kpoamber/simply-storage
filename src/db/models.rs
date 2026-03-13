@@ -95,6 +95,23 @@ impl Project {
         Ok(rows)
     }
 
+    /// List projects the user owns OR is a member of (via user_projects).
+    pub async fn list_accessible(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Project>> {
+        let rows = sqlx::query_as::<_, Project>(
+            r#"SELECT * FROM projects p
+               WHERE p.deleted_at IS NULL
+               AND (p.owner_id = $1 OR EXISTS (
+                   SELECT 1 FROM user_projects up WHERE up.project_id = p.id AND up.user_id = $1
+               ))
+               ORDER BY p.created_at DESC"#,
+        )
+        .bind(user_id)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+
     pub async fn update(pool: &PgPool, id: Uuid, input: &UpdateProject) -> AppResult<Project> {
         let current = Self::find_by_id(pool, id).await?;
 

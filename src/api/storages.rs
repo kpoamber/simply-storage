@@ -7,7 +7,7 @@ use uuid::Uuid;
 use super::auth::AuthenticatedUser;
 use super::PaginationParams;
 use crate::config::AppConfig;
-use crate::db::models::{CreateStorage, FileLocation, Storage, UpdateStorage};
+use crate::db::models::{CreateStorage, FileLocation, Storage, UpdateStorage, User, UserStorage};
 use crate::error::AppError;
 use crate::storage::registry::{create_backend, StorageRegistry};
 
@@ -67,9 +67,12 @@ async fn list_storages(
     pool: web::Data<PgPool>,
     user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
-    let storages = Storage::list(pool.get_ref()).await?;
+    let storages = if user.is_admin() {
+        Storage::list(pool.get_ref()).await?
+    } else {
+        // Non-admin users only see storages they are assigned to
+        UserStorage::list_for_user(pool.get_ref(), user.user_id).await?
+    };
 
     let mut result = Vec::with_capacity(storages.len());
     for storage in storages {
@@ -101,9 +104,14 @@ async fn get_storage(
     path: web::Path<Uuid>,
     user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
     let storage_id = path.into_inner();
+    // Allow admin or assigned member
+    if !user.is_admin() {
+        let is_member = UserStorage::is_member(pool.get_ref(), user.user_id, storage_id).await?;
+        if !is_member {
+            return Err(AppError::Forbidden("Access denied: not assigned to this storage".to_string()));
+        }
+    }
     let storage = Storage::find_by_id(pool.get_ref(), storage_id).await?;
 
     let stats_row = sqlx::query(
@@ -244,6 +252,57 @@ async fn create_storage_container(
     Ok(HttpResponse::Created().json(serde_json::json!({"name": body.name})))
 }
 
+// ─── Storage member (user assignment) endpoints ──────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+struct AddMemberRequest {
+    user_id: Uuid,
+}
+
+async fn list_storage_members(
+    pool: web::Data<PgPool>,
+    path: web::Path<Uuid>,
+    user: AuthenticatedUser,
+) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
+    let storage_id = path.into_inner();
+    // Verify storage exists
+    Storage::find_by_id(pool.get_ref(), storage_id).await?;
+
+    let members = UserStorage::list_for_storage(pool.get_ref(), storage_id).await?;
+    Ok(HttpResponse::Ok().json(members))
+}
+
+async fn add_storage_member(
+    pool: web::Data<PgPool>,
+    path: web::Path<Uuid>,
+    user: AuthenticatedUser,
+    body: web::Json<AddMemberRequest>,
+) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
+    let storage_id = path.into_inner();
+    // Verify storage and user exist
+    Storage::find_by_id(pool.get_ref(), storage_id).await?;
+    User::find_by_id(pool.get_ref(), body.user_id).await?;
+
+    let assignment = UserStorage::create(pool.get_ref(), body.user_id, storage_id).await?;
+    Ok(HttpResponse::Created().json(assignment))
+}
+
+async fn remove_storage_member(
+    pool: web::Data<PgPool>,
+    path: web::Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
+    let (storage_id, member_user_id) = path.into_inner();
+    UserStorage::delete(pool.get_ref(), member_user_id, storage_id).await?;
+    Ok(HttpResponse::NoContent().finish())
+}
+
 // ─── Route configuration ────────────────────────────────────────────────────────
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
@@ -265,6 +324,15 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         web::resource("/storages/{id}/containers")
             .route(web::get().to(list_storage_containers))
             .route(web::post().to(create_storage_container)),
+    )
+    .service(
+        web::resource("/storages/{id}/members")
+            .route(web::get().to(list_storage_members))
+            .route(web::post().to(add_storage_member)),
+    )
+    .service(
+        web::resource("/storages/{id}/members/{user_id}")
+            .route(web::delete().to(remove_storage_member)),
     );
 }
 
@@ -394,7 +462,9 @@ mod tests {
     }
 
     #[actix_rt::test]
-    async fn test_list_storages_requires_admin() {
+    async fn test_list_storages_allows_non_admin() {
+        // Non-admin users are allowed to access list_storages (returns only assigned storages).
+        // Without a DB pool the handler will fail with 500 (not 403), confirming no admin gate.
         let auth_service = test_auth_service();
         let user_id = uuid::Uuid::new_v4();
         let token = auth_service.generate_access_token(user_id, "user").unwrap();
@@ -411,7 +481,8 @@ mod tests {
             .insert_header(("Authorization", format!("Bearer {}", token)))
             .to_request();
         let resp = actix_web::test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 403);
+        // Should NOT be 403 (no longer admin-only); will be 500 due to missing DB pool
+        assert_ne!(resp.status(), 403);
     }
 
     #[actix_rt::test]
@@ -433,7 +504,9 @@ mod tests {
     }
 
     #[actix_rt::test]
-    async fn test_get_storage_requires_admin() {
+    async fn test_get_storage_allows_non_admin() {
+        // Non-admin users are allowed to access get_storage if they are members.
+        // Without a DB pool the handler will fail with 500 (not 403), confirming no admin gate.
         let auth_service = test_auth_service();
         let user_id = uuid::Uuid::new_v4();
         let token = auth_service.generate_access_token(user_id, "user").unwrap();
@@ -451,7 +524,8 @@ mod tests {
             .insert_header(("Authorization", format!("Bearer {}", token)))
             .to_request();
         let resp = actix_web::test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 403);
+        // Should NOT be 403 (no longer admin-only); will be 500 due to missing DB pool
+        assert_ne!(resp.status(), 403);
     }
 
     #[actix_rt::test]
@@ -492,5 +566,166 @@ mod tests {
             .to_request();
         let resp = actix_web::test::call_service(&app, req).await;
         assert_eq!(resp.status(), 403);
+    }
+
+    // ─── Storage member endpoint tests ──────────────────────────────────────
+
+    #[actix_rt::test]
+    async fn test_list_storage_members_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/storages/{id}/members",
+                    actix_web::web::get().to(list_storage_members),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::get()
+            .uri(&format!("/storages/{}/members", id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_list_storage_members_requires_admin() {
+        let auth_service = test_auth_service();
+        let user_id = uuid::Uuid::new_v4();
+        let token = auth_service.generate_access_token(user_id, "user").unwrap();
+
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/storages/{id}/members",
+                    actix_web::web::get().to(list_storage_members),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::get()
+            .uri(&format!("/storages/{}/members", id))
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
+    }
+
+    #[actix_rt::test]
+    async fn test_add_storage_member_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/storages/{id}/members",
+                    actix_web::web::post().to(add_storage_member),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::post()
+            .uri(&format!("/storages/{}/members", id))
+            .set_json(serde_json::json!({"user_id": uuid::Uuid::new_v4()}))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_add_storage_member_requires_admin() {
+        let auth_service = test_auth_service();
+        let user_id = uuid::Uuid::new_v4();
+        let token = auth_service.generate_access_token(user_id, "user").unwrap();
+
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/storages/{id}/members",
+                    actix_web::web::post().to(add_storage_member),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::post()
+            .uri(&format!("/storages/{}/members", id))
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .set_json(serde_json::json!({"user_id": uuid::Uuid::new_v4()}))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
+    }
+
+    #[actix_rt::test]
+    async fn test_remove_storage_member_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/storages/{id}/members/{user_id}",
+                    actix_web::web::delete().to(remove_storage_member),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let user_id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::delete()
+            .uri(&format!("/storages/{}/members/{}", id, user_id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_remove_storage_member_requires_admin() {
+        let auth_service = test_auth_service();
+        let caller_id = uuid::Uuid::new_v4();
+        let token = auth_service.generate_access_token(caller_id, "user").unwrap();
+
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/storages/{id}/members/{user_id}",
+                    actix_web::web::delete().to(remove_storage_member),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let user_id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::delete()
+            .uri(&format!("/storages/{}/members/{}", id, user_id))
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
+    }
+
+    #[test]
+    fn test_storage_add_member_request_deserialization() {
+        let json = serde_json::json!({"user_id": "550e8400-e29b-41d4-a716-446655440000"});
+        let input: super::AddMemberRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            input.user_id.to_string(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+    }
+
+    #[test]
+    fn test_storage_add_member_request_missing_user_id() {
+        let json = serde_json::json!({});
+        let result: Result<super::AddMemberRequest, _> = serde_json::from_value(json);
+        assert!(result.is_err());
     }
 }
