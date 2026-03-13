@@ -12,7 +12,7 @@ import { useAuth } from '../contexts/AuthContext';
 const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, adminOnly: false },
   { to: '/projects', label: 'Projects', icon: FolderOpen, adminOnly: false },
-  { to: '/storages', label: 'Storages', icon: HardDrive, adminOnly: true },
+  { to: '/storages', label: 'Storages', icon: HardDrive, adminOnly: false },
   { to: '/sync-tasks', label: 'Sync Tasks', icon: RefreshCw, adminOnly: true },
   { to: '/nodes', label: 'Nodes', icon: Server, adminOnly: true },
   { to: '/users', label: 'Users', icon: Users, adminOnly: true },

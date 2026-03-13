@@ -13,6 +13,18 @@ vi.mock('../api/client', () => ({
   },
 }));
 
+vi.mock('../contexts/AuthContext', () => ({
+  useAuth: () => ({
+    user: {
+      id: 'current-admin',
+      username: 'admin',
+      role: 'admin',
+      created_at: '2026-01-01',
+      updated_at: '2026-01-01',
+    },
+  }),
+}));
+
 import apiClient from '../api/client';
 const mockGet = vi.mocked(apiClient.get);
 const mockPost = vi.mocked(apiClient.post);

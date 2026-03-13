@@ -140,12 +140,23 @@ export default function StorageDetail() {
                   <p className="mt-2 text-sm text-red-600">{exportStatus.error}</p>
                 )}
                 {exportStatus.status === 'completed' && exportJobId && (
-                  <a
-                    href={`/api/storages/${id}/export/download?job_id=${exportJobId}`}
+                  <button
+                    onClick={async () => {
+                      const res = await apiClient.get(`/storages/${id}/export/download`, {
+                        params: { job_id: exportJobId },
+                        responseType: 'blob',
+                      });
+                      const url = URL.createObjectURL(res.data);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = 'export.tar.gz';
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
                     className="mt-2 inline-block text-sm text-blue-600 hover:underline"
                   >
                     Download archive
-                  </a>
+                  </button>
                 )}
               </div>
             </div>

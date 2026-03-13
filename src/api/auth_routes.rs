@@ -4,7 +4,7 @@ use serde::Deserialize;
 use sqlx::PgPool;
 
 use crate::api::auth::AuthenticatedUser;
-use crate::db::models::{is_unique_violation, CreateRefreshToken, CreateUser, RefreshToken, User, UserProject, UserStorage};
+use crate::db::models::{is_unique_violation, CreateRefreshToken, CreateUser, Project, RefreshToken, User, UserProject, UserStorage};
 use crate::error::AppError;
 use crate::services::auth_service::AuthService;
 
@@ -138,7 +138,18 @@ async fn delete_user(
         ));
     }
 
-    // Delete user's refresh tokens first
+    // Check if user owns any projects - must be reassigned first
+    let owned_projects = Project::list_for_owner(pool.get_ref(), user_id).await?;
+    if !owned_projects.is_empty() {
+        let names: Vec<String> = owned_projects.iter().map(|p| p.name.clone()).collect();
+        return Err(AppError::Conflict(format!(
+            "Cannot delete user: they own {} project(s) ({}). Reassign ownership first.",
+            owned_projects.len(),
+            names.join(", ")
+        )));
+    }
+
+    // Delete user's refresh tokens first (junction tables cascade automatically)
     RefreshToken::delete_by_user_id(pool.get_ref(), user_id).await?;
     User::delete(pool.get_ref(), user_id).await?;
 

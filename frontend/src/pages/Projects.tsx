@@ -4,9 +4,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Eye, Pencil, Plus, X } from 'lucide-react';
 import apiClient from '../api/client';
 import { Project, ProjectWithStats, formatBytes } from '../api/types';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Projects() {
   const queryClient = useQueryClient();
+  const { user: currentUser } = useAuth();
+  const isAdmin = currentUser?.role === 'admin';
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -123,13 +126,15 @@ export default function Projects() {
                         >
                           <Eye className="h-4 w-4" />
                         </Link>
-                        <button
-                          onClick={() => setEditingId(project.id)}
-                          className="text-gray-500 hover:text-gray-700"
-                          title="Edit"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
+                        {(isAdmin || project.owner_id === currentUser?.id) && (
+                          <button
+                            onClick={() => setEditingId(project.id)}
+                            className="text-gray-500 hover:text-gray-700"
+                            title="Edit"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

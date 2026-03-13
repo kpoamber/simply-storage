@@ -5,9 +5,12 @@ import { Eye, Plus, X, Pencil, Trash2 } from 'lucide-react';
 import apiClient from '../api/client';
 import { StorageBackend, formatBytes } from '../api/types';
 import StorageForm from '../components/StorageForm';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Storages() {
   const queryClient = useQueryClient();
+  const { user: currentUser } = useAuth();
+  const isAdmin = currentUser?.role === 'admin';
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -48,12 +51,14 @@ export default function Storages() {
           <h2 className="text-2xl font-semibold text-gray-800">Storages</h2>
           <p className="mt-1 text-gray-500">Manage storage backends.</p>
         </div>
-        <button
-          onClick={() => setShowCreateForm(true)}
-          className="flex items-center gap-1 rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
-        >
-          <Plus className="h-4 w-4" /> Add Storage
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setShowCreateForm(true)}
+            className="flex items-center gap-1 rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4" /> Add Storage
+          </button>
+        )}
       </div>
 
       {showCreateForm && (
@@ -112,16 +117,20 @@ export default function Storages() {
                       <Link to={`/storages/${storage.id}`} className="text-blue-600 hover:text-blue-800" title="View">
                         <Eye className="h-4 w-4" />
                       </Link>
-                      <button onClick={() => setEditingId(storage.id)} className="text-gray-500 hover:text-gray-700" title="Edit">
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => { if (window.confirm('Disable this storage?')) deleteMutation.mutate(storage.id); }}
-                        className="text-red-400 hover:text-red-600"
-                        title="Disable"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      {isAdmin && (
+                        <>
+                          <button onClick={() => setEditingId(storage.id)} className="text-gray-500 hover:text-gray-700" title="Edit">
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => { if (window.confirm('Disable this storage?')) deleteMutation.mutate(storage.id); }}
+                            className="text-red-400 hover:text-red-600"
+                            title="Disable"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>

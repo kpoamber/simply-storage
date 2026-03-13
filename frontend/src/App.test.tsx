@@ -128,7 +128,8 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByText('testuser')).toBeInTheDocument();
     });
-    expect(screen.queryByRole('link', { name: /Storages/ })).not.toBeInTheDocument();
+    // Storages is visible to all users (they see assigned storages)
+    expect(screen.getByRole('link', { name: /Storages/ })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Sync Tasks/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Nodes/ })).not.toBeInTheDocument();
   });
