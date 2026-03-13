@@ -34,15 +34,20 @@ pub struct UpdateProject {
 }
 
 impl Project {
-    pub async fn create(pool: &PgPool, input: &CreateProject) -> AppResult<Project> {
+    pub async fn create(
+        pool: &PgPool,
+        input: &CreateProject,
+        owner_id: Option<Uuid>,
+    ) -> AppResult<Project> {
         let row = sqlx::query_as::<_, Project>(
-            r#"INSERT INTO projects (name, slug, hot_to_cold_days)
-               VALUES ($1, $2, $3)
+            r#"INSERT INTO projects (name, slug, hot_to_cold_days, owner_id)
+               VALUES ($1, $2, $3, $4)
                RETURNING *"#,
         )
         .bind(&input.name)
         .bind(&input.slug)
         .bind(input.hot_to_cold_days)
+        .bind(owner_id)
         .fetch_one(pool)
         .await?;
 
@@ -73,6 +78,17 @@ impl Project {
         let rows = sqlx::query_as::<_, Project>(
             "SELECT * FROM projects WHERE deleted_at IS NULL ORDER BY created_at DESC",
         )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    pub async fn list_for_owner(pool: &PgPool, owner_id: Uuid) -> AppResult<Vec<Project>> {
+        let rows = sqlx::query_as::<_, Project>(
+            "SELECT * FROM projects WHERE deleted_at IS NULL AND owner_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(owner_id)
         .fetch_all(pool)
         .await?;
 
@@ -1676,7 +1692,7 @@ mod tests {
             slug: format!("crud-test-{}", Uuid::new_v4()),
             hot_to_cold_days: Some(14),
         };
-        let project = Project::create(&pool, &input).await.unwrap();
+        let project = Project::create(&pool, &input, None).await.unwrap();
         assert_eq!(project.name, "CRUD Test");
         assert_eq!(project.hot_to_cold_days, Some(14));
 
@@ -1718,14 +1734,14 @@ mod tests {
             slug: slug.clone(),
             hot_to_cold_days: None,
         };
-        Project::create(&pool, &input).await.unwrap();
+        Project::create(&pool, &input, None).await.unwrap();
 
         let input2 = CreateProject {
             name: "Second".to_string(),
             slug,
             hot_to_cold_days: None,
         };
-        let result = Project::create(&pool, &input2).await;
+        let result = Project::create(&pool, &input2, None).await;
         assert!(result.is_err());
 
         // File hash uniqueness

@@ -725,7 +725,7 @@ mod tests {
             slug: format!("test-project-{}", Uuid::new_v4()),
             hot_to_cold_days: None,
         };
-        let project = Project::create(&pool, &create_project).await.unwrap();
+        let project = Project::create(&pool, &create_project, None).await.unwrap();
 
         (pool, registry, dir, storage.id, project.id)
     }

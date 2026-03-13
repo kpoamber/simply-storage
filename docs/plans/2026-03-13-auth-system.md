@@ -101,17 +101,17 @@
 - Modify: `src/api/bulk.rs`
 - Modify: `src/api/mod.rs`
 
-- [ ] Добавить AuthenticatedUser extractor во все обработчики в projects.rs:
+- [x] Добавить AuthenticatedUser extractor во все обработчики в projects.rs:
   - Создание проекта: записывать owner_id = user_id
   - Просмотр/изменение/удаление проекта: проверять owner_or_admin
   - Список проектов: admin видит все, user только свои
-- [ ] Добавить AuthenticatedUser extractor в files.rs:
+- [x] Добавить AuthenticatedUser extractor в files.rs:
   - Загрузка/скачивание файлов: проверять доступ к проекту через owner_or_admin
-- [ ] Добавить AuthenticatedUser extractor в storages.rs и bulk.rs:
+- [x] Добавить AuthenticatedUser extractor в storages.rs и bulk.rs:
   - Управление хранилищами: только admin
-- [ ] Защитить system endpoints (stats, config-export, nodes): только admin
-- [ ] Обновить существующие тесты с mock-авторизацией
-- [ ] run project test suite - must pass before task 6
+- [x] Защитить system endpoints (stats, config-export, nodes): только admin
+- [x] Обновить существующие тесты с mock-авторизацией
+- [x] run project test suite - must pass before task 6
 
 ### Task 6: Frontend - аутентификация
 

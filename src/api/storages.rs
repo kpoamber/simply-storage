@@ -4,6 +4,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use super::auth::AuthenticatedUser;
 use super::PaginationParams;
 use crate::config::AppConfig;
 use crate::db::models::{CreateStorage, FileLocation, Storage, UpdateStorage};
@@ -26,8 +27,11 @@ async fn create_storage(
     pool: web::Data<PgPool>,
     registry: web::Data<Arc<StorageRegistry>>,
     config: web::Data<AppConfig>,
+    user: AuthenticatedUser,
     body: web::Json<CreateStorage>,
 ) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
     // Validate backend configuration before persisting to DB
     // This prevents invalid storage records from accumulating
     if body.enabled.unwrap_or(true) {
@@ -59,7 +63,12 @@ async fn create_storage(
     Ok(HttpResponse::Created().json(storage.redacted()))
 }
 
-async fn list_storages(pool: web::Data<PgPool>) -> Result<HttpResponse, AppError> {
+async fn list_storages(
+    pool: web::Data<PgPool>,
+    user: AuthenticatedUser,
+) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
     let storages = Storage::list(pool.get_ref()).await?;
 
     let mut result = Vec::with_capacity(storages.len());
@@ -90,7 +99,10 @@ async fn list_storages(pool: web::Data<PgPool>) -> Result<HttpResponse, AppError
 async fn get_storage(
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
     let storage_id = path.into_inner();
     let storage = Storage::find_by_id(pool.get_ref(), storage_id).await?;
 
@@ -119,8 +131,11 @@ async fn update_storage(
     registry: web::Data<Arc<StorageRegistry>>,
     config: web::Data<AppConfig>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
     body: web::Json<UpdateStorage>,
 ) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
     let storage_id = path.into_inner();
     let storage = Storage::update(pool.get_ref(), storage_id, &body).await?;
 
@@ -146,7 +161,10 @@ async fn disable_storage(
     pool: web::Data<PgPool>,
     registry: web::Data<Arc<StorageRegistry>>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
     let storage_id = path.into_inner();
     let storage = Storage::update_enabled(pool.get_ref(), storage_id, false).await?;
     registry.unregister(&storage_id).await;
@@ -156,8 +174,11 @@ async fn disable_storage(
 async fn list_storage_files(
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
     query: web::Query<PaginationParams>,
 ) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
     let storage_id = path.into_inner();
     // Verify storage exists
     let _storage = Storage::find_by_id(pool.get_ref(), storage_id).await?;
@@ -188,7 +209,10 @@ async fn list_storage_containers(
     pool: web::Data<PgPool>,
     registry: web::Data<Arc<StorageRegistry>>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
     let storage_id = path.into_inner();
     let _storage = Storage::find_by_id(pool.get_ref(), storage_id).await?;
     let backend = registry.get(&storage_id).await?;
@@ -207,8 +231,11 @@ async fn create_storage_container(
     pool: web::Data<PgPool>,
     registry: web::Data<Arc<StorageRegistry>>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
     body: web::Json<CreateContainerRequest>,
 ) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
     let storage_id = path.into_inner();
     let _storage = Storage::find_by_id(pool.get_ref(), storage_id).await?;
     let backend = registry.get(&storage_id).await?;
@@ -332,5 +359,136 @@ mod tests {
         });
         let result: Result<CreateStorage, _> = serde_json::from_value(json);
         assert!(result.is_err());
+    }
+
+    // ─── Auth enforcement tests ───────────────────────────────────────────────
+
+    use crate::config::AuthConfig;
+    use crate::services::auth_service::AuthService;
+
+    fn test_auth_service() -> AuthService {
+        AuthService::new(&AuthConfig {
+            jwt_secret: "test-secret-for-storage-endpoints".to_string(),
+            access_token_ttl_secs: 900,
+            refresh_token_ttl_secs: 604800,
+        })
+    }
+
+    #[actix_rt::test]
+    async fn test_list_storages_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route("/storages", actix_web::web::get().to(list_storages)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get()
+            .uri("/storages")
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_list_storages_requires_admin() {
+        let auth_service = test_auth_service();
+        let user_id = uuid::Uuid::new_v4();
+        let token = auth_service.generate_access_token(user_id, "user").unwrap();
+
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route("/storages", actix_web::web::get().to(list_storages)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get()
+            .uri("/storages")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_storage_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route("/storages/{id}", actix_web::web::get().to(get_storage)),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::get()
+            .uri(&format!("/storages/{}", id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_storage_requires_admin() {
+        let auth_service = test_auth_service();
+        let user_id = uuid::Uuid::new_v4();
+        let token = auth_service.generate_access_token(user_id, "user").unwrap();
+
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route("/storages/{id}", actix_web::web::get().to(get_storage)),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::get()
+            .uri(&format!("/storages/{}", id))
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
+    }
+
+    #[actix_rt::test]
+    async fn test_disable_storage_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route("/storages/{id}", actix_web::web::delete().to(disable_storage)),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::delete()
+            .uri(&format!("/storages/{}", id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_disable_storage_requires_admin() {
+        let auth_service = test_auth_service();
+        let user_id = uuid::Uuid::new_v4();
+        let token = auth_service.generate_access_token(user_id, "user").unwrap();
+
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route("/storages/{id}", actix_web::web::delete().to(disable_storage)),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::delete()
+            .uri(&format!("/storages/{}", id))
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
     }
 }

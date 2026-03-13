@@ -11,11 +11,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 use crate::config::AppConfig;
-use crate::db::models::{File, FileLocation, FileReference, Storage};
+use crate::db::models::{File, FileLocation, FileReference, Project, Storage};
 use crate::error::AppError;
 use crate::services::{FileService, TierService};
 use crate::storage::StorageRegistry;
 
+use super::auth::AuthenticatedUser;
 use super::PaginationParams;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -54,18 +55,51 @@ pub struct DeleteFileQuery {
     pub project_id: Uuid,
 }
 
+// ─── Auth helper ─────────────────────────────────────────────────────────────────
+
+/// Check that the user has access to at least one project referencing this file.
+async fn check_file_access(
+    pool: &PgPool,
+    file_id: Uuid,
+    user: &AuthenticatedUser,
+) -> Result<(), AppError> {
+    if user.role == "admin" {
+        return Ok(());
+    }
+    let row: (bool,) = sqlx::query_as(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM file_references fr
+            JOIN projects p ON p.id = fr.project_id
+            WHERE fr.file_id = $1 AND p.owner_id = $2 AND p.deleted_at IS NULL
+        )"#,
+    )
+    .bind(file_id)
+    .bind(user.user_id)
+    .fetch_one(pool)
+    .await?;
+
+    if !row.0 {
+        return Err(AppError::Forbidden(
+            "Access denied: not the owner".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 // ─── Handlers ───────────────────────────────────────────────────────────────────
 
 async fn upload_file(
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
     file_service: web::Data<FileService>,
     mut payload: Multipart,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
 
-    // Verify project exists
-    crate::db::models::Project::find_by_id(pool.get_ref(), project_id).await?;
+    // Verify project exists and user has access
+    let project = Project::find_by_id(pool.get_ref(), project_id).await?;
+    user.require_owner_or_admin(project.owner_id)?;
 
     let mut field = payload
         .try_next()
@@ -102,12 +136,14 @@ async fn upload_file(
 async fn list_project_files(
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
     query: web::Query<PaginationParams>,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
 
-    // Verify project exists
-    crate::db::models::Project::find_by_id(pool.get_ref(), project_id).await?;
+    // Verify project exists and user has access
+    let project = Project::find_by_id(pool.get_ref(), project_id).await?;
+    user.require_owner_or_admin(project.owner_id)?;
 
     let refs =
         FileReference::list_for_project(pool.get_ref(), project_id, query.limit(), query.offset())
@@ -153,8 +189,11 @@ async fn list_project_files(
 async fn get_file_metadata(
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let file_id = path.into_inner();
+    check_file_access(pool.get_ref(), file_id, &user).await?;
+
     let file = File::find_by_id(pool.get_ref(), file_id).await?;
     let locations = FileLocation::find_all_for_file(pool.get_ref(), file_id).await?;
 
@@ -173,10 +212,14 @@ async fn get_file_metadata(
 }
 
 async fn download_file(
+    pool: web::Data<PgPool>,
     file_service: web::Data<FileService>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let file_id = path.into_inner();
+    check_file_access(pool.get_ref(), file_id, &user).await?;
+
     let result = file_service.download_file(file_id).await?;
 
     let mut response = HttpResponse::Ok();
@@ -191,11 +234,15 @@ async fn download_file(
 }
 
 async fn get_temp_link(
+    pool: web::Data<PgPool>,
     file_service: web::Data<FileService>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
     query: web::Query<TempLinkQuery>,
 ) -> Result<HttpResponse, AppError> {
     let file_id = path.into_inner();
+    check_file_access(pool.get_ref(), file_id, &user).await?;
+
     let expires_in_secs = query.expires_in.unwrap_or(3600);
     let expires_in = std::time::Duration::from_secs(expires_in_secs);
 
@@ -210,18 +257,27 @@ async fn get_temp_link(
 async fn delete_file_reference(
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
     query: web::Query<DeleteFileQuery>,
 ) -> Result<HttpResponse, AppError> {
     let file_id = path.into_inner();
+    // Check ownership of the specific project being removed from
+    let project = Project::find_by_id(pool.get_ref(), query.project_id).await?;
+    user.require_owner_or_admin(project.owner_id)?;
+
     FileReference::delete_by_file_and_project(pool.get_ref(), file_id, query.project_id).await?;
     Ok(HttpResponse::NoContent().finish())
 }
 
 async fn restore_file(
+    pool: web::Data<PgPool>,
     tier_service: web::Data<TierService>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let file_id = path.into_inner();
+    check_file_access(pool.get_ref(), file_id, &user).await?;
+
     let task = tier_service.restore_file(file_id).await?;
     Ok(HttpResponse::Accepted().json(task))
 }
@@ -236,6 +292,7 @@ pub struct LocalTempDownloadQuery {
 }
 
 /// GET /download/local - Serve files via HMAC-signed temporary URLs for local storage.
+/// No auth required - the HMAC signature serves as authentication.
 pub async fn download_local_temp(
     pool: web::Data<PgPool>,
     registry: web::Data<Arc<StorageRegistry>>,
@@ -393,5 +450,120 @@ mod tests {
         let json = serde_json::json!({});
         let result: Result<DeleteFileQuery, _> = serde_json::from_value(json);
         assert!(result.is_err());
+    }
+
+    // ─── Auth enforcement tests ───────────────────────────────────────────────
+
+    use crate::config::AuthConfig;
+    use crate::services::auth_service::AuthService;
+
+    fn test_auth_service() -> AuthService {
+        AuthService::new(&AuthConfig {
+            jwt_secret: "test-secret-for-file-endpoints".to_string(),
+            access_token_ttl_secs: 900,
+            refresh_token_ttl_secs: 604800,
+        })
+    }
+
+    #[actix_rt::test]
+    async fn test_upload_file_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/projects/{project_id}/files",
+                    actix_web::web::post().to(upload_file),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::post()
+            .uri(&format!("/projects/{}/files", id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_list_project_files_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/projects/{project_id}/files",
+                    actix_web::web::get().to(list_project_files),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::get()
+            .uri(&format!("/projects/{}/files", id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_file_metadata_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route("/files/{id}", actix_web::web::get().to(get_file_metadata)),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::get()
+            .uri(&format!("/files/{}", id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_download_file_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/files/{id}/download",
+                    actix_web::web::get().to(download_file),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::get()
+            .uri(&format!("/files/{}/download", id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_restore_file_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/files/{id}/restore",
+                    actix_web::web::post().to(restore_file),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::post()
+            .uri(&format!("/files/{}/restore", id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
     }
 }

@@ -685,7 +685,7 @@ mod tests {
             slug: format!("sync-test-{}", Uuid::new_v4()),
             hot_to_cold_days: None,
         };
-        let _project = Project::create(&pool, &create_project).await.unwrap();
+        let _project = Project::create(&pool, &create_project, None).await.unwrap();
 
         // Create a test file and upload to source
         let data = Bytes::from("test file for sync");

@@ -8,25 +8,37 @@ use crate::db::models::{
 };
 use crate::error::AppError;
 
+use super::auth::AuthenticatedUser;
+
 async fn create_project(
     pool: web::Data<PgPool>,
+    user: AuthenticatedUser,
     body: web::Json<CreateProject>,
 ) -> Result<HttpResponse, AppError> {
-    let project = Project::create(pool.get_ref(), &body).await?;
+    let project = Project::create(pool.get_ref(), &body, Some(user.user_id)).await?;
     Ok(HttpResponse::Created().json(project))
 }
 
-async fn list_projects(pool: web::Data<PgPool>) -> Result<HttpResponse, AppError> {
-    let projects = Project::list(pool.get_ref()).await?;
+async fn list_projects(
+    pool: web::Data<PgPool>,
+    user: AuthenticatedUser,
+) -> Result<HttpResponse, AppError> {
+    let projects = if user.role == "admin" {
+        Project::list(pool.get_ref()).await?
+    } else {
+        Project::list_for_owner(pool.get_ref(), user.user_id).await?
+    };
     Ok(HttpResponse::Ok().json(projects))
 }
 
 async fn get_project(
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
     let project = Project::find_by_id(pool.get_ref(), project_id).await?;
+    user.require_owner_or_admin(project.owner_id)?;
 
     // Get file stats for the project
     let stats_row = sqlx::query(
@@ -58,9 +70,13 @@ async fn get_project(
 async fn update_project(
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
     body: web::Json<UpdateProject>,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
+    let existing = Project::find_by_id(pool.get_ref(), project_id).await?;
+    user.require_owner_or_admin(existing.owner_id)?;
+
     let project = Project::update(pool.get_ref(), project_id, &body).await?;
     Ok(HttpResponse::Ok().json(project))
 }
@@ -68,8 +84,12 @@ async fn update_project(
 async fn delete_project(
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
+    let existing = Project::find_by_id(pool.get_ref(), project_id).await?;
+    user.require_owner_or_admin(existing.owner_id)?;
+
     Project::delete(pool.get_ref(), project_id).await?;
     Ok(HttpResponse::NoContent().finish())
 }
@@ -79,9 +99,11 @@ async fn delete_project(
 async fn list_project_storages(
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
-    Project::find_by_id(pool.get_ref(), project_id).await?;
+    let project = Project::find_by_id(pool.get_ref(), project_id).await?;
+    user.require_owner_or_admin(project.owner_id)?;
 
     let assignments = ProjectStorage::list_for_project(pool.get_ref(), project_id).await?;
     Ok(HttpResponse::Ok().json(assignments))
@@ -90,10 +112,12 @@ async fn list_project_storages(
 async fn assign_storage(
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
     body: web::Json<CreateProjectStorage>,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
-    Project::find_by_id(pool.get_ref(), project_id).await?;
+    let project = Project::find_by_id(pool.get_ref(), project_id).await?;
+    user.require_owner_or_admin(project.owner_id)?;
     Storage::find_by_id(pool.get_ref(), body.storage_id).await?;
 
     let assignment = ProjectStorage::create(pool.get_ref(), project_id, &body).await?;
@@ -103,9 +127,13 @@ async fn assign_storage(
 async fn update_project_storage(
     pool: web::Data<PgPool>,
     path: web::Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
     body: web::Json<UpdateProjectStorage>,
 ) -> Result<HttpResponse, AppError> {
     let (project_id, storage_id) = path.into_inner();
+    let project = Project::find_by_id(pool.get_ref(), project_id).await?;
+    user.require_owner_or_admin(project.owner_id)?;
+
     let assignment =
         ProjectStorage::update(pool.get_ref(), project_id, storage_id, &body).await?;
     Ok(HttpResponse::Ok().json(assignment))
@@ -114,8 +142,12 @@ async fn update_project_storage(
 async fn remove_storage_assignment(
     pool: web::Data<PgPool>,
     path: web::Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let (project_id, storage_id) = path.into_inner();
+    let project = Project::find_by_id(pool.get_ref(), project_id).await?;
+    user.require_owner_or_admin(project.owner_id)?;
+
     ProjectStorage::delete(pool.get_ref(), project_id, storage_id).await?;
     Ok(HttpResponse::NoContent().finish())
 }
@@ -123,9 +155,11 @@ async fn remove_storage_assignment(
 async fn list_available_storages(
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
+    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
-    Project::find_by_id(pool.get_ref(), project_id).await?;
+    let project = Project::find_by_id(pool.get_ref(), project_id).await?;
+    user.require_owner_or_admin(project.owner_id)?;
 
     let storages = ProjectStorage::list_available_storages(pool.get_ref(), project_id).await?;
     // Redact sensitive config from available storages
@@ -215,5 +249,111 @@ mod tests {
         });
         let result: Result<CreateProject, _> = serde_json::from_value(json);
         assert!(result.is_err());
+    }
+
+    // ─── Auth enforcement tests ───────────────────────────────────────────────
+
+    use crate::config::AuthConfig;
+    use crate::services::auth_service::AuthService;
+
+    fn test_auth_service() -> AuthService {
+        AuthService::new(&AuthConfig {
+            jwt_secret: "test-secret-for-project-endpoints".to_string(),
+            access_token_ttl_secs: 900,
+            refresh_token_ttl_secs: 604800,
+        })
+    }
+
+    #[actix_rt::test]
+    async fn test_create_project_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route("/projects", actix_web::web::post().to(super::create_project)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::post()
+            .uri("/projects")
+            .set_json(serde_json::json!({
+                "name": "Test",
+                "slug": "test"
+            }))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_list_projects_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route("/projects", actix_web::web::get().to(super::list_projects)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get()
+            .uri("/projects")
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_project_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route("/projects/{id}", actix_web::web::get().to(super::get_project)),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::get()
+            .uri(&format!("/projects/{}", id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_update_project_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route("/projects/{id}", actix_web::web::put().to(super::update_project)),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::put()
+            .uri(&format!("/projects/{}", id))
+            .set_json(serde_json::json!({"name": "Updated"}))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_delete_project_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route("/projects/{id}", actix_web::web::delete().to(super::delete_project)),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::delete()
+            .uri(&format!("/projects/{}", id))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
     }
 }

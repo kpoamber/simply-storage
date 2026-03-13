@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
+use auth::AuthenticatedUser;
 use crate::config::AppConfig;
 use crate::db::models::{Node, Project, Storage, SyncTask};
 use crate::error::AppError;
@@ -45,7 +46,8 @@ pub struct SystemStats {
     pub pending_sync_tasks: i64,
 }
 
-async fn system_stats(pool: web::Data<PgPool>) -> Result<HttpResponse, AppError> {
+async fn system_stats(pool: web::Data<PgPool>, user: AuthenticatedUser) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
     let file_row = sqlx::query("SELECT COUNT(*)::bigint, COALESCE(SUM(size), 0)::bigint FROM files")
         .fetch_one(pool.get_ref())
         .await?;
@@ -76,7 +78,9 @@ pub struct SyncTaskFilter {
 async fn list_sync_tasks(
     pool: web::Data<PgPool>,
     query: web::Query<SyncTaskFilter>,
+    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
     let tasks = SyncTask::list_filtered(
         pool.get_ref(),
         query.status.as_deref(),
@@ -98,7 +102,9 @@ pub struct ConfigExport {
 async fn config_export(
     pool: web::Data<PgPool>,
     config: web::Data<AppConfig>,
+    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
     let projects = Project::list(pool.get_ref()).await?;
     let storages = Storage::list(pool.get_ref()).await?;
 
@@ -116,7 +122,8 @@ async fn config_export(
 
 // ─── Nodes ──────────────────────────────────────────────────────────────────────
 
-async fn list_nodes(pool: web::Data<PgPool>) -> Result<HttpResponse, AppError> {
+async fn list_nodes(pool: web::Data<PgPool>, user: AuthenticatedUser) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
     // Consider nodes active if heartbeat within the last 90 seconds (3x the 30s interval)
     let nodes = Node::list_active(pool.get_ref(), 90).await?;
     Ok(HttpResponse::Ok().json(nodes))
@@ -303,5 +310,170 @@ mod tests {
         assert_eq!(json["storages"].as_array().unwrap().len(), 1);
         assert_eq!(json["projects"][0]["name"], "Test");
         assert_eq!(json["storages"][0]["storage_type"], "local");
+    }
+
+    // ─── Auth enforcement tests ───────────────────────────────────────────────
+
+    use crate::config::AuthConfig;
+    use crate::services::auth_service::AuthService;
+
+    fn test_auth_service() -> AuthService {
+        AuthService::new(&AuthConfig {
+            jwt_secret: "test-secret-for-system-endpoints".to_string(),
+            access_token_ttl_secs: 900,
+            refresh_token_ttl_secs: 604800,
+        })
+    }
+
+    #[actix_rt::test]
+    async fn test_system_stats_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(auth_service))
+                .route("/api/system/stats", web::get().to(system_stats)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get()
+            .uri("/api/system/stats")
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_system_stats_requires_admin() {
+        let auth_service = test_auth_service();
+        let user_id = Uuid::new_v4();
+        let token = auth_service.generate_access_token(user_id, "user").unwrap();
+
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(auth_service))
+                .route("/api/system/stats", web::get().to(system_stats)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get()
+            .uri("/api/system/stats")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
+    }
+
+    #[actix_rt::test]
+    async fn test_config_export_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(auth_service))
+                .route("/api/system/config-export", web::get().to(config_export)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get()
+            .uri("/api/system/config-export")
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_config_export_requires_admin() {
+        let auth_service = test_auth_service();
+        let user_id = Uuid::new_v4();
+        let token = auth_service.generate_access_token(user_id, "user").unwrap();
+
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(auth_service))
+                .route("/api/system/config-export", web::get().to(config_export)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get()
+            .uri("/api/system/config-export")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
+    }
+
+    #[actix_rt::test]
+    async fn test_nodes_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(auth_service))
+                .route("/api/system/nodes", web::get().to(list_nodes)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get()
+            .uri("/api/system/nodes")
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_nodes_requires_admin() {
+        let auth_service = test_auth_service();
+        let user_id = Uuid::new_v4();
+        let token = auth_service.generate_access_token(user_id, "user").unwrap();
+
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(auth_service))
+                .route("/api/system/nodes", web::get().to(list_nodes)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get()
+            .uri("/api/system/nodes")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
+    }
+
+    #[actix_rt::test]
+    async fn test_sync_tasks_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(auth_service))
+                .route("/api/sync-tasks", web::get().to(list_sync_tasks)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get()
+            .uri("/api/sync-tasks")
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_sync_tasks_requires_admin() {
+        let auth_service = test_auth_service();
+        let user_id = Uuid::new_v4();
+        let token = auth_service.generate_access_token(user_id, "user").unwrap();
+
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(auth_service))
+                .route("/api/sync-tasks", web::get().to(list_sync_tasks)),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get()
+            .uri("/api/sync-tasks")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
     }
 }
