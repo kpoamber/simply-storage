@@ -187,13 +187,13 @@ Add support for user-defined metadata (JSON key/value) on file uploads, with fas
 
 ### Task 9: Verify acceptance criteria
 
-- [ ] Manual test: upload file with metadata via UI, verify metadata stored and displayed
-- [ ] Manual test: search files by metadata key/value with AND/OR/NOT filters, verify correct results
-- [ ] Manual test: verify summary shows correct totals, charts render with real data
-- [ ] Manual test: bulk delete preview shows correct count, actual delete removes files
-- [ ] Run full test suite: `cargo test` (backend) and `cd frontend && npm test` (frontend)
-- [ ] Run linter: `cargo clippy -- -D warnings` and `cd frontend && npm run lint`
-- [ ] Verify test coverage meets 80%+
+- [x] Manual test: upload file with metadata via UI, verify metadata stored and displayed
+- [x] Manual test: search files by metadata key/value with AND/OR/NOT filters, verify correct results
+- [x] Manual test: verify summary shows correct totals, charts render with real data
+- [x] Manual test: bulk delete preview shows correct count, actual delete removes files
+- [x] Run full test suite: `cargo test` (backend) and `cd frontend && npm test` (frontend)
+- [x] Run linter: `cargo clippy -- -D warnings` and `cd frontend && npm run lint`
+- [x] Verify test coverage meets 80%+
 
 ### Task 10: Update documentation
 
