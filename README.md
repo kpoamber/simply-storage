@@ -38,12 +38,15 @@ Multiple stateless app instances run behind nginx and share state through distri
 - **Temporary signed links** - HMAC-signed download/preview URLs with configurable expiry
 - **Horizontal scaling** - Add app instances behind nginx; new nodes join via config sync from existing nodes
 - **Authentication & authorization** - JWT-based auth with access/refresh tokens, role-based access control (admin/user), project ownership, and user-to-project/storage membership assignments
+- **File metadata** - Attach custom JSON key/value metadata on upload, returned with all file listing/detail endpoints
+- **Metadata search** - Search files within a project using recursive AND/OR/NOT filter DSL on metadata key/value pairs, with summary statistics and timeline charts
+- **Bulk deletion** - Delete files matching metadata filters, date ranges, and size ranges with preview mode and automatic orphan cleanup
 - **Admin dashboard** - React frontend for managing projects, storages, files, and monitoring sync tasks
 - **Bulk operations** - Sync-all to a storage, export storage as tar.gz archive
 
 ### Data Flow
 
-1. **Upload** - FileService computes SHA-256, deduplicates, stores to primary (hot) storage, creates sync tasks for other backends
+1. **Upload** - FileService computes SHA-256, deduplicates, stores to primary (hot) storage, attaches user-provided metadata to file reference, creates sync tasks for other backends
 2. **Sync** - SyncWorker picks pending tasks with distributed advisory locks, downloads from source, uploads to target
 3. **Tiering** - TierWorker scans files older than `hot_to_cold_days`, creates sync tasks to cold storage
 4. **Download** - FileService finds first available location (prefers hot), streams content, updates `last_accessed_at`
@@ -201,13 +204,17 @@ All API endpoints require authentication via a JWT access token passed in the `A
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/projects/{project_id}/files` | Upload file (multipart/form-data) |
+| POST | `/api/projects/{project_id}/files` | Upload file (multipart/form-data, optional JSON metadata field) |
 | GET | `/api/projects/{project_id}/files` | List project files (paginated) |
 | GET | `/api/files/{id}` | Get file metadata with locations |
 | GET | `/api/files/{id}/download` | Download file |
 | GET | `/api/files/{id}/link` | Generate temporary signed download link |
 | DELETE | `/api/files/{id}` | Delete file reference |
 | POST | `/api/files/{id}/restore` | Restore file from cold tier |
+| POST | `/api/projects/{project_id}/files/search` | Search files by metadata filters (AND/OR/NOT DSL) |
+| POST | `/api/projects/{project_id}/files/search/summary` | Get summary stats and timeline for search results |
+| POST | `/api/projects/{project_id}/files/bulk-delete/preview` | Preview count/size of files matching bulk delete filters |
+| POST | `/api/projects/{project_id}/files/bulk-delete` | Delete file references matching filters with orphan cleanup |
 
 ### Storages
 
@@ -316,7 +323,7 @@ frontend/
 │   ├── api/        # API client (axios) and TypeScript types
 │   ├── components/ # Reusable components (Layout, Sidebar, StorageForm)
 │   ├── contexts/   # React contexts (AuthContext)
-│   └── pages/      # Page components (Dashboard, Projects, ProjectDetail, Storages, StorageDetail, Users, UserDetail, Nodes, SyncTasks, Login)
+│   └── pages/      # Page components (Dashboard, Projects, ProjectDetail, ProjectSearch, ProjectBulkDelete, Storages, StorageDetail, Users, UserDetail, Nodes, SyncTasks, Login)
 ├── package.json
 ├── vite.config.ts
 └── tailwind.config.js

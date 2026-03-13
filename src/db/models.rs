@@ -565,8 +565,20 @@ impl MetadataFilterCompiler {
         }
     }
 
+    /// Maximum allowed nesting depth for filter trees (prevents stack overflow from malicious input).
+    const MAX_DEPTH: usize = 32;
+
     /// Compile a filter tree into a SQL fragment and collect JSONB parameters.
     pub fn compile(&mut self, filter: &MetadataFilter) -> AppResult<String> {
+        self.compile_inner(filter, 0)
+    }
+
+    fn compile_inner(&mut self, filter: &MetadataFilter, depth: usize) -> AppResult<String> {
+        if depth >= Self::MAX_DEPTH {
+            return Err(AppError::BadRequest(
+                "Filter nesting too deep (max 32 levels)".to_string(),
+            ));
+        }
         match filter {
             MetadataFilter::Leaf { key, value } => {
                 let idx = self.next_param;
@@ -581,22 +593,22 @@ impl MetadataFilterCompiler {
                 }
                 let parts: Vec<String> = and
                     .iter()
-                    .map(|f| self.compile(f))
+                    .map(|f| self.compile_inner(f, depth + 1))
                     .collect::<AppResult<_>>()?;
                 Ok(format!("({})", parts.join(" AND ")))
             }
             MetadataFilter::Or { or } => {
                 if or.is_empty() {
-                    return Ok("TRUE".to_string());
+                    return Ok("FALSE".to_string());
                 }
                 let parts: Vec<String> = or
                     .iter()
-                    .map(|f| self.compile(f))
+                    .map(|f| self.compile_inner(f, depth + 1))
                     .collect::<AppResult<_>>()?;
                 Ok(format!("({})", parts.join(" OR ")))
             }
             MetadataFilter::Not { not } => {
-                let inner = self.compile(not)?;
+                let inner = self.compile_inner(not, depth + 1)?;
                 Ok(format!("NOT ({})", inner))
             }
         }
@@ -743,19 +755,11 @@ impl FileReference {
             filter_clause
         );
 
-        // Rebuild args for timeline query (compiler params were consumed)
-        let mut compiler2 = MetadataFilterCompiler::new(2);
-        let _filter_clause2 = match filters {
-            Some(f) => compiler2.compile(f)?,
-            None => "TRUE".to_string(),
-        };
-        let jsonb_params2 = compiler2.into_params();
-
         let mut timeline_args = sqlx::postgres::PgArguments::default();
         timeline_args
             .add(project_id)
             .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
-        for param in &jsonb_params2 {
+        for param in &jsonb_params {
             timeline_args
                 .add(param)
                 .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
@@ -2426,7 +2430,7 @@ mod tests {
         let filter = MetadataFilter::Or { or: vec![] };
         let mut compiler = MetadataFilterCompiler::new(2);
         let sql = compiler.compile(&filter).unwrap();
-        assert_eq!(sql, "TRUE");
+        assert_eq!(sql, "FALSE");
     }
 
     #[test]

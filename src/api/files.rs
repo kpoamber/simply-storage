@@ -175,6 +175,7 @@ async fn upload_file(
 
         match field_name.as_str() {
             "metadata" => {
+                const MAX_METADATA_SIZE: usize = 1_048_576; // 1 MB
                 let mut buf = BytesMut::new();
                 while let Some(chunk) = field
                     .try_next()
@@ -182,6 +183,11 @@ async fn upload_file(
                     .map_err(|e| AppError::BadRequest(format!("Multipart read error: {}", e)))?
                 {
                     buf.extend_from_slice(&chunk);
+                    if buf.len() > MAX_METADATA_SIZE {
+                        return Err(AppError::BadRequest(
+                            "Metadata field too large (max 1 MB)".to_string(),
+                        ));
+                    }
                 }
                 let meta_str = std::str::from_utf8(&buf)
                     .map_err(|_| AppError::BadRequest("Metadata must be valid UTF-8".to_string()))?;

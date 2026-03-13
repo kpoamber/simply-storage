@@ -10,41 +10,10 @@ import {
 } from 'recharts';
 import { searchFiles, searchSummary } from '../api/client';
 import {
-  SearchResult, SearchSummary, MetadataFilterNode,
+  SearchResult, SearchSummary,
   FileReference, formatBytes,
 } from '../api/types';
-
-type FilterMode = 'and' | 'or' | 'not';
-
-interface FilterRow {
-  key: string;
-  value: string;
-  mode: FilterMode;
-}
-
-function buildFilterNode(rows: FilterRow[]): MetadataFilterNode | undefined {
-  const validRows = rows.filter(r => r.key.trim() && r.value.trim());
-  if (validRows.length === 0) return undefined;
-
-  const nodes: MetadataFilterNode[] = validRows.map(r => {
-    const leaf: MetadataFilterNode = { key: r.key.trim(), value: r.value.trim() };
-    if (r.mode === 'not') return { not: leaf };
-    return leaf;
-  });
-
-  // Group: AND conditions together, OR conditions together
-  const andNodes = nodes.filter((_, i) => validRows[i].mode !== 'or');
-  const orNodes = nodes.filter((_, i) => validRows[i].mode === 'or');
-
-  if (orNodes.length > 0 && andNodes.length > 0) {
-    const andPart: MetadataFilterNode = andNodes.length === 1 ? andNodes[0] : { and: andNodes };
-    return { or: [andPart, ...orNodes] };
-  }
-  if (orNodes.length > 0) {
-    return orNodes.length === 1 ? orNodes[0] : { or: orNodes };
-  }
-  return andNodes.length === 1 ? andNodes[0] : { and: andNodes };
-}
+import { FilterRow, buildFilterNode } from '../utils/metadataFilters';
 
 export default function ProjectSearch() {
   const { id } = useParams<{ id: string }>();
@@ -52,22 +21,21 @@ export default function ProjectSearch() {
     { key: '', value: '', mode: 'and' },
   ]);
   const [page, setPage] = useState(1);
-  const [searchTriggered, setSearchTriggered] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [submittedFilter, setSubmittedFilter] = useState<ReturnType<typeof buildFilterNode>>(undefined);
   const perPage = 50;
 
-  const filterNode = buildFilterNode(filterRows);
-
   const { data: searchResult, isFetching: isSearching } = useQuery<SearchResult>({
-    queryKey: ['project-search', id, JSON.stringify(filterNode), page],
+    queryKey: ['project-search', id, JSON.stringify(submittedFilter), page],
     queryFn: () =>
-      searchFiles(id!, { filters: filterNode, page, per_page: perPage }).then(r => r.data),
-    enabled: !!id && searchTriggered,
+      searchFiles(id!, { filters: submittedFilter, page, per_page: perPage }).then(r => r.data),
+    enabled: !!id && hasSearched,
   });
 
   const { data: summary } = useQuery<SearchSummary>({
-    queryKey: ['project-search-summary', id, JSON.stringify(filterNode)],
-    queryFn: () => searchSummary(id!, filterNode).then(r => r.data),
-    enabled: !!id && searchTriggered,
+    queryKey: ['project-search-summary', id, JSON.stringify(submittedFilter)],
+    queryFn: () => searchSummary(id!, submittedFilter).then(r => r.data),
+    enabled: !!id && hasSearched,
   });
 
   const addFilter = () =>
@@ -83,7 +51,8 @@ export default function ProjectSearch() {
 
   const handleSearch = () => {
     setPage(1);
-    setSearchTriggered(true);
+    setSubmittedFilter(buildFilterNode(filterRows));
+    setHasSearched(true);
   };
 
   const totalPages = searchResult ? Math.ceil(searchResult.total / perPage) : 0;
@@ -241,7 +210,6 @@ export default function ProjectSearch() {
                   <tr>
                     <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Name</th>
                     <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Metadata</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Sync</th>
                     <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Created</th>
                   </tr>
                 </thead>
@@ -285,20 +253,6 @@ export default function ProjectSearch() {
 function SearchResultRow({ file }: { file: FileReference }) {
   const metadataEntries = Object.entries(file.metadata || {});
 
-  const syncLabel = file.sync_status === 'synced'
-    ? `${file.synced_storages}/${file.total_storages}`
-    : file.sync_status === 'partial'
-      ? `${file.synced_storages}/${file.total_storages}`
-      : file.sync_status === 'pending'
-        ? `0/${file.total_storages}`
-        : '--';
-
-  const syncColor = file.sync_status === 'synced'
-    ? 'text-green-600 bg-green-50'
-    : file.sync_status === 'partial'
-      ? 'text-yellow-600 bg-yellow-50'
-      : 'text-red-600 bg-red-50';
-
   return (
     <tr>
       <td className="px-4 py-2 text-sm text-gray-900">{file.original_name}</td>
@@ -317,11 +271,6 @@ function SearchResultRow({ file }: { file: FileReference }) {
             ))}
           </div>
         )}
-      </td>
-      <td className="whitespace-nowrap px-4 py-2 text-sm">
-        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${syncColor}`}>
-          {syncLabel}
-        </span>
       </td>
       <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-500">
         {new Date(file.created_at).toLocaleDateString()}

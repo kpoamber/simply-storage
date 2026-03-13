@@ -160,7 +160,7 @@ export interface AuthTokenResponse {
 // Search types
 export interface MetadataFilterLeaf {
   key: string;
-  value: string;
+  value: string | number | boolean | null;
 }
 
 export interface MetadataFilterAnd {

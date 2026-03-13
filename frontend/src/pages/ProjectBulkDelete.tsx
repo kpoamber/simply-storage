@@ -5,39 +5,9 @@ import { Plus, X, Trash2, Eye, AlertTriangle } from 'lucide-react';
 import { bulkDeletePreview, bulkDeleteExecute } from '../api/client';
 import {
   BulkDeleteRequest, BulkDeletePreview, BulkDeleteResult,
-  MetadataFilterNode, formatBytes,
+  formatBytes,
 } from '../api/types';
-
-type FilterMode = 'and' | 'or' | 'not';
-
-interface FilterRow {
-  key: string;
-  value: string;
-  mode: FilterMode;
-}
-
-function buildFilterNode(rows: FilterRow[]): MetadataFilterNode | undefined {
-  const validRows = rows.filter(r => r.key.trim() && r.value.trim());
-  if (validRows.length === 0) return undefined;
-
-  const nodes: MetadataFilterNode[] = validRows.map(r => {
-    const leaf: MetadataFilterNode = { key: r.key.trim(), value: r.value.trim() };
-    if (r.mode === 'not') return { not: leaf };
-    return leaf;
-  });
-
-  const andNodes = nodes.filter((_, i) => validRows[i].mode !== 'or');
-  const orNodes = nodes.filter((_, i) => validRows[i].mode === 'or');
-
-  if (orNodes.length > 0 && andNodes.length > 0) {
-    const andPart: MetadataFilterNode = andNodes.length === 1 ? andNodes[0] : { and: andNodes };
-    return { or: [andPart, ...orNodes] };
-  }
-  if (orNodes.length > 0) {
-    return orNodes.length === 1 ? orNodes[0] : { or: orNodes };
-  }
-  return andNodes.length === 1 ? andNodes[0] : { and: andNodes };
-}
+import { FilterRow, buildFilterNode } from '../utils/metadataFilters';
 
 function buildRequest(
   metadataRows: FilterRow[],
@@ -64,8 +34,8 @@ function hasAnyFilter(req: BulkDeleteRequest): boolean {
     req.created_before ||
     req.created_after ||
     req.last_accessed_before ||
-    req.size_min ||
-    req.size_max
+    req.size_min !== undefined ||
+    req.size_max !== undefined
   );
 }
 
