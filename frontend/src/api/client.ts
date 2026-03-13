@@ -99,4 +99,19 @@ apiClient.interceptors.response.use(
   },
 );
 
+export async function uploadFile(
+  projectId: string,
+  file: File,
+  metadata?: Record<string, string | number | boolean>,
+) {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (metadata && Object.keys(metadata).length > 0) {
+    formData.append('metadata', JSON.stringify(metadata));
+  }
+  return apiClient.post(`/projects/${projectId}/files`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+}
+
 export default apiClient;

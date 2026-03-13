@@ -3,9 +3,9 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Upload, Download, Link2, ArchiveRestore, Trash2,
-  ChevronLeft, ChevronRight, Search, Check, Plus, X, Pencil,
+  ChevronLeft, ChevronRight, Search, Check, Plus, X, Pencil, ChevronDown, ChevronUp,
 } from 'lucide-react';
-import apiClient from '../api/client';
+import apiClient, { uploadFile } from '../api/client';
 import { ProjectWithStats, FileReference, TempLinkResponse, StorageBackend, ProjectStorageAssignment, AuthUser, MemberInfo, formatBytes } from '../api/types';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -93,6 +93,7 @@ export default function ProjectDetail() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Name</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Metadata</th>
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Sync</th>
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Created</th>
                   <th className="px-4 py-2 text-center text-xs font-medium uppercase text-gray-500">Actions</th>
@@ -675,20 +676,34 @@ function FileUploadZone({ projectId }: { projectId: string }) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const [metadataRows, setMetadataRows] = useState<{ key: string; value: string }[]>([]);
+
+  const addMetadataRow = () => setMetadataRows(prev => [...prev, { key: '', value: '' }]);
+
+  const removeMetadataRow = (index: number) =>
+    setMetadataRows(prev => prev.filter((_, i) => i !== index));
+
+  const updateMetadataRow = (index: number, field: 'key' | 'value', val: string) =>
+    setMetadataRows(prev => prev.map((row, i) => (i === index ? { ...row, [field]: val } : row)));
+
+  const buildMetadata = (): Record<string, string> => {
+    const meta: Record<string, string> = {};
+    for (const row of metadataRows) {
+      if (row.key.trim()) meta[row.key.trim()] = row.value;
+    }
+    return meta;
+  };
 
   const handleUpload = useCallback(async (fileList: FileList) => {
     if (fileList.length === 0) return;
     setUploading(true);
     setUploadStatus(null);
 
+    const metadata = buildMetadata();
     let successCount = 0;
     for (const file of Array.from(fileList)) {
-      const formData = new FormData();
-      formData.append('file', file);
       try {
-        await apiClient.post(`/projects/${projectId}/files`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-        });
+        await uploadFile(projectId, file, metadata);
         successCount++;
       } catch {
         setUploadStatus(`Failed to upload ${file.name}`);
@@ -701,7 +716,8 @@ function FileUploadZone({ projectId }: { projectId: string }) {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] });
     }
     setUploading(false);
-  }, [projectId, queryClient]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, queryClient, metadataRows]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -721,6 +737,45 @@ function FileUploadZone({ projectId }: { projectId: string }) {
   return (
     <div className="mt-6">
       <h3 className="text-lg font-medium text-gray-700">Upload Files</h3>
+
+      <div className="mt-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-600">Metadata (optional)</span>
+          <button
+            onClick={addMetadataRow}
+            className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700"
+            data-testid="add-metadata-row"
+          >
+            <Plus className="h-3 w-3" /> Add field
+          </button>
+        </div>
+        {metadataRows.map((row, idx) => (
+          <div key={idx} className="mt-1 flex items-center gap-2" data-testid="metadata-row">
+            <input
+              value={row.key}
+              onChange={e => updateMetadataRow(idx, 'key', e.target.value)}
+              placeholder="Key"
+              className="w-1/3 rounded border border-gray-300 px-2 py-1 text-sm"
+              data-testid="metadata-key"
+            />
+            <input
+              value={row.value}
+              onChange={e => updateMetadataRow(idx, 'value', e.target.value)}
+              placeholder="Value"
+              className="flex-1 rounded border border-gray-300 px-2 py-1 text-sm"
+              data-testid="metadata-value"
+            />
+            <button
+              onClick={() => removeMetadataRow(idx)}
+              className="rounded p-1 text-red-400 hover:bg-red-50 hover:text-red-600"
+              data-testid="remove-metadata-row"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -756,6 +811,9 @@ function FileUploadZone({ projectId }: { projectId: string }) {
 function FileRow({ fileRef, projectId, canWrite }: { fileRef: FileReference; projectId: string; canWrite: boolean }) {
   const queryClient = useQueryClient();
   const [copiedLink, setCopiedLink] = useState(false);
+  const [metadataExpanded, setMetadataExpanded] = useState(false);
+
+  const metadataEntries = Object.entries(fileRef.metadata || {});
 
   const deleteMutation = useMutation({
     mutationFn: () => apiClient.delete(`/files/${fileRef.file_id}`, { params: { project_id: projectId } }),
@@ -810,6 +868,34 @@ function FileRow({ fileRef, projectId, canWrite }: { fileRef: FileReference; pro
   return (
     <tr>
       <td className="px-4 py-2 text-sm text-gray-900">{fileRef.original_name}</td>
+      <td className="px-4 py-2 text-sm">
+        {metadataEntries.length === 0 ? (
+          <span className="text-gray-400">--</span>
+        ) : (
+          <div>
+            <button
+              onClick={() => setMetadataExpanded(!metadataExpanded)}
+              className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+              data-testid="toggle-metadata"
+            >
+              {metadataEntries.length} field{metadataEntries.length !== 1 ? 's' : ''}
+              {metadataExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            </button>
+            {metadataExpanded && (
+              <div className="mt-1 flex flex-wrap gap-1" data-testid="metadata-tags">
+                {metadataEntries.map(([k, v]) => (
+                  <span
+                    key={k}
+                    className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700"
+                  >
+                    {k}={String(v)}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </td>
       <td className="whitespace-nowrap px-4 py-2 text-sm">
         <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${syncColor}`}>
           {syncLabel}

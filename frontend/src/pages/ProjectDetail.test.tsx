@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import ProjectDetail from './ProjectDetail';
 
+const mockUploadFile = vi.fn();
+
 vi.mock('../api/client', () => ({
   default: {
     get: vi.fn(),
@@ -11,6 +13,7 @@ vi.mock('../api/client', () => ({
     put: vi.fn(),
     delete: vi.fn(),
   },
+  uploadFile: (...args: unknown[]) => mockUploadFile(...args),
 }));
 
 vi.mock('../contexts/AuthContext', () => ({
@@ -65,10 +68,12 @@ const mockFiles = [
   {
     id: 'fr-1', file_id: 'f-1', project_id: 'proj-1',
     original_name: 'document.pdf', created_at: '2026-01-01T00:00:00Z',
+    metadata: { env: 'prod', version: '1.0' },
   },
   {
     id: 'fr-2', file_id: 'f-2', project_id: 'proj-1',
     original_name: 'image.png', created_at: '2026-01-15T00:00:00Z',
+    metadata: {},
   },
 ];
 
@@ -317,5 +322,87 @@ describe('ProjectDetail', () => {
     await waitFor(() => {
       expect(mockPost).toHaveBeenCalledWith('/projects/proj-1/members', { user_id: 'other-1' });
     });
+  });
+
+  it('renders metadata input with add/remove rows', async () => {
+    setupMocks([]);
+    renderProjectDetail('proj-1');
+
+    await waitFor(() => {
+      expect(screen.getByText('Metadata (optional)')).toBeInTheDocument();
+    });
+
+    // Add a metadata row
+    fireEvent.click(screen.getByTestId('add-metadata-row'));
+    expect(screen.getAllByTestId('metadata-row')).toHaveLength(1);
+
+    // Fill in key/value
+    fireEvent.change(screen.getByTestId('metadata-key'), { target: { value: 'env' } });
+    fireEvent.change(screen.getByTestId('metadata-value'), { target: { value: 'prod' } });
+
+    // Add another row
+    fireEvent.click(screen.getByTestId('add-metadata-row'));
+    expect(screen.getAllByTestId('metadata-row')).toHaveLength(2);
+
+    // Remove first row
+    fireEvent.click(screen.getAllByTestId('remove-metadata-row')[0]);
+    expect(screen.getAllByTestId('metadata-row')).toHaveLength(1);
+  });
+
+  it('upload sends metadata via uploadFile helper', async () => {
+    setupMocks([]);
+    mockUploadFile.mockResolvedValue({ data: {} });
+    renderProjectDetail('proj-1');
+
+    await waitFor(() => {
+      expect(screen.getByText('Metadata (optional)')).toBeInTheDocument();
+    });
+
+    // Add metadata row
+    fireEvent.click(screen.getByTestId('add-metadata-row'));
+    fireEvent.change(screen.getByTestId('metadata-key'), { target: { value: 'env' } });
+    fireEvent.change(screen.getByTestId('metadata-value'), { target: { value: 'prod' } });
+
+    // Trigger file upload
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['hello'], 'test.txt', { type: 'text/plain' });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(mockUploadFile).toHaveBeenCalledWith(
+        'proj-1',
+        expect.any(File),
+        { env: 'prod' },
+      );
+    });
+  });
+
+  it('displays metadata in file list with expand/collapse', async () => {
+    setupMocks();
+    renderProjectDetail('proj-1');
+
+    await waitFor(() => {
+      expect(screen.getByText('document.pdf')).toBeInTheDocument();
+    });
+
+    // File with metadata shows field count (collapsed by default)
+    expect(screen.getByText('2 fields')).toBeInTheDocument();
+
+    // File without metadata shows --
+    const dashes = screen.getAllByText('--');
+    expect(dashes.length).toBeGreaterThan(0);
+
+    // Expand metadata
+    fireEvent.click(screen.getByTestId('toggle-metadata'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('metadata-tags')).toBeInTheDocument();
+    });
+    expect(screen.getByText('env=prod')).toBeInTheDocument();
+    expect(screen.getByText('version=1.0')).toBeInTheDocument();
+
+    // Collapse metadata
+    fireEvent.click(screen.getByTestId('toggle-metadata'));
+    expect(screen.queryByTestId('metadata-tags')).not.toBeInTheDocument();
   });
 });

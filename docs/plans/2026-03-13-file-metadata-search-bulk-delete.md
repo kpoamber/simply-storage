@@ -131,13 +131,13 @@ Add support for user-defined metadata (JSON key/value) on file uploads, with fas
 - Modify: `frontend/src/api/client.ts`
 - Modify: `frontend/src/pages/ProjectDetail.tsx`
 
-- [ ] Add `metadata` field to FileReference type in types.ts
-- [ ] Update upload function in client.ts to include metadata as a form field (JSON string)
-- [ ] Add metadata key/value input to upload area in ProjectDetail: dynamic rows of key + value inputs with add/remove buttons
-- [ ] Display metadata as tags/badges in the file table (collapsed by default, expandable)
-- [ ] Add metadata column or expandable row in file list table showing key=value pairs
-- [ ] Write tests: metadata input renders, add/remove key-value rows, upload sends metadata, metadata displays in file list
-- [ ] Run frontend test suite - must pass before task 7
+- [x] Add `metadata` field to FileReference type in types.ts
+- [x] Update upload function in client.ts to include metadata as a form field (JSON string)
+- [x] Add metadata key/value input to upload area in ProjectDetail: dynamic rows of key + value inputs with add/remove buttons
+- [x] Display metadata as tags/badges in the file table (collapsed by default, expandable)
+- [x] Add metadata column or expandable row in file list table showing key=value pairs
+- [x] Write tests: metadata input renders, add/remove key-value rows, upload sends metadata, metadata displays in file list
+- [x] Run frontend test suite - must pass before task 7
 
 ### Task 7: Frontend - search page with query builder and charts
 

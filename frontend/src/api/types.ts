@@ -44,6 +44,7 @@ export interface FileReference {
   file_id: string;
   project_id: string;
   original_name: string;
+  metadata: Record<string, string | number | boolean>;
   created_at: string;
   sync_status?: string;
   synced_storages?: number;
