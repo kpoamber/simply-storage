@@ -465,7 +465,7 @@ function ProjectMembersSection({ projectId, ownerId }: { projectId: string; owne
                   <td className="px-4 py-2 text-sm text-gray-500">{new Date(m.assigned_at).toLocaleDateString()}</td>
                   <td className="px-4 py-2 text-center">
                     <button
-                      onClick={() => removeMutation.mutate(m.id)}
+                      onClick={() => { if (window.confirm('Remove this member from the project?')) removeMutation.mutate(m.id); }}
                       disabled={removeMutation.isPending}
                       title="Remove member"
                       className="text-red-500 hover:text-red-700 disabled:opacity-50"

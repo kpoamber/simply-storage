@@ -264,6 +264,7 @@ describe('ProjectDetail', () => {
   it('clicking remove member calls DELETE', async () => {
     setupMocks();
     mockDelete.mockResolvedValue({ data: {} });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderProjectDetail('proj-1');
 
     await waitFor(() => {

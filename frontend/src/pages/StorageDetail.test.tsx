@@ -267,6 +267,7 @@ describe('StorageDetail', () => {
       return Promise.resolve({ data: [] });
     });
     mockDelete.mockResolvedValue({ data: {} });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     renderStorageDetail();
 

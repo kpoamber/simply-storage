@@ -26,6 +26,10 @@ async fn main() -> std::io::Result<()> {
         tracing::warn!("Default admin password is unchanged! Set APP_AUTH__DEFAULT_ADMIN_PASSWORD to a secure password before deploying to production.");
     }
 
+    if config.storage.hmac_secret == "change-me-in-production" {
+        tracing::warn!("HMAC secret is set to the default value! Set APP_STORAGE__HMAC_SECRET to a secure random string before deploying to production.");
+    }
+
     tracing::info!(
         "Starting server on {}:{}",
         config.server.host,

@@ -1161,8 +1161,6 @@ pub struct User {
 pub struct MemberInfo {
     pub id: Uuid,
     pub username: String,
-    #[serde(skip_serializing)]
-    pub password_hash: String,
     pub role: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -1380,7 +1378,9 @@ impl UserProject {
 
     pub async fn list_for_project(pool: &PgPool, project_id: Uuid) -> AppResult<Vec<MemberInfo>> {
         let rows = sqlx::query_as::<_, MemberInfo>(
-            r#"SELECT u.*, up.created_at AS assigned_at FROM users u
+            r#"SELECT u.id, u.username, u.role, u.created_at, u.updated_at,
+                      up.created_at AS assigned_at
+               FROM users u
                JOIN user_projects up ON up.user_id = u.id
                WHERE up.project_id = $1
                ORDER BY u.username ASC"#,
@@ -1470,7 +1470,9 @@ impl UserStorage {
 
     pub async fn list_for_storage(pool: &PgPool, storage_id: Uuid) -> AppResult<Vec<MemberInfo>> {
         let rows = sqlx::query_as::<_, MemberInfo>(
-            r#"SELECT u.*, us.created_at AS assigned_at FROM users u
+            r#"SELECT u.id, u.username, u.role, u.created_at, u.updated_at,
+                      us.created_at AS assigned_at
+               FROM users u
                JOIN user_storages us ON us.user_id = u.id
                WHERE us.storage_id = $1
                ORDER BY u.username ASC"#,
