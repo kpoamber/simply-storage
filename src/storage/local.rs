@@ -30,13 +30,27 @@ impl LocalDiskBackend {
     }
 
     /// Convert a logical storage path into the on-disk path with hash-based directory structure.
-    fn resolve_path(&self, path: &str) -> PathBuf {
+    ///
+    /// Returns an error if the path contains traversal sequences or non-hex characters,
+    /// since all valid storage paths are SHA-256 hex strings.
+    fn resolve_path(&self, path: &str) -> AppResult<PathBuf> {
+        if path.is_empty()
+            || path.contains("..")
+            || path.starts_with('/')
+            || path.starts_with('\\')
+            || !path.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err(AppError::BadRequest(format!(
+                "Invalid storage path: {}",
+                path
+            )));
+        }
         if path.len() >= 4 {
             let dir1 = &path[..2];
             let dir2 = &path[2..4];
-            self.base_path.join(dir1).join(dir2).join(path)
+            Ok(self.base_path.join(dir1).join(dir2).join(path))
         } else {
-            self.base_path.join(path)
+            Ok(self.base_path.join(path))
         }
     }
 
@@ -73,7 +87,7 @@ impl LocalDiskBackend {
 #[async_trait]
 impl StorageBackend for LocalDiskBackend {
     async fn upload(&self, path: &str, data: Bytes) -> AppResult<()> {
-        let file_path = self.resolve_path(path);
+        let file_path = self.resolve_path(path)?;
         if let Some(parent) = file_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
@@ -82,7 +96,7 @@ impl StorageBackend for LocalDiskBackend {
     }
 
     async fn download(&self, path: &str) -> AppResult<Bytes> {
-        let file_path = self.resolve_path(path);
+        let file_path = self.resolve_path(path)?;
         if !file_path.exists() {
             return Err(AppError::NotFound(format!(
                 "File not found in local storage: {}",
@@ -94,7 +108,7 @@ impl StorageBackend for LocalDiskBackend {
     }
 
     async fn delete(&self, path: &str) -> AppResult<()> {
-        let file_path = self.resolve_path(path);
+        let file_path = self.resolve_path(path)?;
         if file_path.exists() {
             tokio::fs::remove_file(&file_path).await?;
             // Clean up empty parent directories (best-effort)
@@ -104,7 +118,7 @@ impl StorageBackend for LocalDiskBackend {
     }
 
     async fn exists(&self, path: &str) -> AppResult<bool> {
-        let file_path = self.resolve_path(path);
+        let file_path = self.resolve_path(path)?;
         Ok(file_path.exists())
     }
 
@@ -370,7 +384,7 @@ mod tests {
     fn test_resolve_path_hash_structure() {
         let backend = LocalDiskBackend::new("/data/storage", "secret");
         let path = "abcdef0123456789";
-        let resolved = backend.resolve_path(path);
+        let resolved = backend.resolve_path(path).unwrap();
         assert_eq!(
             resolved,
             PathBuf::from("/data/storage/ab/cd/abcdef0123456789")
@@ -381,7 +395,16 @@ mod tests {
     fn test_resolve_path_short() {
         let backend = LocalDiskBackend::new("/data/storage", "secret");
         let path = "ab";
-        let resolved = backend.resolve_path(path);
+        let resolved = backend.resolve_path(path).unwrap();
         assert_eq!(resolved, PathBuf::from("/data/storage/ab"));
+    }
+
+    #[test]
+    fn test_resolve_path_rejects_traversal() {
+        let backend = LocalDiskBackend::new("/data/storage", "secret");
+        assert!(backend.resolve_path("../../etc/passwd").is_err());
+        assert!(backend.resolve_path("/etc/passwd").is_err());
+        assert!(backend.resolve_path("").is_err());
+        assert!(backend.resolve_path("abc/def").is_err());
     }
 }

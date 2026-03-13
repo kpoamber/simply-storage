@@ -5,8 +5,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::db::models::{
-    CreateFile, CreateFileLocation, CreateFileReference, CreateSyncTask, File, FileLocation,
-    FileReference, ProjectStorage, Storage, SyncTask,
+    is_unique_violation, CreateFile, CreateFileLocation, CreateFileReference, CreateSyncTask, File,
+    FileLocation, FileReference, ProjectStorage, Storage, SyncTask,
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::registry::create_backend;
@@ -96,13 +96,20 @@ impl FileService {
             backend.upload(&storage_path, data).await?;
 
             // Create file_location for the primary storage
+            // Handle unique constraint gracefully for concurrent duplicate uploads
             let create_location = CreateFileLocation {
                 file_id: file.id,
                 storage_id: primary_storage.id,
                 storage_path: storage_path.clone(),
                 status: "synced".to_string(),
             };
-            FileLocation::create(&self.pool, &create_location).await?;
+            match FileLocation::create(&self.pool, &create_location).await {
+                Ok(_) => {}
+                Err(AppError::Database(ref e)) if is_unique_violation(e) => {
+                    // Another concurrent upload already created this location - that's fine
+                }
+                Err(e) => return Err(e),
+            }
         }
 
         // 4. Create file_reference linking file to project with original filename
