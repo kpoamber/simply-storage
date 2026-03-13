@@ -121,6 +121,29 @@ async fn check_file_write_access(
 
 // ─── Handlers ───────────────────────────────────────────────────────────────────
 
+/// Validate that metadata is a flat JSON object: keys are strings, values are strings/numbers/booleans.
+/// Rejects nested objects and arrays.
+fn validate_flat_metadata(value: &serde_json::Value) -> Result<(), AppError> {
+    let obj = value.as_object().ok_or_else(|| {
+        AppError::BadRequest("Metadata must be a JSON object".to_string())
+    })?;
+    for (key, val) in obj {
+        match val {
+            serde_json::Value::String(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Null => {}
+            _ => {
+                return Err(AppError::BadRequest(format!(
+                    "Metadata value for key '{}' must be a string, number, boolean, or null; nested objects and arrays are not allowed",
+                    key
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn upload_file(
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
@@ -134,33 +157,67 @@ async fn upload_file(
     let project = Project::find_by_id(pool.get_ref(), project_id).await?;
     user.require_owner_or_admin(project.owner_id)?;
 
-    let mut field = payload
+    let mut file_data: Option<(String, String, BytesMut)> = None;
+    let mut metadata = serde_json::json!({});
+
+    while let Some(mut field) = payload
         .try_next()
         .await
         .map_err(|e| AppError::BadRequest(format!("Multipart error: {}", e)))?
-        .ok_or_else(|| AppError::BadRequest("No file provided".to_string()))?;
-
-    let content_type = field
-        .content_type()
-        .map(|ct| ct.to_string())
-        .unwrap_or_else(|| "application/octet-stream".to_string());
-
-    let filename = field
-        .content_disposition()
-        .and_then(|cd| cd.get_filename().map(|s| s.to_string()))
-        .unwrap_or_else(|| "unnamed".to_string());
-
-    let mut data = BytesMut::new();
-    while let Some(chunk) = field
-        .try_next()
-        .await
-        .map_err(|e| AppError::BadRequest(format!("Multipart read error: {}", e)))?
     {
-        data.extend_from_slice(&chunk);
+        let field_name = field
+            .content_disposition()
+            .and_then(|cd| cd.get_name().map(|s| s.to_string()))
+            .unwrap_or_default();
+
+        match field_name.as_str() {
+            "metadata" => {
+                let mut buf = BytesMut::new();
+                while let Some(chunk) = field
+                    .try_next()
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("Multipart read error: {}", e)))?
+                {
+                    buf.extend_from_slice(&chunk);
+                }
+                let meta_str = std::str::from_utf8(&buf)
+                    .map_err(|_| AppError::BadRequest("Metadata must be valid UTF-8".to_string()))?;
+                metadata = serde_json::from_str(meta_str)
+                    .map_err(|e| AppError::BadRequest(format!("Invalid metadata JSON: {}", e)))?;
+                validate_flat_metadata(&metadata)?;
+            }
+            _ => {
+                // Treat as file field (first file field wins)
+                if file_data.is_none() {
+                    let content_type = field
+                        .content_type()
+                        .map(|ct| ct.to_string())
+                        .unwrap_or_else(|| "application/octet-stream".to_string());
+
+                    let filename = field
+                        .content_disposition()
+                        .and_then(|cd| cd.get_filename().map(|s| s.to_string()))
+                        .unwrap_or_else(|| "unnamed".to_string());
+
+                    let mut data = BytesMut::new();
+                    while let Some(chunk) = field
+                        .try_next()
+                        .await
+                        .map_err(|e| AppError::BadRequest(format!("Multipart read error: {}", e)))?
+                    {
+                        data.extend_from_slice(&chunk);
+                    }
+                    file_data = Some((filename, content_type, data));
+                }
+            }
+        }
     }
 
+    let (filename, content_type, data) =
+        file_data.ok_or_else(|| AppError::BadRequest("No file provided".to_string()))?;
+
     let result = file_service
-        .upload_file(project_id, &filename, &content_type, data.freeze())
+        .upload_file(project_id, &filename, &content_type, data.freeze(), metadata)
         .await?;
 
     Ok(HttpResponse::Created().json(result))
@@ -495,6 +552,140 @@ mod tests {
         let json = serde_json::json!({});
         let result: Result<DeleteFileQuery, _> = serde_json::from_value(json);
         assert!(result.is_err());
+    }
+
+    // ─── Metadata validation tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_validate_flat_metadata_empty_object() {
+        let meta = serde_json::json!({});
+        assert!(validate_flat_metadata(&meta).is_ok());
+    }
+
+    #[test]
+    fn test_validate_flat_metadata_valid_types() {
+        let meta = serde_json::json!({
+            "env": "production",
+            "version": 42,
+            "active": true,
+            "score": 3.14,
+            "optional": null
+        });
+        assert!(validate_flat_metadata(&meta).is_ok());
+    }
+
+    #[test]
+    fn test_validate_flat_metadata_rejects_nested_object() {
+        let meta = serde_json::json!({
+            "env": "prod",
+            "nested": {"inner": "value"}
+        });
+        let err = validate_flat_metadata(&meta).unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+        assert!(err.to_string().contains("nested"));
+    }
+
+    #[test]
+    fn test_validate_flat_metadata_rejects_array() {
+        let meta = serde_json::json!({
+            "tags": ["a", "b", "c"]
+        });
+        let err = validate_flat_metadata(&meta).unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+        assert!(err.to_string().contains("tags"));
+    }
+
+    #[test]
+    fn test_validate_flat_metadata_rejects_non_object() {
+        let meta = serde_json::json!("not an object");
+        let err = validate_flat_metadata(&meta).unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_validate_flat_metadata_rejects_array_root() {
+        let meta = serde_json::json!([1, 2, 3]);
+        let err = validate_flat_metadata(&meta).unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_file_reference_with_sync_includes_metadata() {
+        let now = chrono::Utc::now();
+        let meta = serde_json::json!({"env": "staging", "version": 2});
+        let ref_with_sync = FileReferenceWithSync {
+            file_ref: FileReference {
+                id: uuid::Uuid::new_v4(),
+                file_id: uuid::Uuid::new_v4(),
+                project_id: uuid::Uuid::new_v4(),
+                original_name: "test.txt".to_string(),
+                metadata: meta.clone(),
+                created_at: now,
+            },
+            sync_status: "synced".to_string(),
+            synced_storages: 2,
+            total_storages: 2,
+        };
+        let json = serde_json::to_value(&ref_with_sync).unwrap();
+        // metadata should be flattened into the top-level JSON
+        assert_eq!(json["metadata"]["env"], "staging");
+        assert_eq!(json["metadata"]["version"], 2);
+        assert_eq!(json["sync_status"], "synced");
+    }
+
+    #[test]
+    fn test_file_metadata_response_includes_reference_metadata() {
+        let now = chrono::Utc::now();
+        let file_id = uuid::Uuid::new_v4();
+        let meta = serde_json::json!({"department": "engineering"});
+        let file_meta = FileMetadata {
+            file: File {
+                id: file_id,
+                hash_sha256: "a".repeat(64),
+                size: 2048,
+                content_type: "application/pdf".to_string(),
+                created_at: now,
+            },
+            locations: vec![],
+            references: vec![FileReference {
+                id: uuid::Uuid::new_v4(),
+                file_id,
+                project_id: uuid::Uuid::new_v4(),
+                original_name: "report.pdf".to_string(),
+                metadata: meta.clone(),
+                created_at: now,
+            }],
+        };
+        let json = serde_json::to_value(&file_meta).unwrap();
+        assert_eq!(json["references"][0]["metadata"]["department"], "engineering");
+    }
+
+    #[test]
+    fn test_upload_result_includes_metadata() {
+        let now = chrono::Utc::now();
+        let meta = serde_json::json!({"env": "test", "priority": 1});
+        let result = crate::services::file_service::UploadResult {
+            file: File {
+                id: uuid::Uuid::new_v4(),
+                hash_sha256: "b".repeat(64),
+                size: 512,
+                content_type: "text/plain".to_string(),
+                created_at: now,
+            },
+            file_reference: FileReference {
+                id: uuid::Uuid::new_v4(),
+                file_id: uuid::Uuid::new_v4(),
+                project_id: uuid::Uuid::new_v4(),
+                original_name: "data.txt".to_string(),
+                metadata: meta.clone(),
+                created_at: now,
+            },
+            is_duplicate: false,
+            sync_tasks_created: 0,
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["file_reference"]["metadata"]["env"], "test");
+        assert_eq!(json["file_reference"]["metadata"]["priority"], 1);
     }
 
     // ─── Auth enforcement tests ───────────────────────────────────────────────

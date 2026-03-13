@@ -53,13 +53,13 @@ Add support for user-defined metadata (JSON key/value) on file uploads, with fas
 - Modify: `src/api/files.rs`
 - Modify: `src/services/file_service.rs`
 
-- [ ] Modify upload endpoint to accept a `metadata` field in the multipart form (JSON string, parsed to serde_json::Value)
-- [ ] Validate metadata is a flat JSON object (keys are strings, values are strings/numbers/booleans); reject nested objects/arrays with 400 error
-- [ ] Pass metadata through FileService::upload_file() to FileReference creation
-- [ ] Ensure file list endpoint (`GET /projects/{project_id}/files`) returns metadata in each FileReference response
-- [ ] Ensure file detail endpoint (`GET /files/{id}`) returns metadata
-- [ ] Write tests: upload with metadata, upload without metadata (defaults to {}), upload with invalid metadata (nested objects rejected), retrieve file with metadata
-- [ ] Run project test suite - must pass before task 3
+- [x] Modify upload endpoint to accept a `metadata` field in the multipart form (JSON string, parsed to serde_json::Value)
+- [x] Validate metadata is a flat JSON object (keys are strings, values are strings/numbers/booleans); reject nested objects/arrays with 400 error
+- [x] Pass metadata through FileService::upload_file() to FileReference creation
+- [x] Ensure file list endpoint (`GET /projects/{project_id}/files`) returns metadata in each FileReference response
+- [x] Ensure file detail endpoint (`GET /files/{id}`) returns metadata
+- [x] Write tests: upload with metadata, upload without metadata (defaults to {}), upload with invalid metadata (nested objects rejected), retrieve file with metadata
+- [x] Run project test suite - must pass before task 3
 
 ### Task 3: Metadata search API
 

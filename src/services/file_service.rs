@@ -63,6 +63,7 @@ impl FileService {
         original_name: &str,
         content_type: &str,
         data: Bytes,
+        metadata: serde_json::Value,
     ) -> AppResult<UploadResult> {
         // 1. Compute SHA-256 hash
         let hash = compute_sha256(&data);
@@ -117,7 +118,7 @@ impl FileService {
             file_id: file.id,
             project_id,
             original_name: original_name.to_string(),
-            metadata: serde_json::json!({}),
+            metadata,
         };
         let file_reference = FileReference::create_or_find(&self.pool, &create_ref).await?;
 
@@ -416,6 +417,63 @@ mod tests {
         assert_eq!(json["file_reference"]["original_name"], "test.txt");
     }
 
+    #[test]
+    fn test_upload_result_with_metadata_serialization() {
+        let now = chrono::Utc::now();
+        let meta = serde_json::json!({"env": "production", "version": 3, "active": true});
+        let result = UploadResult {
+            file: File {
+                id: Uuid::new_v4(),
+                hash_sha256: "c".repeat(64),
+                size: 4096,
+                content_type: "application/json".to_string(),
+                created_at: now,
+            },
+            file_reference: FileReference {
+                id: Uuid::new_v4(),
+                file_id: Uuid::new_v4(),
+                project_id: Uuid::new_v4(),
+                original_name: "config.json".to_string(),
+                metadata: meta.clone(),
+                created_at: now,
+            },
+            is_duplicate: false,
+            sync_tasks_created: 1,
+        };
+
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["file_reference"]["metadata"]["env"], "production");
+        assert_eq!(json["file_reference"]["metadata"]["version"], 3);
+        assert_eq!(json["file_reference"]["metadata"]["active"], true);
+    }
+
+    #[test]
+    fn test_upload_result_without_metadata_defaults_empty() {
+        let now = chrono::Utc::now();
+        let result = UploadResult {
+            file: File {
+                id: Uuid::new_v4(),
+                hash_sha256: "d".repeat(64),
+                size: 256,
+                content_type: "text/plain".to_string(),
+                created_at: now,
+            },
+            file_reference: FileReference {
+                id: Uuid::new_v4(),
+                file_id: Uuid::new_v4(),
+                project_id: Uuid::new_v4(),
+                original_name: "plain.txt".to_string(),
+                metadata: serde_json::json!({}),
+                created_at: now,
+            },
+            is_duplicate: false,
+            sync_tasks_created: 0,
+        };
+
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["file_reference"]["metadata"], serde_json::json!({}));
+    }
+
     #[tokio::test]
     async fn test_file_service_construction() {
         let registry = Arc::new(StorageRegistry::new());
@@ -587,7 +645,7 @@ mod tests {
 
         let data = Bytes::from("hello world");
         let result = service
-            .upload_file(project_id, "hello.txt", "text/plain", data)
+            .upload_file(project_id, "hello.txt", "text/plain", data, serde_json::json!({}))
             .await
             .unwrap();
 
@@ -611,14 +669,14 @@ mod tests {
 
         // First upload
         let result1 = service
-            .upload_file(project_id, "file1.txt", "text/plain", data.clone())
+            .upload_file(project_id, "file1.txt", "text/plain", data.clone(), serde_json::json!({}))
             .await
             .unwrap();
         assert!(!result1.is_duplicate);
 
         // Second upload with same content but different name
         let result2 = service
-            .upload_file(project_id, "file2.txt", "text/plain", data)
+            .upload_file(project_id, "file2.txt", "text/plain", data, serde_json::json!({}))
             .await
             .unwrap();
         assert!(result2.is_duplicate);
@@ -637,7 +695,7 @@ mod tests {
 
         let data = Bytes::from("download me");
         let upload_result = service
-            .upload_file(project_id, "download.txt", "text/plain", data.clone())
+            .upload_file(project_id, "download.txt", "text/plain", data.clone(), serde_json::json!({}))
             .await
             .unwrap();
 
@@ -671,7 +729,7 @@ mod tests {
             let d = data.clone();
             let name = format!("concurrent-{}.txt", i);
             handles.push(tokio::spawn(async move {
-                svc.upload_file(project_id, &name, "text/plain", d).await
+                svc.upload_file(project_id, &name, "text/plain", d, serde_json::json!({})).await
             }));
         }
 
