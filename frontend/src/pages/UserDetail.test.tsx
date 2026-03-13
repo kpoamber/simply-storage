@@ -265,16 +265,14 @@ describe('UserDetail', () => {
       if (url === '/projects') {
         return Promise.resolve({
           data: [
-            { project: mockUserDetail.projects[0] },
+            mockUserDetail.projects[0],
             {
-              project: {
-                id: 'p2',
-                name: 'Project Beta',
-                slug: 'beta',
-                hot_to_cold_days: null,
-                created_at: '2026-01-01T00:00:00Z',
-                updated_at: '2026-01-01T00:00:00Z',
-              },
+              id: 'p2',
+              name: 'Project Beta',
+              slug: 'beta',
+              hot_to_cold_days: null,
+              created_at: '2026-01-01T00:00:00Z',
+              updated_at: '2026-01-01T00:00:00Z',
             },
           ],
         });

@@ -383,6 +383,13 @@ function ProjectMembersSection({ projectId, ownerId }: { projectId: string; owne
     enabled: showAdd,
   });
 
+  // Fetch owner user separately since they may not be in user_projects table
+  const { data: ownerUserData } = useQuery<AuthUser>({
+    queryKey: ['project-owner', ownerId],
+    queryFn: () => apiClient.get(`/auth/users/${ownerId}`).then(r => r.data.user),
+    enabled: !!ownerId,
+  });
+
   const unassignedUsers = allUsers?.filter(
     u => !members?.some(m => m.id === u.id) && u.id !== ownerId,
   );
@@ -404,7 +411,6 @@ function ProjectMembersSection({ projectId, ownerId }: { projectId: string; owne
     },
   });
 
-  const ownerUser = members?.find(m => m.id === ownerId);
   const nonOwnerMembers = members?.filter(m => m.id !== ownerId) ?? [];
 
   return (
@@ -419,7 +425,7 @@ function ProjectMembersSection({ projectId, ownerId }: { projectId: string; owne
         </button>
       </div>
 
-      {(!members || (nonOwnerMembers.length === 0 && !ownerUser)) ? (
+      {(!members || (nonOwnerMembers.length === 0 && !ownerUserData)) ? (
         <p className="mt-2 text-gray-400">No members assigned.</p>
       ) : (
         <div className="mt-2 overflow-hidden rounded-lg border border-gray-200">
@@ -433,15 +439,15 @@ function ProjectMembersSection({ projectId, ownerId }: { projectId: string; owne
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 bg-white">
-              {ownerUser && (
+              {ownerUserData && (
                 <tr>
                   <td className="px-4 py-2 text-sm">
-                    <Link to={`/users/${ownerUser.id}`} className="text-blue-600 hover:underline">{ownerUser.username}</Link>
+                    <Link to={`/users/${ownerUserData.id}`} className="text-blue-600 hover:underline">{ownerUserData.username}</Link>
                   </td>
                   <td className="px-4 py-2 text-sm">
                     <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">Owner</span>
                   </td>
-                  <td className="px-4 py-2 text-sm text-gray-500">{new Date(ownerUser.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-2 text-sm text-gray-500">{new Date(ownerUserData.created_at).toLocaleDateString()}</td>
                   <td className="px-4 py-2 text-center text-sm text-gray-400">&mdash;</td>
                 </tr>
               )}

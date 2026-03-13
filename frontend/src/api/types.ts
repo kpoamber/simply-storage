@@ -22,7 +22,7 @@ export interface SystemStats {
   pending_sync_tasks: number;
 }
 
-export interface StorageBackend {
+export interface StorageBase {
   id: string;
   name: string;
   storage_type: string;
@@ -32,6 +32,9 @@ export interface StorageBackend {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface StorageBackend extends StorageBase {
   file_count: number;
   used_space: number;
 }
@@ -125,7 +128,7 @@ export interface AuthUser {
 export interface UserWithAssignments {
   user: AuthUser;
   projects: Project[];
-  storages: StorageBackend[];
+  storages: StorageBase[];
 }
 
 export interface CreateUserInput {
@@ -144,18 +147,9 @@ export interface LoginRequest {
   password: string;
 }
 
-export interface RegisterRequest {
-  username: string;
-  password: string;
-}
-
 export interface AuthTokenResponse {
   access_token: string;
   refresh_token: string;
-}
-
-export interface RegisterResponse extends AuthTokenResponse {
-  user: AuthUser;
 }
 
 export function formatBytes(bytes: number): string {

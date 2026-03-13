@@ -37,7 +37,7 @@ Multiple stateless app instances run behind nginx and share state through distri
 - **Hot/cold tiering** - Configurable per-project archival policy based on last access time
 - **Temporary signed links** - HMAC-signed download/preview URLs with configurable expiry
 - **Horizontal scaling** - Add app instances behind nginx; new nodes join via config sync from existing nodes
-- **Authentication & authorization** - JWT-based auth with access/refresh tokens, role-based access control (admin/user), project ownership
+- **Authentication & authorization** - JWT-based auth with access/refresh tokens, role-based access control (admin/user), project ownership, and user-to-project/storage membership assignments
 - **Admin dashboard** - React frontend for managing projects, storages, files, and monitoring sync tasks
 - **Bulk operations** - Sync-all to a storage, export storage as tar.gz archive
 
@@ -146,6 +146,8 @@ tier_scan_interval_secs = 300  # How often to scan for files to archive
 jwt_secret = "change-me-jwt-secret-in-production"  # JWT signing secret (MUST change in production)
 access_token_ttl_secs = 900        # Access token lifetime (15 minutes)
 refresh_token_ttl_secs = 604800    # Refresh token lifetime (7 days)
+default_admin_username = "admin"            # Default admin user created on first startup
+default_admin_password = "Innovare2026!"    # Default admin password (MUST change in production)
 ```
 
 ### Environment Variable Examples
@@ -159,32 +161,41 @@ APP_SYNC__NUM_WORKERS=8
 APP_AUTH__JWT_SECRET=my-jwt-secret
 APP_AUTH__ACCESS_TOKEN_TTL_SECS=900
 APP_AUTH__REFRESH_TOKEN_TTL_SECS=604800
+APP_AUTH__DEFAULT_ADMIN_USERNAME=admin
+APP_AUTH__DEFAULT_ADMIN_PASSWORD=Innovare2026!
 RUST_LOG=info  # Log level: trace, debug, info, warn, error
 ```
 
 ## API Endpoints
 
-All API endpoints (except `/health` and `/api/auth/*`) require authentication via a JWT access token passed in the `Authorization: Bearer <token>` header. Storage, bulk, and system management endpoints require `admin` role. Project and file endpoints enforce owner-or-admin access.
+All API endpoints require authentication via a JWT access token passed in the `Authorization: Bearer <token>` header, except `/health`, `/api/auth/login`, and `/api/auth/refresh`. Storage, bulk, system management, and user management endpoints require `admin` role. Project and file endpoints enforce owner/member/admin access.
 
 ### Authentication
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/auth/register` | Register new user (first user becomes admin) |
 | POST | `/api/auth/login` | Login with username/password, returns access + refresh tokens |
 | POST | `/api/auth/refresh` | Refresh access token using refresh token (rotates refresh token) |
 | GET | `/api/auth/me` | Get current user info (requires auth) |
 | POST | `/api/auth/logout` | Revoke refresh token |
+| POST | `/api/auth/users` | Create new user (admin-only) |
+| GET | `/api/auth/users` | List all users (admin-only) |
+| GET | `/api/auth/users/{user_id}` | Get user detail with project/storage assignments (admin-only) |
+| PUT | `/api/auth/users/{user_id}` | Update user role or password (admin-only) |
+| DELETE | `/api/auth/users/{user_id}` | Delete user (admin-only) |
 
 ### Projects
 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/projects` | Create a project |
-| GET | `/api/projects` | List all projects |
+| GET | `/api/projects` | List all projects (admin) or accessible projects (user) |
 | GET | `/api/projects/{id}` | Get project with file stats |
 | PUT | `/api/projects/{id}` | Update project settings |
 | DELETE | `/api/projects/{id}` | Delete project |
+| GET | `/api/projects/{id}/members` | List project members (admin-only) |
+| POST | `/api/projects/{id}/members` | Add member to project (admin-only) |
+| DELETE | `/api/projects/{id}/members/{user_id}` | Remove member from project (admin-only) |
 
 ### Files
 
@@ -202,11 +213,17 @@ All API endpoints (except `/health` and `/api/auth/*`) require authentication vi
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/storages` | Register storage backend |
-| GET | `/api/storages` | List storages with usage stats |
+| POST | `/api/storages` | Register storage backend (admin-only) |
+| GET | `/api/storages` | List storages with usage stats (admin: all, user: assigned only) |
 | GET | `/api/storages/{id}` | Get storage details |
 | PUT | `/api/storages/{id}` | Update storage config |
 | DELETE | `/api/storages/{id}` | Disable storage |
+| GET | `/api/storages/{id}/files` | List files in storage (paginated) |
+| GET | `/api/storages/{id}/containers` | List storage containers/buckets |
+| POST | `/api/storages/{id}/containers` | Create a new container/bucket |
+| GET | `/api/storages/{id}/members` | List storage members (admin-only) |
+| POST | `/api/storages/{id}/members` | Add member to storage (admin-only) |
+| DELETE | `/api/storages/{id}/members/{user_id}` | Remove member from storage (admin-only) |
 
 ### Bulk Operations
 
@@ -299,7 +316,7 @@ frontend/
 │   ├── api/        # API client (axios) and TypeScript types
 │   ├── components/ # Reusable components (Layout, Sidebar, StorageForm)
 │   ├── contexts/   # React contexts (AuthContext)
-│   └── pages/      # Page components (Dashboard, Projects, Storages, SyncTasks, Login)
+│   └── pages/      # Page components (Dashboard, Projects, ProjectDetail, Storages, StorageDetail, Users, UserDetail, Nodes, SyncTasks, Login)
 ├── package.json
 ├── vite.config.ts
 └── tailwind.config.js

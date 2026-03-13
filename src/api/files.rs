@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 use crate::config::AppConfig;
-use crate::db::models::{File, FileLocation, FileReference, Project, Storage};
+use crate::db::models::{File, FileLocation, FileReference, Project, Storage, UserProject};
 use crate::error::AppError;
 use crate::services::{FileService, TierService};
 use crate::storage::StorageRegistry;
@@ -70,7 +70,10 @@ async fn check_file_access(
         r#"SELECT EXISTS(
             SELECT 1 FROM file_references fr
             JOIN projects p ON p.id = fr.project_id
-            WHERE fr.file_id = $1 AND p.owner_id = $2 AND p.deleted_at IS NULL
+            WHERE fr.file_id = $1 AND p.deleted_at IS NULL
+            AND (p.owner_id = $2 OR EXISTS (
+                SELECT 1 FROM user_projects up WHERE up.project_id = p.id AND up.user_id = $2
+            ))
         )"#,
     )
     .bind(file_id)
@@ -80,7 +83,7 @@ async fn check_file_access(
 
     if !row.0 {
         return Err(AppError::Forbidden(
-            "Access denied: not the owner".to_string(),
+            "Access denied: not a member".to_string(),
         ));
     }
     Ok(())
@@ -141,9 +144,14 @@ async fn list_project_files(
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
 
-    // Verify project exists and user has access
+    // Verify project exists and user has read access (admin, owner, or member)
     let project = Project::find_by_id(pool.get_ref(), project_id).await?;
-    user.require_owner_or_admin(project.owner_id)?;
+    if !user.is_admin() && !user.is_owner(project.owner_id) {
+        let is_member = UserProject::is_member(pool.get_ref(), user.user_id, project_id).await?;
+        if !is_member {
+            return Err(AppError::Forbidden("Access denied: not a member".to_string()));
+        }
+    }
 
     let refs =
         FileReference::list_for_project(pool.get_ref(), project_id, query.limit(), query.offset())
@@ -225,9 +233,14 @@ async fn download_file(
     let mut response = HttpResponse::Ok();
     response.content_type(result.content_type);
     if let Some(ref name) = result.original_name {
+        // Sanitize filename to prevent header injection
+        let safe_name: String = name
+            .chars()
+            .filter(|c| *c != '"' && *c != '\\' && *c != '\r' && *c != '\n')
+            .collect();
         response.insert_header((
             "Content-Disposition",
-            format!("attachment; filename=\"{}\"", name),
+            format!("attachment; filename=\"{}\"", safe_name),
         ));
     }
     Ok(response.body(result.data))

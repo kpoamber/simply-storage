@@ -7,6 +7,7 @@ import type {
   UserWithAssignments,
   Project,
   StorageBackend,
+  StorageBase,
 } from '../api/types';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -235,7 +236,7 @@ function ProjectAssignmentsSection({
 
   const { data: allProjects } = useQuery<Project[]>({
     queryKey: ['all-projects-for-assign'],
-    queryFn: () => apiClient.get('/projects').then((r) => r.data.map((p: { project: Project }) => p.project)),
+    queryFn: () => apiClient.get('/projects').then((r) => r.data),
     enabled: showAdd,
   });
 
@@ -342,7 +343,7 @@ function StorageAssignmentsSection({
   assignedStorages,
 }: {
   userId: string;
-  assignedStorages: StorageBackend[];
+  assignedStorages: StorageBase[];
 }) {
   const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);

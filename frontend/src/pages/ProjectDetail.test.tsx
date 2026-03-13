@@ -84,6 +84,7 @@ function setupMocks(files = mockFiles, members = mockMembers) {
     if (url === '/projects/proj-1/storages') return Promise.resolve({ data: [] });
     if (url === '/projects/proj-1/available-storages') return Promise.resolve({ data: [] });
     if (url === '/projects/proj-1/members') return Promise.resolve({ data: members });
+    if (url === '/auth/users/owner-1') return Promise.resolve({ data: { user: mockMembers[0], projects: [], storages: [] } });
     if (url === '/auth/users') return Promise.resolve({ data: [
       ...members,
       { id: 'other-1', username: 'otheruser', role: 'user', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
@@ -217,6 +218,7 @@ describe('ProjectDetail', () => {
       }
       if (url === '/projects/proj-1/available-storages') return Promise.resolve({ data: [] });
       if (url === '/projects/proj-1/members') return Promise.resolve({ data: [] });
+      if (url.startsWith('/auth/users/')) return Promise.resolve({ data: { user: null, projects: [], storages: [] } });
       return Promise.resolve({ data: [] });
     });
 

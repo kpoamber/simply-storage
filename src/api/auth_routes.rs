@@ -312,6 +312,8 @@ async fn update_user(
         }
 
         updated_user = User::update_role(pool.get_ref(), user_id, role).await?;
+        // Invalidate refresh tokens so the user must re-authenticate with the new role
+        RefreshToken::delete_by_user_id(pool.get_ref(), user_id).await?;
     }
 
     if let Some(ref password) = body.password {
