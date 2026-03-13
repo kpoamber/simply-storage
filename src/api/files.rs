@@ -256,7 +256,7 @@ async fn get_temp_link(
     let file_id = path.into_inner();
     check_file_access(pool.get_ref(), file_id, &user).await?;
 
-    let expires_in_secs = query.expires_in.unwrap_or(3600);
+    let expires_in_secs = query.expires_in.unwrap_or(3600).min(86400);
     let expires_in = std::time::Duration::from_secs(expires_in_secs);
 
     let url = file_service.generate_temp_link(file_id, expires_in).await?;
@@ -341,6 +341,7 @@ pub async fn download_local_temp(
         r#"SELECT fl.* FROM file_locations fl
            JOIN storages s ON s.id = fl.storage_id AND s.enabled = TRUE
            WHERE fl.storage_path = $1 AND fl.status = 'synced'
+             AND s.storage_type = 'local'
            LIMIT 1"#,
     )
     .bind(&query.path)
