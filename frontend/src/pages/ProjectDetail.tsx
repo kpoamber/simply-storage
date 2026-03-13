@@ -53,6 +53,7 @@ export default function ProjectDetail() {
   }
 
   const { project, stats } = projectData;
+  const canWrite = isAdmin || project.owner_id === currentUser?.id;
 
   return (
     <div>
@@ -62,13 +63,13 @@ export default function ProjectDetail() {
         {stats.file_count} files &middot; {formatBytes(stats.total_size)}
       </p>
 
-      <ProjectSettingsForm project={project} />
+      {canWrite && <ProjectSettingsForm project={project} />}
 
-      <ProjectStoragesSection projectId={id!} />
+      {canWrite && <ProjectStoragesSection projectId={id!} />}
 
       {isAdmin && <ProjectMembersSection projectId={id!} ownerId={project.owner_id} />}
 
-      <FileUploadZone projectId={id!} />
+      {canWrite && <FileUploadZone projectId={id!} />}
 
       <div className="mt-6">
         <div className="flex items-center justify-between">
@@ -99,7 +100,7 @@ export default function ProjectDetail() {
               </thead>
               <tbody className="divide-y divide-gray-200 bg-white">
                 {filteredFiles.map(f => (
-                  <FileRow key={f.id} fileRef={f} projectId={id!} />
+                  <FileRow key={f.id} fileRef={f} projectId={id!} canWrite={canWrite} />
                 ))}
               </tbody>
             </table>
@@ -752,7 +753,7 @@ function FileUploadZone({ projectId }: { projectId: string }) {
   );
 }
 
-function FileRow({ fileRef, projectId }: { fileRef: FileReference; projectId: string }) {
+function FileRow({ fileRef, projectId, canWrite }: { fileRef: FileReference; projectId: string; canWrite: boolean }) {
   const queryClient = useQueryClient();
   const [copiedLink, setCopiedLink] = useState(false);
 
@@ -764,8 +765,13 @@ function FileRow({ fileRef, projectId }: { fileRef: FileReference; projectId: st
     },
   });
 
-  const handleDownload = () => {
-    window.open(`/api/files/${fileRef.file_id}/download`, '_blank');
+  const handleDownload = async () => {
+    try {
+      const res = await apiClient.get<TempLinkResponse>(`/files/${fileRef.file_id}/link`);
+      window.open(res.data.url, '_blank');
+    } catch {
+      // error handled by axios interceptor
+    }
   };
 
   const handleGetLink = async () => {
@@ -820,16 +826,20 @@ function FileRow({ fileRef, projectId }: { fileRef: FileReference; projectId: st
           <button onClick={handleGetLink} title="Copy temp link" className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700">
             {copiedLink ? <Check className="h-4 w-4 text-green-600" /> : <Link2 className="h-4 w-4" />}
           </button>
-          <button onClick={handleRestore} title="Restore from cold" className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700">
-            <ArchiveRestore className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => { if (window.confirm('Delete this file reference?')) deleteMutation.mutate(); }}
-            title="Delete"
-            className="rounded p-1 text-red-400 hover:bg-red-50 hover:text-red-600"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
+          {canWrite && (
+            <button onClick={handleRestore} title="Restore from cold" className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700">
+              <ArchiveRestore className="h-4 w-4" />
+            </button>
+          )}
+          {canWrite && (
+            <button
+              onClick={() => { if (window.confirm('Delete this file reference?')) deleteMutation.mutate(); }}
+              title="Delete"
+              className="rounded p-1 text-red-400 hover:bg-red-50 hover:text-red-600"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </td>
     </tr>

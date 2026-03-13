@@ -25,13 +25,13 @@ export default function StorageDetail() {
     queryKey: ['storage-files', id, page],
     queryFn: () =>
       apiClient.get(`/storages/${id}/files`, { params: { page, per_page: perPage } }).then(r => r.data),
-    enabled: !!id,
+    enabled: !!id && isAdmin,
   });
 
   const { data: exportStatus, refetch: refetchExport } = useQuery<ExportStatus>({
     queryKey: ['storage-export-status', id, exportJobId],
     queryFn: () => apiClient.get(`/storages/${id}/export/status`, { params: { job_id: exportJobId } }).then(r => r.data),
-    enabled: !!id && !!exportJobId,
+    enabled: !!id && !!exportJobId && isAdmin,
     refetchInterval: (query) => {
       const data = query.state.data;
       return data && data.status === 'in_progress' ? 2000 : false;
@@ -95,63 +95,67 @@ export default function StorageDetail() {
         </div>
       </div>
 
-      <div className="mt-6 flex gap-3">
-        <button
-          onClick={() => syncAllMutation.mutate()}
-          disabled={syncAllMutation.isPending}
-          className="flex items-center gap-1 rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          <RefreshCw className={`h-4 w-4 ${syncAllMutation.isPending ? 'animate-spin' : ''}`} />
-          {syncAllMutation.isPending ? 'Syncing...' : 'Sync All'}
-        </button>
-        <button
-          onClick={() => exportMutation.mutate()}
-          disabled={exportMutation.isPending || exportStatus?.status === 'in_progress'}
-          className="flex items-center gap-1 rounded bg-green-600 px-3 py-2 text-sm text-white hover:bg-green-700 disabled:opacity-50"
-        >
-          <Download className="h-4 w-4" />
-          {exportMutation.isPending ? 'Starting...' : 'Export'}
-        </button>
-      </div>
-
-      {syncAllMutation.isSuccess && (
-        <p className="mt-2 text-sm text-green-600">Sync tasks created successfully.</p>
-      )}
-
-      {exportStatus && (
-        <div className="mt-3 rounded-lg border border-gray-200 bg-white p-4">
-          <h4 className="text-sm font-medium text-gray-700">Export Status</h4>
-          <div className="mt-2">
-            <div className="flex items-center justify-between text-sm text-gray-600">
-              <span>Status: {exportStatus.status}</span>
-              <span>{exportStatus.processed_files}/{exportStatus.total_files} files</span>
-            </div>
-            {exportStatus.status === 'in_progress' && (
-              <div className="mt-2 h-2 overflow-hidden rounded-full bg-gray-200">
-                <div
-                  className="h-full rounded-full bg-blue-600 transition-all"
-                  style={{ width: `${exportStatus.total_files > 0 ? Math.round((exportStatus.processed_files / exportStatus.total_files) * 100) : 0}%` }}
-                />
-              </div>
-            )}
-            {exportStatus.error && (
-              <p className="mt-2 text-sm text-red-600">{exportStatus.error}</p>
-            )}
-            {exportStatus.status === 'completed' && exportJobId && (
-              <a
-                href={`/api/storages/${id}/export/download?job_id=${exportJobId}`}
-                className="mt-2 inline-block text-sm text-blue-600 hover:underline"
-              >
-                Download archive
-              </a>
-            )}
+      {isAdmin && (
+        <>
+          <div className="mt-6 flex gap-3">
+            <button
+              onClick={() => syncAllMutation.mutate()}
+              disabled={syncAllMutation.isPending}
+              className="flex items-center gap-1 rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              <RefreshCw className={`h-4 w-4 ${syncAllMutation.isPending ? 'animate-spin' : ''}`} />
+              {syncAllMutation.isPending ? 'Syncing...' : 'Sync All'}
+            </button>
+            <button
+              onClick={() => exportMutation.mutate()}
+              disabled={exportMutation.isPending || exportStatus?.status === 'in_progress'}
+              className="flex items-center gap-1 rounded bg-green-600 px-3 py-2 text-sm text-white hover:bg-green-700 disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" />
+              {exportMutation.isPending ? 'Starting...' : 'Export'}
+            </button>
           </div>
-        </div>
+
+          {syncAllMutation.isSuccess && (
+            <p className="mt-2 text-sm text-green-600">Sync tasks created successfully.</p>
+          )}
+
+          {exportStatus && (
+            <div className="mt-3 rounded-lg border border-gray-200 bg-white p-4">
+              <h4 className="text-sm font-medium text-gray-700">Export Status</h4>
+              <div className="mt-2">
+                <div className="flex items-center justify-between text-sm text-gray-600">
+                  <span>Status: {exportStatus.status}</span>
+                  <span>{exportStatus.processed_files}/{exportStatus.total_files} files</span>
+                </div>
+                {exportStatus.status === 'in_progress' && (
+                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-gray-200">
+                    <div
+                      className="h-full rounded-full bg-blue-600 transition-all"
+                      style={{ width: `${exportStatus.total_files > 0 ? Math.round((exportStatus.processed_files / exportStatus.total_files) * 100) : 0}%` }}
+                    />
+                  </div>
+                )}
+                {exportStatus.error && (
+                  <p className="mt-2 text-sm text-red-600">{exportStatus.error}</p>
+                )}
+                {exportStatus.status === 'completed' && exportJobId && (
+                  <a
+                    href={`/api/storages/${id}/export/download?job_id=${exportJobId}`}
+                    className="mt-2 inline-block text-sm text-blue-600 hover:underline"
+                  >
+                    Download archive
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
+
+          <StorageMembersSection storageId={id!} />
+        </>
       )}
 
-      {isAdmin && <StorageMembersSection storageId={id!} />}
-
-      <div className="mt-6">
+      {isAdmin && <div className="mt-6">
         <h3 className="text-lg font-medium text-gray-700">Files on this Storage</h3>
         {!fileLocations?.length ? (
           <p className="mt-4 text-gray-400">No files on this storage.</p>
@@ -210,7 +214,7 @@ export default function StorageDetail() {
             </div>
           </>
         )}
-      </div>
+      </div>}
     </div>
   );
 }
