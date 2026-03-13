@@ -1227,6 +1227,14 @@ impl RefreshToken {
         Ok(())
     }
 
+    pub async fn delete_by_hash(pool: &PgPool, token_hash: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM refresh_tokens WHERE token_hash = $1")
+            .bind(token_hash)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn delete_expired(pool: &PgPool) -> AppResult<u64> {
         let result = sqlx::query("DELETE FROM refresh_tokens WHERE expires_at <= NOW()")
             .execute(pool)

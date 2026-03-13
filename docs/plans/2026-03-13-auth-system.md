@@ -80,17 +80,17 @@
 - Modify: `src/api/mod.rs`
 - Modify: `src/main.rs`
 
-- [ ] Создать `src/api/auth_routes.rs` с эндпоинтами:
+- [x] Создать `src/api/auth_routes.rs` с эндпоинтами:
   - `POST /api/auth/register` - регистрация (username, password) -> user + tokens
   - `POST /api/auth/login` - вход (username, password) -> access_token + refresh_token
   - `POST /api/auth/refresh` - обновление access_token по refresh_token
   - `GET /api/auth/me` - информация о текущем пользователе (требует AuthenticatedUser)
   - `POST /api/auth/logout` - удаление refresh_token
-- [ ] Первый зарегистрированный пользователь автоматически получает роль admin
-- [ ] Добавить AuthService в app_data в main.rs
-- [ ] Зарегистрировать auth routes в configure_api_routes
-- [ ] Написать тесты для auth endpoints (register, login, refresh, me, logout)
-- [ ] run project test suite - must pass before task 5
+- [x] Первый зарегистрированный пользователь автоматически получает роль admin
+- [x] Добавить AuthService в app_data в main.rs
+- [x] Зарегистрировать auth routes в configure_api_routes
+- [x] Написать тесты для auth endpoints (register, login, refresh, me, logout)
+- [x] run project test suite - must pass before task 5
 
 ### Task 5: Защита существующих API эндпоинтов
 

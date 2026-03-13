@@ -1,7 +1,7 @@
 use actix_web::{App, HttpServer, web};
 use innovare_storage::config::AppConfig;
 use innovare_storage::db::models::Node;
-use innovare_storage::services::{BulkService, FileService, TierService};
+use innovare_storage::services::{AuthService, BulkService, FileService, TierService};
 use innovare_storage::storage::StorageRegistry;
 use innovare_storage::workers::{SyncWorker, TierWorker};
 use sqlx::PgPool;
@@ -49,6 +49,7 @@ async fn main() -> std::io::Result<()> {
         tracing::warn!("Failed to load storage backends from DB: {}", e);
     }
 
+    let auth_service = AuthService::new(&config.auth);
     let file_service = FileService::new(
         pool.clone(),
         registry.clone(),
@@ -101,6 +102,7 @@ async fn main() -> std::io::Result<()> {
     let config_data = web::Data::new(config);
     let pool_data = web::Data::new(pool);
     let registry_data = web::Data::new(registry);
+    let auth_service_data = web::Data::new(auth_service);
     let file_service_data = web::Data::new(file_service);
     let tier_service_data = web::Data::new(tier_service);
     let bulk_service_data = web::Data::new(bulk_service);
@@ -110,6 +112,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(config_data.clone())
             .app_data(pool_data.clone())
             .app_data(registry_data.clone())
+            .app_data(auth_service_data.clone())
             .app_data(file_service_data.clone())
             .app_data(tier_service_data.clone())
             .app_data(bulk_service_data.clone())
