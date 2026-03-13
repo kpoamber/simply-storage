@@ -425,6 +425,35 @@ async fn search_files(
     Ok(HttpResponse::Ok().json(result))
 }
 
+// ─── Search summary ──────────────────────────────────────────────────────────
+
+async fn search_summary(
+    pool: web::Data<PgPool>,
+    path: web::Path<Uuid>,
+    user: AuthenticatedUser,
+    body: web::Json<MetadataSearchRequest>,
+) -> Result<HttpResponse, AppError> {
+    let project_id = path.into_inner();
+
+    // Verify project exists and user has read access (admin, owner, or member)
+    let project = Project::find_by_id(pool.get_ref(), project_id).await?;
+    if !user.is_admin() && !user.is_owner(project.owner_id) {
+        let is_member = UserProject::is_member(pool.get_ref(), user.user_id, project_id).await?;
+        if !is_member {
+            return Err(AppError::Forbidden("Access denied: not a member".to_string()));
+        }
+    }
+
+    let summary = FileReference::search_summary(
+        pool.get_ref(),
+        project_id,
+        body.filters.as_ref(),
+    )
+    .await?;
+
+    Ok(HttpResponse::Ok().json(summary))
+}
+
 // ─── Local temp URL download ─────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -505,6 +534,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     .service(
         web::resource("/projects/{project_id}/files/search")
             .route(web::post().to(search_files)),
+    )
+    .service(
+        web::resource("/projects/{project_id}/files/search/summary")
+            .route(web::post().to(search_summary)),
     )
     .service(
         web::resource("/files/{id}")
@@ -821,6 +854,57 @@ mod tests {
         assert!(req.filters.is_none());
     }
 
+    // ─── Search summary tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_search_summary_request_empty() {
+        // Summary reuses MetadataSearchRequest; empty filters = summarize all
+        let json = serde_json::json!({});
+        let req: MetadataSearchRequest = serde_json::from_value(json).unwrap();
+        assert!(req.filters.is_none());
+    }
+
+    #[test]
+    fn test_search_summary_request_with_filters() {
+        let json = serde_json::json!({
+            "filters": {
+                "and": [
+                    {"key": "env", "value": "prod"},
+                    {"key": "region", "value": "us-east"}
+                ]
+            }
+        });
+        let req: MetadataSearchRequest = serde_json::from_value(json).unwrap();
+        assert!(req.filters.is_some());
+        match req.filters.unwrap() {
+            crate::db::models::MetadataFilter::And { and } => assert_eq!(and.len(), 2),
+            _ => panic!("Expected And filter"),
+        }
+    }
+
+    #[test]
+    fn test_search_summary_response_shape() {
+        use crate::db::models::{SearchSummary, TimelineEntry};
+        let summary = SearchSummary {
+            total_files: 15,
+            total_size: 5242880,
+            earliest_upload: Some(chrono::Utc::now()),
+            latest_upload: Some(chrono::Utc::now()),
+            timeline: vec![TimelineEntry {
+                date: chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
+                count: 15,
+                size: 5242880,
+            }],
+        };
+        let json = serde_json::to_value(&summary).unwrap();
+        assert_eq!(json["total_files"], 15);
+        assert_eq!(json["total_size"], 5242880);
+        assert!(!json["earliest_upload"].is_null());
+        assert!(!json["latest_upload"].is_null());
+        assert_eq!(json["timeline"].as_array().unwrap().len(), 1);
+        assert_eq!(json["timeline"][0]["date"], "2026-03-01");
+    }
+
     // ─── Auth enforcement tests ───────────────────────────────────────────────
 
     use crate::config::AuthConfig;
@@ -954,6 +1038,28 @@ mod tests {
         let id = uuid::Uuid::new_v4();
         let req = actix_web::test::TestRequest::post()
             .uri(&format!("/projects/{}/files/search", id))
+            .set_json(serde_json::json!({}))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_rt::test]
+    async fn test_search_summary_requires_auth() {
+        let auth_service = test_auth_service();
+        let app = actix_web::test::init_service(
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(auth_service))
+                .route(
+                    "/projects/{project_id}/files/search/summary",
+                    actix_web::web::post().to(search_summary),
+                ),
+        )
+        .await;
+
+        let id = uuid::Uuid::new_v4();
+        let req = actix_web::test::TestRequest::post()
+            .uri(&format!("/projects/{}/files/search/summary", id))
             .set_json(serde_json::json!({}))
             .to_request();
         let resp = actix_web::test::call_service(&app, req).await;

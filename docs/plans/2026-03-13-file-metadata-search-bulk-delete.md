@@ -90,13 +90,13 @@ Add support for user-defined metadata (JSON key/value) on file uploads, with fas
 - Modify: `src/api/files.rs`
 - Modify: `src/db/models.rs`
 
-- [ ] Add `POST /api/projects/{project_id}/files/search/summary` endpoint accepting same filter DSL
-- [ ] Return summary JSON: `{ total_files, total_size, earliest_upload, latest_upload, timeline: [{date, count, size}] }`
-- [ ] Timeline: aggregate matched files by date (day granularity), returning count and cumulative size per day
-- [ ] Reuse filter-to-SQL compiler from Task 3 for the WHERE clause
-- [ ] Implement aggregation query: JOIN file_references with files (for size), GROUP BY date
-- [ ] Write tests: summary with filters returns correct counts/sizes, empty result summary, timeline ordering
-- [ ] Run project test suite - must pass before task 5
+- [x] Add `POST /api/projects/{project_id}/files/search/summary` endpoint accepting same filter DSL
+- [x] Return summary JSON: `{ total_files, total_size, earliest_upload, latest_upload, timeline: [{date, count, size}] }`
+- [x] Timeline: aggregate matched files by date (day granularity), returning count and cumulative size per day
+- [x] Reuse filter-to-SQL compiler from Task 3 for the WHERE clause
+- [x] Implement aggregation query: JOIN file_references with files (for size), GROUP BY date
+- [x] Write tests: summary with filters returns correct counts/sizes, empty result summary, timeline ordering
+- [x] Run project test suite - must pass before task 5
 
 ### Task 5: Bulk deletion API
 

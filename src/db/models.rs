@@ -682,6 +682,114 @@ impl FileReference {
             per_page: limit,
         })
     }
+
+    /// Aggregate summary for file references matching metadata filters, scoped to a project.
+    /// Joins with files table to get size data, groups by date for timeline.
+    pub async fn search_summary(
+        pool: &PgPool,
+        project_id: Uuid,
+        filters: Option<&MetadataFilter>,
+    ) -> AppResult<SearchSummary> {
+        // $1 = project_id
+        let mut compiler = MetadataFilterCompiler::new(2);
+
+        let filter_clause = match filters {
+            Some(f) => compiler.compile(f)?,
+            None => "TRUE".to_string(),
+        };
+
+        let jsonb_params = compiler.into_params();
+
+        // Summary query: total files, total size, earliest and latest upload
+        let summary_sql = format!(
+            r#"SELECT
+                COUNT(*)::bigint AS total_files,
+                COALESCE(SUM(f.size), 0)::bigint AS total_size,
+                MIN(fr.created_at) AS earliest_upload,
+                MAX(fr.created_at) AS latest_upload
+            FROM file_references fr
+            JOIN files f ON f.id = fr.file_id
+            WHERE fr.project_id = $1 AND {}"#,
+            filter_clause
+        );
+
+        use sqlx::Arguments;
+        let mut summary_args = sqlx::postgres::PgArguments::default();
+        summary_args
+            .add(project_id)
+            .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        for param in &jsonb_params {
+            summary_args
+                .add(param)
+                .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        }
+
+        let summary_row: (i64, i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>) =
+            sqlx::query_as_with(&summary_sql, summary_args)
+                .fetch_one(pool)
+                .await?;
+
+        // Timeline query: aggregate by day
+        let timeline_sql = format!(
+            r#"SELECT
+                DATE(fr.created_at) AS date,
+                COUNT(*)::bigint AS count,
+                COALESCE(SUM(f.size), 0)::bigint AS size
+            FROM file_references fr
+            JOIN files f ON f.id = fr.file_id
+            WHERE fr.project_id = $1 AND {}
+            GROUP BY DATE(fr.created_at)
+            ORDER BY DATE(fr.created_at) ASC"#,
+            filter_clause
+        );
+
+        // Rebuild args for timeline query (compiler params were consumed)
+        let mut compiler2 = MetadataFilterCompiler::new(2);
+        let _filter_clause2 = match filters {
+            Some(f) => compiler2.compile(f)?,
+            None => "TRUE".to_string(),
+        };
+        let jsonb_params2 = compiler2.into_params();
+
+        let mut timeline_args = sqlx::postgres::PgArguments::default();
+        timeline_args
+            .add(project_id)
+            .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        for param in &jsonb_params2 {
+            timeline_args
+                .add(param)
+                .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        }
+
+        let timeline_rows: Vec<TimelineEntry> =
+            sqlx::query_as_with(&timeline_sql, timeline_args)
+                .fetch_all(pool)
+                .await?;
+
+        Ok(SearchSummary {
+            total_files: summary_row.0,
+            total_size: summary_row.1,
+            earliest_upload: summary_row.2,
+            latest_upload: summary_row.3,
+            timeline: timeline_rows,
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct SearchSummary {
+    pub total_files: i64,
+    pub total_size: i64,
+    pub earliest_upload: Option<DateTime<Utc>>,
+    pub latest_upload: Option<DateTime<Utc>>,
+    pub timeline: Vec<TimelineEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub struct TimelineEntry {
+    pub date: chrono::NaiveDate,
+    pub count: i64,
+    pub size: i64,
 }
 
 // ─── FileLocation ──────────────────────────────────────────────────────────────
@@ -2117,6 +2225,70 @@ mod tests {
         assert_eq!(json["per_page"], 50);
         assert_eq!(json["results"].as_array().unwrap().len(), 1);
         assert_eq!(json["results"][0]["metadata"]["env"], "prod");
+    }
+
+    #[test]
+    fn test_search_summary_serialization() {
+        let summary = SearchSummary {
+            total_files: 42,
+            total_size: 1048576,
+            earliest_upload: Some(Utc::now()),
+            latest_upload: Some(Utc::now()),
+            timeline: vec![
+                TimelineEntry {
+                    date: chrono::NaiveDate::from_ymd_opt(2026, 1, 15).unwrap(),
+                    count: 10,
+                    size: 524288,
+                },
+                TimelineEntry {
+                    date: chrono::NaiveDate::from_ymd_opt(2026, 1, 16).unwrap(),
+                    count: 32,
+                    size: 524288,
+                },
+            ],
+        };
+        let json = serde_json::to_value(&summary).unwrap();
+        assert_eq!(json["total_files"], 42);
+        assert_eq!(json["total_size"], 1048576);
+        assert!(!json["earliest_upload"].is_null());
+        assert!(!json["latest_upload"].is_null());
+        let timeline = json["timeline"].as_array().unwrap();
+        assert_eq!(timeline.len(), 2);
+        assert_eq!(timeline[0]["count"], 10);
+        assert_eq!(timeline[0]["size"], 524288);
+        assert_eq!(timeline[0]["date"], "2026-01-15");
+        assert_eq!(timeline[1]["count"], 32);
+        assert_eq!(timeline[1]["date"], "2026-01-16");
+    }
+
+    #[test]
+    fn test_search_summary_empty_results() {
+        let summary = SearchSummary {
+            total_files: 0,
+            total_size: 0,
+            earliest_upload: None,
+            latest_upload: None,
+            timeline: vec![],
+        };
+        let json = serde_json::to_value(&summary).unwrap();
+        assert_eq!(json["total_files"], 0);
+        assert_eq!(json["total_size"], 0);
+        assert!(json["earliest_upload"].is_null());
+        assert!(json["latest_upload"].is_null());
+        assert_eq!(json["timeline"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_timeline_entry_serialization() {
+        let entry = TimelineEntry {
+            date: chrono::NaiveDate::from_ymd_opt(2026, 3, 14).unwrap(),
+            count: 5,
+            size: 2048,
+        };
+        let json = serde_json::to_value(&entry).unwrap();
+        assert_eq!(json["date"], "2026-03-14");
+        assert_eq!(json["count"], 5);
+        assert_eq!(json["size"], 2048);
     }
 
     #[test]
