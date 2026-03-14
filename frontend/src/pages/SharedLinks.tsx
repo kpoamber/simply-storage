@@ -75,8 +75,22 @@ export default function SharedLinks() {
       file_id: selectedFileId,
     };
     if (password) req.password = password;
-    if (expiresHours) req.expires_in_seconds = Math.round(parseFloat(expiresHours) * 3600);
-    if (maxDownloads) req.max_downloads = parseInt(maxDownloads, 10);
+    if (expiresHours) {
+      const parsed = parseFloat(expiresHours);
+      if (isNaN(parsed) || parsed <= 0) {
+        setError('Expiration hours must be a positive number');
+        return;
+      }
+      req.expires_in_seconds = Math.round(parsed * 3600);
+    }
+    if (maxDownloads) {
+      const parsed = parseInt(maxDownloads, 10);
+      if (isNaN(parsed) || parsed <= 0) {
+        setError('Max downloads must be a positive number');
+        return;
+      }
+      req.max_downloads = parsed;
+    }
     createMutation.mutate(req);
   }
 
@@ -148,7 +162,7 @@ export default function SharedLinks() {
                   value={expiresHours}
                   onChange={e => setExpiresHours(e.target.value)}
                   placeholder="No expiration"
-                  min="0"
+                  min="0.01"
                   className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
                   data-testid="expires-input"
                 />

@@ -82,8 +82,8 @@ impl SharedLinkService {
             pool,
             registry,
             hmac_secret,
-            encoding_key: EncodingKey::from_secret(jwt_secret.as_bytes()),
-            decoding_key: DecodingKey::from_secret(jwt_secret.as_bytes()),
+            encoding_key: EncodingKey::from_secret(format!("dl-token:{}", jwt_secret).as_bytes()),
+            decoding_key: DecodingKey::from_secret(format!("dl-token:{}", jwt_secret).as_bytes()),
         }
     }
 
@@ -192,10 +192,9 @@ impl SharedLinkService {
         let file = File::find_by_id(&self.pool, link.file_id).await?;
         let locations = FileLocation::find_for_file(&self.pool, link.file_id).await?;
         if locations.is_empty() {
-            return Err(AppError::NotFound(format!(
-                "No available storage locations for file {}",
-                link.file_id
-            )));
+            return Err(AppError::NotFound(
+                "File not available for download".to_string(),
+            ));
         }
 
         let refs = FileReference::find_by_file_id(&self.pool, link.file_id).await?;
