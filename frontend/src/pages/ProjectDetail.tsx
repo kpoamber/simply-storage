@@ -70,6 +70,13 @@ export default function ProjectDetail() {
         >
           <Search className="h-4 w-4" /> Search Files
         </Link>
+        <Link
+          to={`/projects/${id}/shared-links`}
+          className="flex items-center gap-1 rounded bg-blue-50 px-3 py-1.5 text-sm text-blue-700 hover:bg-blue-100"
+          data-testid="shared-links-link"
+        >
+          <Link2 className="h-4 w-4" /> Shared Links
+        </Link>
         {canWrite && (
           <Link
             to={`/projects/${id}/bulk-delete`}

@@ -30,9 +30,11 @@ docker-compose up --build --scale app=3  # Scale app instances
 - `src/api/` - HTTP route handlers, each module registers routes via `web::scope`
 - `src/api/auth.rs` - AuthenticatedUser extractor (JWT auth middleware via FromRequest)
 - `src/api/auth_routes.rs` - Auth API endpoints (login, refresh, me, logout, admin user CRUD, user detail with assignments)
-- `src/db/models.rs` - Database models with sqlx FromRow, all CRUD functions; includes MetadataFilter DSL compiler, search_by_metadata/search_summary queries, bulk delete queries
-- `src/services/` - Business logic layer (FileService, BulkService, TierService, AuthService)
+- `src/api/shared_links.rs` - Shared link management API + public proxy endpoints for file access via token
+- `src/db/models.rs` - Database models with sqlx FromRow, all CRUD functions; includes MetadataFilter DSL compiler, search_by_metadata/search_summary queries, bulk delete queries, SharedLink model and CRUD
+- `src/services/` - Business logic layer (FileService, BulkService, TierService, AuthService, SharedLinkService)
 - `src/services/auth_service.rs` - AuthService (JWT token generation/validation, argon2 password hashing)
+- `src/services/shared_link_service.rs` - SharedLinkService (proxy-based file sharing with optional password protection, expiration, download limits, view stats)
 - `src/storage/` - StorageBackend trait implementations, one file per backend type
 - `src/storage/registry.rs` - Factory that instantiates backends from storage_type + JSON config
 - `src/workers/` - Background tokio tasks (SyncWorker, TierWorker, heartbeat)
@@ -47,6 +49,8 @@ docker-compose up --build --scale app=3  # Scale app instances
 - `frontend/src/pages/UserDetail.tsx` - User detail with role/password editing and project/storage assignment management
 - `frontend/src/pages/ProjectSearch.tsx` - Search page with metadata query builder (AND/OR/NOT filters), results table, and recharts summary charts
 - `frontend/src/pages/ProjectBulkDelete.tsx` - Bulk deletion UI with filter form, preview, confirmation dialog, and result display
+- `frontend/src/pages/SharedLinks.tsx` - Project shared links management (create, list, copy URL, deactivate/delete)
+- `frontend/src/pages/SharedLinkAccess.tsx` - Public page for accessing shared links (file info, password form, download)
 - `migrations/` - SQL migrations (run automatically on startup)
 
 ## Code Patterns
@@ -64,10 +68,11 @@ docker-compose up --build --scale app=3  # Scale app instances
 - Authentication: JWT access tokens (Bearer header) + refresh tokens, argon2 password hashing
 - Authorization: `AuthenticatedUser` extractor from request, role-based (admin/user) with owner and membership checks
 - User-resource assignments: many-to-many via `user_projects` (with role: member/writer) and `user_storages` junction tables; members get read access, writers/owners/admins get write access
+- Shared links: proxy-based file sharing via unique tokens. Public endpoints at `/s/{token}` (info, verify password, download). Password-protected links use argon2 hashing and short-lived download tokens (JWT, 5-min TTL). Downloads are proxied through the server - clients never receive direct storage URLs. Supports optional expiration, max download limits, and view statistics
 
 ## Database
 
-- Tables: projects, storages, files, file_references, file_locations, sync_tasks, nodes, users, refresh_tokens, user_projects, user_storages
+- Tables: projects, storages, files, file_references, file_locations, sync_tasks, nodes, users, refresh_tokens, user_projects, user_storages, shared_links
 - file_references.metadata: JSONB column (default `{}`) with GIN index (jsonb_path_ops) for fast key/value search
 - Citus distribution: files and file_locations by file_id, file_references by project_id
 - UUIDs as primary keys (uuid v4)

@@ -13,6 +13,8 @@ import Users from './pages/Users';
 import UserDetail from './pages/UserDetail';
 import ProjectSearch from './pages/ProjectSearch';
 import ProjectBulkDelete from './pages/ProjectBulkDelete';
+import SharedLinks from './pages/SharedLinks';
+import SharedLinkAccess from './pages/SharedLinkAccess';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -46,6 +48,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/share/:token" element={<SharedLinkAccess />} />
       <Route
         path="/"
         element={
@@ -59,6 +62,7 @@ function AppRoutes() {
         <Route path="projects/:id" element={<ProjectDetail />} />
         <Route path="projects/:id/search" element={<ProjectSearch />} />
         <Route path="projects/:id/bulk-delete" element={<ProjectBulkDelete />} />
+        <Route path="projects/:id/shared-links" element={<SharedLinks />} />
         <Route path="storages" element={<Storages />} />
         <Route path="storages/:id" element={<StorageDetail />} />
         <Route path="sync-tasks" element={<SyncTasks />} />

@@ -3,7 +3,7 @@ use chrono::{Duration, Utc};
 use serde::Deserialize;
 use sqlx::PgPool;
 
-use crate::api::auth::AuthenticatedUser;
+use crate::api::auth::{AdminUser, AuthenticatedUser};
 use crate::db::models::{is_unique_violation, CreateRefreshToken, CreateUser, Project, RefreshToken, User, UserProject, UserStorage};
 use crate::error::AppError;
 use crate::services::auth_service::AuthService;
@@ -44,13 +44,11 @@ pub struct UpdateUserRequest {
 
 /// Admin-only: create a new user
 async fn create_user(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     auth_service: web::Data<AuthService>,
-    auth_user: AuthenticatedUser,
     body: web::Json<CreateUserRequest>,
 ) -> Result<HttpResponse, AppError> {
-    auth_user.require_admin()?;
-
     if body.username.is_empty() || body.password.is_empty() {
         return Err(AppError::BadRequest(
             "Username and password are required".to_string(),
@@ -115,24 +113,22 @@ async fn create_user(
 
 /// Admin-only: list all users
 async fn list_users(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
-    auth_user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    auth_user.require_admin()?;
     let users = User::list(pool.get_ref()).await?;
     Ok(HttpResponse::Ok().json(users))
 }
 
 /// Admin-only: delete a user
 async fn delete_user(
+    admin: AdminUser,
     pool: web::Data<PgPool>,
-    auth_user: AuthenticatedUser,
     path: web::Path<uuid::Uuid>,
 ) -> Result<HttpResponse, AppError> {
-    auth_user.require_admin()?;
     let user_id = path.into_inner();
 
-    if user_id == auth_user.user_id {
+    if user_id == admin.user_id {
         return Err(AppError::BadRequest(
             "Cannot delete your own account".to_string(),
         ));
@@ -250,8 +246,8 @@ async fn refresh(
 }
 
 async fn me(
-    pool: web::Data<PgPool>,
     auth_user: AuthenticatedUser,
+    pool: web::Data<PgPool>,
 ) -> Result<HttpResponse, AppError> {
     let user = User::find_by_id(pool.get_ref(), auth_user.user_id).await?;
     Ok(HttpResponse::Ok().json(user))
@@ -268,11 +264,10 @@ async fn logout(
 
 /// Admin-only: get user detail with assigned projects and storages
 async fn get_user(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
-    auth_user: AuthenticatedUser,
     path: web::Path<uuid::Uuid>,
 ) -> Result<HttpResponse, AppError> {
-    auth_user.require_admin()?;
     let user_id = path.into_inner();
 
     let user = User::find_by_id(pool.get_ref(), user_id).await?;
@@ -292,13 +287,12 @@ async fn get_user(
 
 /// Admin-only: update user role and/or password
 async fn update_user(
+    admin: AdminUser,
     pool: web::Data<PgPool>,
     auth_service: web::Data<AuthService>,
-    auth_user: AuthenticatedUser,
     path: web::Path<uuid::Uuid>,
     body: web::Json<UpdateUserRequest>,
 ) -> Result<HttpResponse, AppError> {
-    auth_user.require_admin()?;
     let user_id = path.into_inner();
 
     if body.role.is_none() && body.password.is_none() {
@@ -321,7 +315,7 @@ async fn update_user(
         }
 
         // Prevent admin from demoting themselves
-        if user_id == auth_user.user_id && role != "admin" {
+        if user_id == admin.user_id && role != "admin" {
             return Err(AppError::BadRequest(
                 "Cannot demote your own admin account".to_string(),
             ));

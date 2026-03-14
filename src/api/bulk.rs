@@ -2,7 +2,7 @@ use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::auth::AuthenticatedUser;
+use super::auth::AdminUser;
 use crate::error::AppError;
 use crate::services::BulkService;
 
@@ -24,11 +24,10 @@ pub struct ExportStatusQuery {
 /// POST /api/storages/{id}/sync-all
 /// Enumerate all files not yet on this storage, create sync_tasks for each.
 async fn sync_all(
+    _admin: AdminUser,
     bulk_service: web::Data<BulkService>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
     let storage_id = path.into_inner();
     let result = bulk_service.sync_all(storage_id).await?;
     Ok(HttpResponse::Ok().json(result))
@@ -37,11 +36,10 @@ async fn sync_all(
 /// POST /api/storages/{id}/export
 /// Start background job to produce tar.gz archive of all files on the storage.
 async fn start_export(
+    _admin: AdminUser,
     bulk_service: web::Data<BulkService>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
     let storage_id = path.into_inner();
     let job_id = bulk_service.start_export(storage_id).await?;
     Ok(HttpResponse::Accepted().json(ExportStarted {
@@ -53,11 +51,10 @@ async fn start_export(
 /// GET /api/storages/{id}/export/status
 /// Poll export job progress (percentage, file count).
 async fn export_status(
+    _admin: AdminUser,
     bulk_service: web::Data<BulkService>,
     query: web::Query<ExportStatusQuery>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
     let status = bulk_service.get_export_status(query.job_id).await?;
     Ok(HttpResponse::Ok().json(status))
 }
@@ -65,11 +62,10 @@ async fn export_status(
 /// GET /api/storages/{id}/export/download
 /// Stream completed archive.
 async fn export_download(
+    _admin: AdminUser,
     bulk_service: web::Data<BulkService>,
     query: web::Query<ExportStatusQuery>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
     let data = bulk_service.get_export_data(query.job_id).await?;
     Ok(HttpResponse::Ok()
         .content_type("application/gzip")

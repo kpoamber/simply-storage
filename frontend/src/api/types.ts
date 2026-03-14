@@ -233,6 +233,38 @@ export interface BulkDeleteResult {
   freed_bytes: number;
 }
 
+// Shared links
+export interface SharedLink {
+  id: string;
+  token: string;
+  file_id: string;
+  project_id: string;
+  original_name: string;
+  created_by: string;
+  password_protected: boolean;
+  expires_at: string | null;
+  max_downloads: number | null;
+  download_count: number;
+  last_accessed_at: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface SharedLinkInfo {
+  file_name: string;
+  file_size: number;
+  content_type: string;
+  password_required: boolean;
+  expires_at: string | null;
+}
+
+export interface CreateSharedLinkRequest {
+  file_id: string;
+  password?: string;
+  expires_in_seconds?: number;
+  max_downloads?: number;
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes <= 0) return '0 B';
   const k = 1024;

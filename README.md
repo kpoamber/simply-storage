@@ -41,6 +41,7 @@ Multiple stateless app instances run behind nginx and share state through distri
 - **File metadata** - Attach custom JSON key/value metadata on upload, returned with all file listing/detail endpoints
 - **Metadata search** - Search files within a project using recursive AND/OR/NOT filter DSL on metadata key/value pairs, with summary statistics and timeline charts
 - **Bulk deletion** - Delete files matching metadata filters, date ranges, and size ranges with preview mode and automatic orphan cleanup
+- **Proxy-based shared links** - Share files via unique token URLs with optional password protection, expiration, and download limits. Downloads are proxied through the server (clients never see storage URLs). Tracks view/download statistics
 - **Admin dashboard** - React frontend for managing projects, storages, files, and monitoring sync tasks
 - **Bulk operations** - Sync-all to a storage, export storage as tar.gz archive
 
@@ -171,7 +172,7 @@ RUST_LOG=info  # Log level: trace, debug, info, warn, error
 
 ## API Endpoints
 
-All API endpoints require authentication via a JWT access token passed in the `Authorization: Bearer <token>` header, except `/health`, `/api/auth/login`, and `/api/auth/refresh`. Storage, bulk, system management, and user management endpoints require `admin` role. Project and file endpoints enforce owner/member/admin access.
+All API endpoints require authentication via a JWT access token passed in the `Authorization: Bearer <token>` header, except `/health`, `/api/auth/login`, `/api/auth/refresh`, and `/s/{token}/*` (public shared link access). Storage, bulk, system management, and user management endpoints require `admin` role. Project and file endpoints enforce owner/member/admin access.
 
 ### Authentication
 
@@ -215,6 +216,23 @@ All API endpoints require authentication via a JWT access token passed in the `A
 | POST | `/api/projects/{project_id}/files/search/summary` | Get summary stats and timeline for search results |
 | POST | `/api/projects/{project_id}/files/bulk-delete/preview` | Preview count/size of files matching bulk delete filters |
 | POST | `/api/projects/{project_id}/files/bulk-delete` | Delete file references matching filters with orphan cleanup |
+
+### Shared Links (Authenticated Management)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/projects/{project_id}/shared-links` | Create shared link (optional password, expiration, max downloads) |
+| GET | `/api/projects/{project_id}/shared-links` | List shared links for project with stats |
+| GET | `/api/shared-links/{id}` | Get shared link details |
+| DELETE | `/api/shared-links/{id}` | Deactivate shared link |
+
+### Shared Links (Public Proxy - No Auth)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/s/{token}` | Get shared link info (file name, size, type, password required) |
+| POST | `/s/{token}/verify` | Verify password for protected link, returns short-lived download token |
+| GET | `/s/{token}/download` | Download file via proxy (dl_token query param required for protected links) |
 
 ### Storages
 
@@ -305,12 +323,14 @@ See [deploy/README-deploy.md](deploy/README-deploy.md) for the full deployment g
 
 ```
 src/
-├── api/            # HTTP route handlers (auth, files, projects, storages, bulk)
+├── api/            # HTTP route handlers (auth, files, projects, storages, bulk, shared_links)
 │   ├── auth.rs     # JWT auth middleware (AuthenticatedUser extractor)
-│   └── auth_routes.rs  # Auth endpoints (register, login, refresh, logout)
+│   ├── auth_routes.rs  # Auth endpoints (register, login, refresh, logout)
+│   └── shared_links.rs  # Shared link management + public proxy endpoints
 ├── db/             # Database models and CRUD operations
-├── services/       # Business logic (file_service, bulk_service, tier_service, auth_service)
-│   └── auth_service.rs  # JWT/password hashing service
+├── services/       # Business logic (file_service, bulk_service, tier_service, auth_service, shared_link_service)
+│   ├── auth_service.rs  # JWT/password hashing service
+│   └── shared_link_service.rs  # Proxy-based file sharing service
 ├── storage/        # Storage backend implementations (s3, azure, gcs, ftp, sftp, samba, hetzner, local)
 ├── workers/        # Background workers (sync_worker, tier_worker)
 ├── config.rs       # Configuration loading (TOML + env vars)
@@ -323,7 +343,7 @@ frontend/
 │   ├── api/        # API client (axios) and TypeScript types
 │   ├── components/ # Reusable components (Layout, Sidebar, StorageForm)
 │   ├── contexts/   # React contexts (AuthContext)
-│   └── pages/      # Page components (Dashboard, Projects, ProjectDetail, ProjectSearch, ProjectBulkDelete, Storages, StorageDetail, Users, UserDetail, Nodes, SyncTasks, Login)
+│   └── pages/      # Page components (Dashboard, Projects, ProjectDetail, ProjectSearch, ProjectBulkDelete, SharedLinks, SharedLinkAccess, Storages, StorageDetail, Users, UserDetail, Nodes, SyncTasks, Login)
 ├── package.json
 ├── vite.config.ts
 └── tailwind.config.js

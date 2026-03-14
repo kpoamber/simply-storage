@@ -1,7 +1,7 @@
 use actix_web::{App, HttpServer, web};
 use innovare_storage::config::AppConfig;
 use innovare_storage::db::models::{CreateUser, Node, RefreshToken, User};
-use innovare_storage::services::{AuthService, BulkService, FileService, TierService};
+use innovare_storage::services::{AuthService, BulkService, FileService, SharedLinkService, TierService};
 use innovare_storage::storage::StorageRegistry;
 use innovare_storage::workers::{SyncWorker, TierWorker};
 use sqlx::PgPool;
@@ -92,6 +92,12 @@ async fn main() -> std::io::Result<()> {
     );
     let tier_service = TierService::new(pool.clone(), registry.clone());
     let bulk_service = BulkService::new(pool.clone(), registry.clone());
+    let shared_link_service = SharedLinkService::new(
+        pool.clone(),
+        registry.clone(),
+        &config.auth.jwt_secret,
+        config.storage.hmac_secret.clone(),
+    );
 
     // Set up cancellation token for graceful shutdown of background workers
     let cancel_token = CancellationToken::new();
@@ -141,6 +147,7 @@ async fn main() -> std::io::Result<()> {
     let file_service_data = web::Data::new(file_service);
     let tier_service_data = web::Data::new(tier_service);
     let bulk_service_data = web::Data::new(bulk_service);
+    let shared_link_service_data = web::Data::new(shared_link_service);
 
     let server = HttpServer::new(move || {
         App::new()
@@ -151,6 +158,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(file_service_data.clone())
             .app_data(tier_service_data.clone())
             .app_data(bulk_service_data.clone())
+            .app_data(shared_link_service_data.clone())
             .configure(innovare_storage::configure_app)
     })
     .bind(&bind_addr)?

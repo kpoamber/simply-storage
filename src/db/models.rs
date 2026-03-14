@@ -510,6 +510,21 @@ impl FileReference {
         Ok(rows)
     }
 
+    pub async fn find_by_file_and_project(
+        pool: &PgPool,
+        file_id: Uuid,
+        project_id: Uuid,
+    ) -> AppResult<Vec<FileReference>> {
+        let rows = sqlx::query_as::<_, FileReference>(
+            "SELECT * FROM file_references WHERE file_id = $1 AND project_id = $2",
+        )
+        .bind(file_id)
+        .bind(project_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn delete_by_file_and_project(
         pool: &PgPool,
         file_id: Uuid,
@@ -2092,6 +2107,161 @@ impl UserStorage {
     }
 }
 
+// ─── SharedLink ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SharedLink {
+    pub id: Uuid,
+    pub token: String,
+    pub file_id: Uuid,
+    pub project_id: Uuid,
+    pub original_name: String,
+    pub created_by: Uuid,
+    #[serde(skip_serializing)]
+    pub password_hash: Option<String>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub max_downloads: Option<i32>,
+    pub download_count: i64,
+    pub last_accessed_at: Option<DateTime<Utc>>,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+impl SharedLink {
+    /// Returns whether this link is password-protected (for API serialization).
+    pub fn password_protected(&self) -> bool {
+        self.password_hash.is_some()
+    }
+}
+
+#[derive(Debug)]
+pub struct CreateSharedLink {
+    pub file_id: Uuid,
+    pub project_id: Uuid,
+    pub original_name: String,
+    pub created_by: Uuid,
+    pub password: Option<String>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub max_downloads: Option<i32>,
+}
+
+impl SharedLink {
+    /// Generate a 22-character URL-safe random token using base64url encoding.
+    pub fn generate_token() -> String {
+        use rand::Rng;
+        let random_bytes: [u8; 16] = rand::thread_rng().gen();
+        use base64::Engine;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random_bytes)
+    }
+
+    pub async fn create(pool: &PgPool, input: &CreateSharedLink) -> AppResult<SharedLink> {
+        let token = Self::generate_token();
+        let password_hash = match &input.password {
+            Some(pw) => {
+                use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
+                use argon2::Argon2;
+                let salt = SaltString::generate(&mut OsRng);
+                let hash = Argon2::default()
+                    .hash_password(pw.as_bytes(), &salt)
+                    .map_err(|e| AppError::Internal(format!("Password hashing failed: {}", e)))?;
+                Some(hash.to_string())
+            }
+            None => None,
+        };
+
+        let row = sqlx::query_as::<_, SharedLink>(
+            r#"INSERT INTO shared_links (token, file_id, project_id, original_name, created_by, password_hash, expires_at, max_downloads)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               RETURNING *"#,
+        )
+        .bind(&token)
+        .bind(input.file_id)
+        .bind(input.project_id)
+        .bind(&input.original_name)
+        .bind(input.created_by)
+        .bind(&password_hash)
+        .bind(input.expires_at)
+        .bind(input.max_downloads)
+        .fetch_one(pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    pub async fn find_by_token(pool: &PgPool, token: &str) -> AppResult<SharedLink> {
+        sqlx::query_as::<_, SharedLink>("SELECT * FROM shared_links WHERE token = $1")
+            .bind(token)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Shared link not found".to_string()))
+    }
+
+    pub async fn find_by_id(pool: &PgPool, id: Uuid) -> AppResult<SharedLink> {
+        sqlx::query_as::<_, SharedLink>("SELECT * FROM shared_links WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Shared link {} not found", id)))
+    }
+
+    pub async fn list_by_project(pool: &PgPool, project_id: Uuid) -> AppResult<Vec<SharedLink>> {
+        let rows = sqlx::query_as::<_, SharedLink>(
+            "SELECT * FROM shared_links WHERE project_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(project_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Atomically increment download count, respecting max_downloads limit.
+    /// Returns true if the increment succeeded (limit not reached), false if limit was reached.
+    pub async fn increment_download_count(pool: &PgPool, id: Uuid) -> AppResult<bool> {
+        let result = sqlx::query(
+            r#"UPDATE shared_links
+               SET download_count = download_count + 1, last_accessed_at = NOW()
+               WHERE id = $1 AND (max_downloads IS NULL OR download_count < max_downloads)"#,
+        )
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn deactivate(pool: &PgPool, id: Uuid) -> AppResult<SharedLink> {
+        sqlx::query_as::<_, SharedLink>(
+            "UPDATE shared_links SET is_active = FALSE WHERE id = $1 RETURNING *",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Shared link {} not found", id)))
+    }
+
+    pub async fn delete(pool: &PgPool, id: Uuid) -> AppResult<()> {
+        let result = sqlx::query("DELETE FROM shared_links WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!("Shared link {} not found", id)));
+        }
+        Ok(())
+    }
+
+    /// Verify a password against the stored hash.
+    pub fn verify_password(password: &str, hash: &str) -> bool {
+        use argon2::{Argon2, PasswordHash, PasswordVerifier};
+        let parsed_hash = match PasswordHash::new(hash) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+        Argon2::default()
+            .verify_password(password.as_bytes(), &parsed_hash)
+            .is_ok()
+    }
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 pub fn is_unique_violation(e: &sqlx::Error) -> bool {
@@ -3223,6 +3393,7 @@ mod tests {
             "id": Uuid::new_v4(),
             "user_id": user_id,
             "project_id": project_id,
+            "role": "member",
             "created_at": "2026-01-01T00:00:00Z"
         });
         let up: UserProject = serde_json::from_value(json).unwrap();
@@ -3550,5 +3721,320 @@ mod tests {
         assert!(idx_names.iter().any(|n| n.contains("file_id")), "file_id index should exist");
         assert!(idx_names.iter().any(|n| n.contains("project_id")), "project_id index should exist");
         assert!(idx_names.iter().any(|n| n.contains("created_by")), "created_by index should exist");
+    }
+
+    // ─── SharedLink tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_shared_link_generate_token() {
+        let token1 = SharedLink::generate_token();
+        let token2 = SharedLink::generate_token();
+
+        // base64url of 16 bytes = 22 characters (no padding)
+        assert_eq!(token1.len(), 22);
+        assert_eq!(token2.len(), 22);
+        // Should be different each time
+        assert_ne!(token1, token2);
+        // Should be URL-safe (no +, /, or =)
+        assert!(!token1.contains('+'));
+        assert!(!token1.contains('/'));
+        assert!(!token1.contains('='));
+    }
+
+    #[test]
+    fn test_shared_link_serialization() {
+        let now = Utc::now();
+        let link = SharedLink {
+            id: Uuid::new_v4(),
+            token: "test-token-abc123456789".to_string(),
+            file_id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            original_name: "report.pdf".to_string(),
+            created_by: Uuid::new_v4(),
+            password_hash: Some("secret_hash".to_string()),
+            expires_at: Some(now),
+            max_downloads: Some(100),
+            download_count: 42,
+            last_accessed_at: Some(now),
+            is_active: true,
+            created_at: now,
+        };
+
+        let json = serde_json::to_value(&link).unwrap();
+        assert_eq!(json["original_name"], "report.pdf");
+        assert_eq!(json["download_count"], 42);
+        assert_eq!(json["max_downloads"], 100);
+        assert!(json["is_active"].as_bool().unwrap());
+        // password_hash should be skipped during serialization
+        assert!(json.get("password_hash").is_none());
+    }
+
+    #[test]
+    fn test_shared_link_serialization_public_link() {
+        let now = Utc::now();
+        let link = SharedLink {
+            id: Uuid::new_v4(),
+            token: "public-token-12345678".to_string(),
+            file_id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            original_name: "photo.jpg".to_string(),
+            created_by: Uuid::new_v4(),
+            password_hash: None,
+            expires_at: None,
+            max_downloads: None,
+            download_count: 0,
+            last_accessed_at: None,
+            is_active: true,
+            created_at: now,
+        };
+
+        let json = serde_json::to_value(&link).unwrap();
+        assert_eq!(json["original_name"], "photo.jpg");
+        assert_eq!(json["download_count"], 0);
+        assert!(json["expires_at"].is_null());
+        assert!(json["max_downloads"].is_null());
+        assert!(json["last_accessed_at"].is_null());
+    }
+
+    #[test]
+    fn test_shared_link_deserialization() {
+        let file_id = Uuid::new_v4();
+        let project_id = Uuid::new_v4();
+        let json = serde_json::json!({
+            "id": Uuid::new_v4(),
+            "token": "some-token-1234567890",
+            "file_id": file_id,
+            "project_id": project_id,
+            "original_name": "data.csv",
+            "created_by": Uuid::new_v4(),
+            "password_hash": null,
+            "expires_at": null,
+            "max_downloads": null,
+            "download_count": 5,
+            "last_accessed_at": null,
+            "is_active": true,
+            "created_at": "2026-01-01T00:00:00Z"
+        });
+        let link: SharedLink = serde_json::from_value(json).unwrap();
+        assert_eq!(link.file_id, file_id);
+        assert_eq!(link.project_id, project_id);
+        assert_eq!(link.original_name, "data.csv");
+        assert_eq!(link.download_count, 5);
+        assert!(link.password_hash.is_none());
+    }
+
+    #[test]
+    fn test_create_shared_link_struct() {
+        let file_id = Uuid::new_v4();
+        let project_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let expires = Utc::now();
+
+        let input = CreateSharedLink {
+            file_id,
+            project_id,
+            original_name: "test.txt".to_string(),
+            created_by: user_id,
+            password: Some("secret123".to_string()),
+            expires_at: Some(expires),
+            max_downloads: Some(10),
+        };
+
+        assert_eq!(input.file_id, file_id);
+        assert_eq!(input.project_id, project_id);
+        assert_eq!(input.original_name, "test.txt");
+        assert_eq!(input.created_by, user_id);
+        assert_eq!(input.password, Some("secret123".to_string()));
+        assert_eq!(input.max_downloads, Some(10));
+    }
+
+    #[test]
+    fn test_create_shared_link_struct_public() {
+        let input = CreateSharedLink {
+            file_id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            original_name: "public.txt".to_string(),
+            created_by: Uuid::new_v4(),
+            password: None,
+            expires_at: None,
+            max_downloads: None,
+        };
+
+        assert!(input.password.is_none());
+        assert!(input.expires_at.is_none());
+        assert!(input.max_downloads.is_none());
+    }
+
+    #[test]
+    fn test_shared_link_verify_password() {
+        use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
+        use argon2::Argon2;
+
+        let password = "my-secret-password";
+        let salt = SaltString::generate(&mut OsRng);
+        let hash = Argon2::default()
+            .hash_password(password.as_bytes(), &salt)
+            .unwrap()
+            .to_string();
+
+        assert!(SharedLink::verify_password(password, &hash));
+        assert!(!SharedLink::verify_password("wrong-password", &hash));
+    }
+
+    #[test]
+    fn test_shared_link_verify_password_invalid_hash() {
+        assert!(!SharedLink::verify_password("password", "not-a-valid-hash"));
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_shared_link_crud() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        // Create prerequisites: user, project, file
+        let user = User::create(
+            &pool,
+            &CreateUser {
+                username: format!("sl-test-{}", Uuid::new_v4()),
+                password_hash: "hash".to_string(),
+                role: "user".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let project = Project::create(
+            &pool,
+            &CreateProject {
+                name: "SL Test Project".to_string(),
+                slug: format!("sl-test-{}", Uuid::new_v4()),
+                hot_to_cold_days: None,
+            },
+            Some(user.id),
+        )
+        .await
+        .unwrap();
+
+        let file_input = CreateFile {
+            hash_sha256: format!("{:064x}", Uuid::new_v4().as_u128()),
+            size: 1024,
+            content_type: "application/pdf".to_string(),
+        };
+        let (file, _) = File::create_or_find(&pool, &file_input).await.unwrap();
+
+        // Create a public shared link
+        let input = CreateSharedLink {
+            file_id: file.id,
+            project_id: project.id,
+            original_name: "test-report.pdf".to_string(),
+            created_by: user.id,
+            password: None,
+            expires_at: None,
+            max_downloads: None,
+        };
+        let link = SharedLink::create(&pool, &input).await.unwrap();
+        assert_eq!(link.original_name, "test-report.pdf");
+        assert_eq!(link.file_id, file.id);
+        assert_eq!(link.project_id, project.id);
+        assert_eq!(link.created_by, user.id);
+        assert!(link.password_hash.is_none());
+        assert!(link.is_active);
+        assert_eq!(link.download_count, 0);
+        assert_eq!(link.token.len(), 22);
+
+        // Find by token
+        let found = SharedLink::find_by_token(&pool, &link.token).await.unwrap();
+        assert_eq!(found.id, link.id);
+
+        // Find by id
+        let found2 = SharedLink::find_by_id(&pool, link.id).await.unwrap();
+        assert_eq!(found2.token, link.token);
+
+        // List by project
+        let by_project = SharedLink::list_by_project(&pool, project.id).await.unwrap();
+        assert!(by_project.iter().any(|l| l.id == link.id));
+
+        // Increment download count (no max_downloads set, should always succeed)
+        let ok = SharedLink::increment_download_count(&pool, link.id).await.unwrap();
+        assert!(ok);
+        let updated = SharedLink::find_by_id(&pool, link.id).await.unwrap();
+        assert_eq!(updated.download_count, 1);
+        assert!(updated.last_accessed_at.is_some());
+
+        // Increment again
+        let ok = SharedLink::increment_download_count(&pool, link.id).await.unwrap();
+        assert!(ok);
+        let updated2 = SharedLink::find_by_id(&pool, link.id).await.unwrap();
+        assert_eq!(updated2.download_count, 2);
+
+        // Deactivate
+        let deactivated = SharedLink::deactivate(&pool, link.id).await.unwrap();
+        assert!(!deactivated.is_active);
+
+        // Delete
+        SharedLink::delete(&pool, link.id).await.unwrap();
+        let result = SharedLink::find_by_id(&pool, link.id).await;
+        assert!(result.is_err());
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_shared_link_with_password() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        let user = User::create(
+            &pool,
+            &CreateUser {
+                username: format!("sl-pw-test-{}", Uuid::new_v4()),
+                password_hash: "hash".to_string(),
+                role: "user".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let project = Project::create(
+            &pool,
+            &CreateProject {
+                name: "SL PW Test".to_string(),
+                slug: format!("sl-pw-test-{}", Uuid::new_v4()),
+                hot_to_cold_days: None,
+            },
+            Some(user.id),
+        )
+        .await
+        .unwrap();
+
+        let file_input = CreateFile {
+            hash_sha256: format!("{:064x}", Uuid::new_v4().as_u128()),
+            size: 2048,
+            content_type: "text/plain".to_string(),
+        };
+        let (file, _) = File::create_or_find(&pool, &file_input).await.unwrap();
+
+        // Create a password-protected link
+        let input = CreateSharedLink {
+            file_id: file.id,
+            project_id: project.id,
+            original_name: "secret-doc.txt".to_string(),
+            created_by: user.id,
+            password: Some("my-secret-pw".to_string()),
+            expires_at: None,
+            max_downloads: Some(5),
+        };
+        let link = SharedLink::create(&pool, &input).await.unwrap();
+        assert!(link.password_hash.is_some());
+        assert_eq!(link.max_downloads, Some(5));
+
+        // Verify password
+        assert!(SharedLink::verify_password("my-secret-pw", link.password_hash.as_ref().unwrap()));
+        assert!(!SharedLink::verify_password("wrong-pw", link.password_hash.as_ref().unwrap()));
+
+        // Cleanup
+        SharedLink::delete(&pool, link.id).await.unwrap();
     }
 }

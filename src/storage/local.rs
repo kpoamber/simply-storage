@@ -263,13 +263,13 @@ mod tests {
     async fn test_delete_nonexistent_is_ok() {
         let (_dir, backend) = setup();
         // Deleting a file that doesn't exist should not error
-        backend.delete("nonexistent").await.unwrap();
+        backend.delete("deadbeef00000000000000000000000000000000000000000000000000000000").await.unwrap();
     }
 
     #[tokio::test]
     async fn test_download_nonexistent_returns_not_found() {
         let (_dir, backend) = setup();
-        let result = backend.download("nonexistent").await;
+        let result = backend.download("deadbeef00000000000000000000000000000000000000000000000000000000").await;
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::NotFound(_) => {}

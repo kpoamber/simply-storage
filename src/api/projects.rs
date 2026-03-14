@@ -8,11 +8,11 @@ use crate::db::models::{
 };
 use crate::error::AppError;
 
-use super::auth::AuthenticatedUser;
+use super::auth::{AdminUser, AuthenticatedUser};
 
 async fn create_project(
-    pool: web::Data<PgPool>,
     user: AuthenticatedUser,
+    pool: web::Data<PgPool>,
     body: web::Json<CreateProject>,
 ) -> Result<HttpResponse, AppError> {
     let project = Project::create(pool.get_ref(), &body, Some(user.user_id)).await?;
@@ -20,8 +20,8 @@ async fn create_project(
 }
 
 async fn list_projects(
-    pool: web::Data<PgPool>,
     user: AuthenticatedUser,
+    pool: web::Data<PgPool>,
 ) -> Result<HttpResponse, AppError> {
     let projects = if user.is_admin() {
         Project::list(pool.get_ref()).await?
@@ -32,9 +32,9 @@ async fn list_projects(
 }
 
 async fn get_project(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
     let project = Project::find_by_id(pool.get_ref(), project_id).await?;
@@ -74,9 +74,9 @@ async fn get_project(
 }
 
 async fn update_project(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     body: web::Json<UpdateProject>,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
@@ -88,9 +88,9 @@ async fn update_project(
 }
 
 async fn delete_project(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
     let existing = Project::find_by_id(pool.get_ref(), project_id).await?;
@@ -103,9 +103,9 @@ async fn delete_project(
 // ─── Project-Storage assignment endpoints ────────────────────────────────────
 
 async fn list_project_storages(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
     let project = Project::find_by_id(pool.get_ref(), project_id).await?;
@@ -122,9 +122,9 @@ async fn list_project_storages(
 }
 
 async fn assign_storage(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     body: web::Json<CreateProjectStorage>,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
@@ -137,9 +137,9 @@ async fn assign_storage(
 }
 
 async fn update_project_storage(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<(Uuid, Uuid)>,
-    user: AuthenticatedUser,
     body: web::Json<UpdateProjectStorage>,
 ) -> Result<HttpResponse, AppError> {
     let (project_id, storage_id) = path.into_inner();
@@ -152,9 +152,9 @@ async fn update_project_storage(
 }
 
 async fn remove_storage_assignment(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<(Uuid, Uuid)>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let (project_id, storage_id) = path.into_inner();
     let project = Project::find_by_id(pool.get_ref(), project_id).await?;
@@ -165,9 +165,9 @@ async fn remove_storage_assignment(
 }
 
 async fn list_available_storages(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
     let project = Project::find_by_id(pool.get_ref(), project_id).await?;
@@ -209,12 +209,10 @@ struct UpdateMemberRoleRequest {
 }
 
 async fn list_project_members(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
     let project_id = path.into_inner();
     // Verify project exists
     Project::find_by_id(pool.get_ref(), project_id).await?;
@@ -224,13 +222,11 @@ async fn list_project_members(
 }
 
 async fn add_project_member(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     body: web::Json<AddMemberRequest>,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
     let project_id = path.into_inner();
     // Verify project and user exist
     Project::find_by_id(pool.get_ref(), project_id).await?;
@@ -242,13 +238,11 @@ async fn add_project_member(
 }
 
 async fn update_project_member(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     path: web::Path<(Uuid, Uuid)>,
-    user: AuthenticatedUser,
     body: web::Json<UpdateMemberRoleRequest>,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
     let (project_id, member_user_id) = path.into_inner();
     validate_member_role(&body.role)?;
     let assignment = UserProject::update_role(pool.get_ref(), member_user_id, project_id, &body.role).await?;
@@ -256,12 +250,10 @@ async fn update_project_member(
 }
 
 async fn remove_project_member(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     path: web::Path<(Uuid, Uuid)>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
     let (project_id, member_user_id) = path.into_inner();
     UserProject::delete(pool.get_ref(), member_user_id, project_id).await?;
     Ok(HttpResponse::NoContent().finish())

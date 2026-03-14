@@ -47,6 +47,8 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         "/download/local",
         web::get().to(api::files::download_local_temp),
     );
+    // Public shared link proxy endpoints (no auth required)
+    api::shared_links::configure_public(cfg);
     api::configure_api_routes(cfg);
 }
 

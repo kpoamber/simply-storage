@@ -4,7 +4,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use super::auth::AuthenticatedUser;
+use super::auth::{AdminUser, AuthenticatedUser};
 use super::PaginationParams;
 use crate::config::AppConfig;
 use crate::db::models::{CreateStorage, FileLocation, Storage, UpdateStorage, User, UserStorage};
@@ -24,14 +24,12 @@ pub struct StorageWithStats {
 // ─── Handlers ───────────────────────────────────────────────────────────────────
 
 async fn create_storage(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     registry: web::Data<Arc<StorageRegistry>>,
     config: web::Data<AppConfig>,
-    user: AuthenticatedUser,
     body: web::Json<CreateStorage>,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
     // Validate backend configuration before persisting to DB
     // This prevents invalid storage records from accumulating
     if body.enabled.unwrap_or(true) {
@@ -64,8 +62,8 @@ async fn create_storage(
 }
 
 async fn list_storages(
-    pool: web::Data<PgPool>,
     user: AuthenticatedUser,
+    pool: web::Data<PgPool>,
 ) -> Result<HttpResponse, AppError> {
     let storages = if user.is_admin() {
         Storage::list(pool.get_ref()).await?
@@ -100,9 +98,9 @@ async fn list_storages(
 }
 
 async fn get_storage(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let storage_id = path.into_inner();
     // Allow admin or assigned member
@@ -135,15 +133,13 @@ async fn get_storage(
 }
 
 async fn update_storage(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     registry: web::Data<Arc<StorageRegistry>>,
     config: web::Data<AppConfig>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     body: web::Json<UpdateStorage>,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
     let storage_id = path.into_inner();
     let storage = Storage::update(pool.get_ref(), storage_id, &body).await?;
 
@@ -166,13 +162,11 @@ async fn update_storage(
 }
 
 async fn disable_storage(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     registry: web::Data<Arc<StorageRegistry>>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
     let storage_id = path.into_inner();
     let storage = Storage::update_enabled(pool.get_ref(), storage_id, false).await?;
     registry.unregister(&storage_id).await;
@@ -180,13 +174,11 @@ async fn disable_storage(
 }
 
 async fn list_storage_files(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     query: web::Query<PaginationParams>,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
     let storage_id = path.into_inner();
     // Verify storage exists
     let _storage = Storage::find_by_id(pool.get_ref(), storage_id).await?;
@@ -214,13 +206,11 @@ struct CreateContainerRequest {
 }
 
 async fn list_storage_containers(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     registry: web::Data<Arc<StorageRegistry>>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
     let storage_id = path.into_inner();
     let _storage = Storage::find_by_id(pool.get_ref(), storage_id).await?;
     let backend = registry.get(&storage_id).await?;
@@ -236,14 +226,12 @@ async fn list_storage_containers(
 }
 
 async fn create_storage_container(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     registry: web::Data<Arc<StorageRegistry>>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     body: web::Json<CreateContainerRequest>,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
     let storage_id = path.into_inner();
     let _storage = Storage::find_by_id(pool.get_ref(), storage_id).await?;
     let backend = registry.get(&storage_id).await?;
@@ -260,12 +248,10 @@ struct AddMemberRequest {
 }
 
 async fn list_storage_members(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
     let storage_id = path.into_inner();
     // Verify storage exists
     Storage::find_by_id(pool.get_ref(), storage_id).await?;
@@ -275,13 +261,11 @@ async fn list_storage_members(
 }
 
 async fn add_storage_member(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     body: web::Json<AddMemberRequest>,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
     let storage_id = path.into_inner();
     // Verify storage and user exist
     Storage::find_by_id(pool.get_ref(), storage_id).await?;
@@ -292,12 +276,10 @@ async fn add_storage_member(
 }
 
 async fn remove_storage_member(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     path: web::Path<(Uuid, Uuid)>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
-
     let (storage_id, member_user_id) = path.into_inner();
     UserStorage::delete(pool.get_ref(), member_user_id, storage_id).await?;
     Ok(HttpResponse::NoContent().finish())

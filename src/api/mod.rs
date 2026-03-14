@@ -3,6 +3,7 @@ pub mod auth_routes;
 pub mod bulk;
 pub mod files;
 pub mod projects;
+pub mod shared_links;
 pub mod storages;
 
 use actix_web::{web, HttpResponse};
@@ -10,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use auth::AuthenticatedUser;
+use auth::AdminUser;
 use crate::config::AppConfig;
 use crate::db::models::{Node, Project, Storage, SyncTask};
 use crate::error::AppError;
@@ -46,8 +47,7 @@ pub struct SystemStats {
     pub pending_sync_tasks: i64,
 }
 
-async fn system_stats(pool: web::Data<PgPool>, user: AuthenticatedUser) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
+async fn system_stats(_admin: AdminUser, pool: web::Data<PgPool>) -> Result<HttpResponse, AppError> {
     let file_row = sqlx::query("SELECT COUNT(*)::bigint, COALESCE(SUM(size), 0)::bigint FROM files")
         .fetch_one(pool.get_ref())
         .await?;
@@ -76,11 +76,10 @@ pub struct SyncTaskFilter {
 }
 
 async fn list_sync_tasks(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     query: web::Query<SyncTaskFilter>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
     let tasks = SyncTask::list_filtered(
         pool.get_ref(),
         query.status.as_deref(),
@@ -100,11 +99,10 @@ pub struct ConfigExport {
 }
 
 async fn config_export(
+    _admin: AdminUser,
     pool: web::Data<PgPool>,
     config: web::Data<AppConfig>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
     let projects = Project::list(pool.get_ref()).await?;
     let storages = Storage::list(pool.get_ref()).await?;
 
@@ -122,8 +120,7 @@ async fn config_export(
 
 // ─── Nodes ──────────────────────────────────────────────────────────────────────
 
-async fn list_nodes(pool: web::Data<PgPool>, user: AuthenticatedUser) -> Result<HttpResponse, AppError> {
-    user.require_admin()?;
+async fn list_nodes(_admin: AdminUser, pool: web::Data<PgPool>) -> Result<HttpResponse, AppError> {
     // Consider nodes active if heartbeat within the last 90 seconds (3x the 30s interval)
     let nodes = Node::list_active(pool.get_ref(), 90).await?;
     Ok(HttpResponse::Ok().json(nodes))
@@ -139,6 +136,7 @@ pub fn configure_api_routes(cfg: &mut web::ServiceConfig) {
             .configure(storages::configure)
             .configure(bulk::configure)
             .configure(auth_routes::configure)
+            .configure(shared_links::configure)
             .route("/system/stats", web::get().to(system_stats))
             .route("/sync-tasks", web::get().to(list_sync_tasks))
             .route("/system/config-export", web::get().to(config_export))

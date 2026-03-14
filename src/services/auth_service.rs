@@ -74,7 +74,9 @@ impl AuthService {
         &self,
         token: &str,
     ) -> Result<Claims, jsonwebtoken::errors::Error> {
-        let token_data = decode::<Claims>(token, &self.decoding_key, &Validation::default())?;
+        let mut validation = Validation::default();
+        validation.leeway = 0;
+        let token_data = decode::<Claims>(token, &self.decoding_key, &validation)?;
         Ok(token_data.claims)
     }
 
@@ -157,6 +159,9 @@ mod tests {
         let user_id = Uuid::new_v4();
 
         let token = service.generate_access_token(user_id, "user").unwrap();
+
+        // Wait for the token to expire (exp = now + 0 = now, leeway = 0)
+        std::thread::sleep(std::time::Duration::from_millis(1100));
 
         // Token with 0 TTL should be expired
         let result = service.validate_access_token(&token);

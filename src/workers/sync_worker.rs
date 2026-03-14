@@ -386,7 +386,7 @@ mod tests {
         );
 
         let data = Bytes::from("sync test data");
-        let path = "ab/cd/abcdef1234567890";
+        let path = "abcdabcdef12345678900000000000000000000000000000000000000000000000";
 
         // Upload to source
         source_backend.upload(path, data.clone()).await.unwrap();
@@ -411,9 +411,9 @@ mod tests {
         let target = LocalDiskBackend::new(target_dir.path().to_path_buf(), "secret");
 
         let files = vec![
-            ("aa/bb/file1", Bytes::from("content 1")),
-            ("cc/dd/file2", Bytes::from("content 2")),
-            ("ee/ff/file3", Bytes::from("content 3")),
+            ("aabb111111111111111111111111111111111111111111111111111111111111", Bytes::from("content 1")),
+            ("ccdd222222222222222222222222222222222222222222222222222222222222", Bytes::from("content 2")),
+            ("eeff333333333333333333333333333333333333333333333333333333333333", Bytes::from("content 3")),
         ];
 
         // Upload all to source

@@ -168,9 +168,9 @@ fn validate_flat_metadata(value: &serde_json::Value) -> Result<(), AppError> {
 }
 
 async fn upload_file(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     file_service: web::Data<FileService>,
     mut payload: Multipart,
 ) -> Result<HttpResponse, AppError> {
@@ -253,9 +253,9 @@ async fn upload_file(
 }
 
 async fn list_project_files(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     query: web::Query<PaginationParams>,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
@@ -311,9 +311,9 @@ async fn list_project_files(
 }
 
 async fn get_file_metadata(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let file_id = path.into_inner();
     check_file_access(pool.get_ref(), file_id, &user).await?;
@@ -336,10 +336,10 @@ async fn get_file_metadata(
 }
 
 async fn download_file(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     file_service: web::Data<FileService>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let file_id = path.into_inner();
     check_file_access(pool.get_ref(), file_id, &user).await?;
@@ -363,10 +363,10 @@ async fn download_file(
 }
 
 async fn get_temp_link(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     file_service: web::Data<FileService>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     query: web::Query<TempLinkQuery>,
 ) -> Result<HttpResponse, AppError> {
     let file_id = path.into_inner();
@@ -384,9 +384,9 @@ async fn get_temp_link(
 }
 
 async fn delete_file_reference(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     query: web::Query<DeleteFileQuery>,
 ) -> Result<HttpResponse, AppError> {
     let file_id = path.into_inner();
@@ -399,10 +399,10 @@ async fn delete_file_reference(
 }
 
 async fn restore_file(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     tier_service: web::Data<TierService>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
 ) -> Result<HttpResponse, AppError> {
     let file_id = path.into_inner();
     check_file_write_access(pool.get_ref(), file_id, &user).await?;
@@ -421,9 +421,9 @@ pub struct MetadataSearchRequest {
 }
 
 async fn search_files(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     body: web::Json<MetadataSearchRequest>,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
@@ -455,9 +455,9 @@ async fn search_files(
 // ─── Search summary ──────────────────────────────────────────────────────────
 
 async fn search_summary(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     body: web::Json<MetadataSearchRequest>,
 ) -> Result<HttpResponse, AppError> {
     let project_id = path.into_inner();
@@ -484,9 +484,9 @@ async fn search_summary(
 // ─── Bulk delete ──────────────────────────────────────────────────────────────
 
 async fn bulk_delete_preview(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     body: web::Json<BulkDeleteFilters>,
     file_service: web::Data<FileService>,
 ) -> Result<HttpResponse, AppError> {
@@ -508,9 +508,9 @@ async fn bulk_delete_preview(
 }
 
 async fn bulk_delete(
+    user: AuthenticatedUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
-    user: AuthenticatedUser,
     body: web::Json<BulkDeleteFilters>,
     file_service: web::Data<FileService>,
 ) -> Result<HttpResponse, AppError> {

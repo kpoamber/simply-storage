@@ -50,6 +50,31 @@ impl FromRequest for AuthenticatedUser {
     }
 }
 
+/// Extractor that requires both authentication AND admin role.
+/// Use this as the FIRST handler parameter to ensure auth+admin checks
+/// happen before any other extractor (e.g. web::Data<T>).
+#[derive(Debug, Clone)]
+pub struct AdminUser {
+    pub user_id: Uuid,
+}
+
+impl FromRequest for AdminUser {
+    type Error = AppError;
+    type Future = Ready<Result<Self, Self::Error>>;
+
+    fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
+        ready(extract_admin(req))
+    }
+}
+
+fn extract_admin(req: &HttpRequest) -> Result<AdminUser, AppError> {
+    let user = extract_user(req)?;
+    user.require_admin()?;
+    Ok(AdminUser {
+        user_id: user.user_id,
+    })
+}
+
 fn extract_user(req: &HttpRequest) -> Result<AuthenticatedUser, AppError> {
     let auth_header = req
         .headers()
@@ -179,6 +204,9 @@ mod tests {
         });
         let user_id = Uuid::new_v4();
         let token = auth_service.generate_access_token(user_id, "user").unwrap();
+
+        // Wait for the token to expire (exp = now + 0 = now, leeway = 0)
+        std::thread::sleep(std::time::Duration::from_millis(1100));
 
         let app = test::init_service(
             App::new()
