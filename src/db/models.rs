@@ -2249,6 +2249,15 @@ impl SharedLink {
         Ok(())
     }
 
+    /// Delete all shared links created by a specific user.
+    pub async fn delete_by_user(pool: &PgPool, user_id: Uuid) -> AppResult<()> {
+        sqlx::query("DELETE FROM shared_links WHERE created_by = $1")
+            .bind(user_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
     /// Verify a password against the stored hash.
     pub fn verify_password(password: &str, hash: &str) -> bool {
         use argon2::{Argon2, PasswordHash, PasswordVerifier};

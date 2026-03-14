@@ -75,7 +75,7 @@ export default function SharedLinks() {
       file_id: selectedFileId,
     };
     if (password) req.password = password;
-    if (expiresHours) req.expires_in_seconds = parseFloat(expiresHours) * 3600;
+    if (expiresHours) req.expires_in_seconds = Math.round(parseFloat(expiresHours) * 3600);
     if (maxDownloads) req.max_downloads = parseInt(maxDownloads, 10);
     createMutation.mutate(req);
   }

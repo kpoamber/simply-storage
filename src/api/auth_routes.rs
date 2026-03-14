@@ -4,7 +4,7 @@ use serde::Deserialize;
 use sqlx::PgPool;
 
 use crate::api::auth::{AdminUser, AuthenticatedUser};
-use crate::db::models::{is_unique_violation, CreateRefreshToken, CreateUser, Project, RefreshToken, User, UserProject, UserStorage};
+use crate::db::models::{is_unique_violation, CreateRefreshToken, CreateUser, Project, RefreshToken, SharedLink, User, UserProject, UserStorage};
 use crate::error::AppError;
 use crate::services::auth_service::AuthService;
 
@@ -145,7 +145,8 @@ async fn delete_user(
         )));
     }
 
-    // Delete user's refresh tokens first (junction tables cascade automatically)
+    // Delete user's shared links, refresh tokens first (junction tables cascade automatically)
+    SharedLink::delete_by_user(pool.get_ref(), user_id).await?;
     RefreshToken::delete_by_user_id(pool.get_ref(), user_id).await?;
     User::delete(pool.get_ref(), user_id).await?;
 

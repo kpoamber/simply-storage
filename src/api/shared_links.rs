@@ -79,6 +79,12 @@ async fn create_shared_link(
                 "expires_in_seconds must be positive".to_string(),
             ));
         }
+        // Cap at 365 days to prevent overflow in Duration::seconds()
+        if secs > 365 * 24 * 3600 {
+            return Err(AppError::BadRequest(
+                "expires_in_seconds must not exceed 365 days (31536000 seconds)".to_string(),
+            ));
+        }
     }
 
     if let Some(max) = body.max_downloads {
