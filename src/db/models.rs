@@ -3049,6 +3049,7 @@ mod tests {
         assert!(table_names.contains(&"nodes"));
         assert!(table_names.contains(&"users"));
         assert!(table_names.contains(&"refresh_tokens"));
+        assert!(table_names.contains(&"shared_links"));
     }
 
     #[ignore]
@@ -3489,5 +3490,65 @@ mod tests {
         // Find by file_id should return metadata
         let by_file = FileReference::find_by_file_id(&pool, file.id).await.unwrap();
         assert!(by_file.len() >= 2);
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_migration_011_shared_links_table() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        // Verify shared_links table exists
+        let tables: Vec<(String,)> = sqlx::query_as(
+            r#"SELECT table_name::text FROM information_schema.tables
+               WHERE table_schema = 'public' AND table_name = 'shared_links'"#,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(tables.len(), 1, "shared_links table should exist");
+
+        // Verify all expected columns exist with correct types
+        let columns: Vec<(String, String)> = sqlx::query_as(
+            r#"SELECT column_name::text, data_type::text
+               FROM information_schema.columns
+               WHERE table_name = 'shared_links'
+               ORDER BY ordinal_position"#,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        let col_map: std::collections::HashMap<String, String> = columns.into_iter().collect();
+        assert_eq!(col_map.get("id").unwrap(), "uuid");
+        assert_eq!(col_map.get("token").unwrap(), "character varying");
+        assert_eq!(col_map.get("file_id").unwrap(), "uuid");
+        assert_eq!(col_map.get("project_id").unwrap(), "uuid");
+        assert_eq!(col_map.get("original_name").unwrap(), "character varying");
+        assert_eq!(col_map.get("created_by").unwrap(), "uuid");
+        assert_eq!(col_map.get("password_hash").unwrap(), "character varying");
+        assert!(col_map.contains_key("expires_at"));
+        assert_eq!(col_map.get("max_downloads").unwrap(), "integer");
+        assert_eq!(col_map.get("download_count").unwrap(), "bigint");
+        assert!(col_map.contains_key("last_accessed_at"));
+        assert_eq!(col_map.get("is_active").unwrap(), "boolean");
+        assert!(col_map.contains_key("created_at"));
+
+        // Verify indexes exist
+        let indexes: Vec<(String,)> = sqlx::query_as(
+            r#"SELECT indexname::text FROM pg_indexes
+               WHERE tablename = 'shared_links'
+               ORDER BY indexname"#,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        let idx_names: Vec<&str> = indexes.iter().map(|i| i.0.as_str()).collect();
+        assert!(idx_names.iter().any(|n| n.contains("token")), "token index should exist");
+        assert!(idx_names.iter().any(|n| n.contains("file_id")), "file_id index should exist");
+        assert!(idx_names.iter().any(|n| n.contains("project_id")), "project_id index should exist");
+        assert!(idx_names.iter().any(|n| n.contains("created_by")), "created_by index should exist");
     }
 }
