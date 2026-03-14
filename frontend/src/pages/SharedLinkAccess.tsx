@@ -68,8 +68,10 @@ export default function SharedLinkAccess() {
     a.download = filename;
     document.body.appendChild(a);
     a.click();
-    window.URL.revokeObjectURL(url);
-    a.remove();
+    setTimeout(() => {
+      window.URL.revokeObjectURL(url);
+      a.remove();
+    }, 100);
   }
 
   if (isLoading) {

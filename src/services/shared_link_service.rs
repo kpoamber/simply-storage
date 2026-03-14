@@ -197,7 +197,13 @@ impl SharedLinkService {
             ));
         }
 
-        let refs = FileReference::find_by_file_id(&self.pool, link.file_id).await?;
+        // Only use file references from the shared link's project to avoid
+        // leaking access to other projects' storage backend configurations.
+        let refs: Vec<_> = FileReference::find_by_file_id(&self.pool, link.file_id)
+            .await?
+            .into_iter()
+            .filter(|r| r.project_id == link.project_id)
+            .collect();
 
         for location in &locations {
             let backends = self
@@ -367,33 +373,27 @@ mod tests {
     #[test]
     fn test_download_token_generation_and_validation() {
         let secret = "test-jwt-secret-for-shared-links";
-        let pool = {
-            // We only need the encoding/decoding keys for this test, not a real pool.
-            // Use a dummy runtime-less approach via direct JWT calls.
-            let encoding_key = EncodingKey::from_secret(secret.as_bytes());
-            let decoding_key = DecodingKey::from_secret(secret.as_bytes());
+        let encoding_key = EncodingKey::from_secret(secret.as_bytes());
+        let decoding_key = DecodingKey::from_secret(secret.as_bytes());
 
-            let token = "abc123token";
-            let link_id = Uuid::new_v4();
-            let now = chrono::Utc::now().timestamp() as usize;
-            let claims = DownloadTokenClaims {
-                sub: token.to_string(),
-                link_id: link_id.to_string(),
-                exp: now + DOWNLOAD_TOKEN_TTL_SECS,
-            };
-
-            let jwt = encode(&Header::default(), &claims, &encoding_key).unwrap();
-            let decoded =
-                decode::<DownloadTokenClaims>(&jwt, &decoding_key, &Validation::default())
-                    .unwrap();
-
-            assert_eq!(decoded.claims.sub, token);
-            assert_eq!(decoded.claims.link_id, link_id.to_string());
-
-            // Wrong token should not match
-            assert_ne!(decoded.claims.sub, "wrong-token");
+        let token = "abc123token";
+        let link_id = Uuid::new_v4();
+        let now = chrono::Utc::now().timestamp() as usize;
+        let claims = DownloadTokenClaims {
+            sub: token.to_string(),
+            link_id: link_id.to_string(),
+            exp: now + DOWNLOAD_TOKEN_TTL_SECS,
         };
-        let _ = pool;
+
+        let jwt = encode(&Header::default(), &claims, &encoding_key).unwrap();
+        let decoded =
+            decode::<DownloadTokenClaims>(&jwt, &decoding_key, &Validation::default()).unwrap();
+
+        assert_eq!(decoded.claims.sub, token);
+        assert_eq!(decoded.claims.link_id, link_id.to_string());
+
+        // Wrong token should not match
+        assert_ne!(decoded.claims.sub, "wrong-token");
     }
 
     #[test]
