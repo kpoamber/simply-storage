@@ -15,11 +15,13 @@ auth:bearer {
 }
 
 body:multipart-form {
-  file: @file(./sample.txt)
+  file: @file(C:\Users\roman\Downloads\pj1.pdf)
+  metadata: {"department":"accounting","year":2027,"confidential":true}
 }
 
 script:post-response {
   if (res.status === 201) {
-    bru.setVar("fileId", res.body.id);
+    bru.setVar("fileId", res.body.file_reference.id);
+    bru.setVar("fileHash", res.body.file.hash_sha256);
   }
 }

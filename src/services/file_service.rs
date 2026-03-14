@@ -121,7 +121,7 @@ impl FileService {
             original_name: original_name.to_string(),
             metadata,
         };
-        let file_reference = FileReference::create_or_find(&self.pool, &create_ref).await?;
+        let file_reference = FileReference::create(&self.pool, &create_ref).await?;
 
         // 5. Create sync_tasks for remaining storages (if new file)
         let mut sync_tasks_created = 0;
@@ -217,6 +217,7 @@ impl FileService {
         let _file = File::find_by_id(&self.pool, file_id).await?;
         let locations = FileLocation::find_for_file(&self.pool, file_id).await?;
         let refs = FileReference::find_by_file_id(&self.pool, file_id).await?;
+        let original_name = refs.first().map(|r| r.original_name.clone());
 
         for location in &locations {
             let backends = self
@@ -225,7 +226,7 @@ impl FileService {
 
             for backend in &backends {
                 match backend
-                    .generate_temp_url(&location.storage_path, expires_in)
+                    .generate_temp_url(&location.storage_path, expires_in, original_name.as_deref())
                     .await
                 {
                     Ok(Some(url)) => {
@@ -349,11 +350,15 @@ impl FileService {
         project_id: Uuid,
         filters: &BulkDeleteFilters,
     ) -> AppResult<BulkDeleteResult> {
+        // Use a transaction for all DB operations to ensure atomicity
+        let mut tx = self.pool.begin().await?;
+
         // Step 1: Delete matching file_references, collect affected file_ids
         let (deleted_count, file_ids) =
-            FileReference::execute_bulk_delete(&self.pool, project_id, filters).await?;
+            FileReference::execute_bulk_delete(&mut *tx, project_id, filters).await?;
 
         if deleted_count == 0 {
+            tx.commit().await?;
             return Ok(BulkDeleteResult {
                 deleted_references: 0,
                 orphaned_files_cleaned: 0,
@@ -367,28 +372,58 @@ impl FileService {
             file_ids.into_iter().filter(|id| set.insert(*id)).collect()
         };
         let orphaned_ids =
-            File::find_orphaned_from_ids(&self.pool, &unique_file_ids).await?;
+            File::find_orphaned_from_ids(&mut *tx, &unique_file_ids).await?;
 
         let mut freed_bytes = 0i64;
 
-        // Step 3: For each orphaned file, clean up physical storage + DB records
+        // Collect physical deletion info before modifying DB
+        struct OrphanInfo {
+            file_id: Uuid,
+            size: i64,
+            locations: Vec<FileLocation>,
+        }
+        let mut orphan_infos = Vec::new();
+
         for file_id in &orphaned_ids {
-            // Get file size for freed_bytes calculation
-            if let Ok(file) = File::find_by_id(&self.pool, *file_id).await {
-                freed_bytes += file.size;
-            }
+            let size: i64 = sqlx::query_scalar("SELECT size FROM files WHERE id = $1")
+                .bind(file_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .unwrap_or(0);
+            let locations: Vec<FileLocation> = sqlx::query_as(
+                "SELECT * FROM file_locations WHERE file_id = $1 ORDER BY created_at DESC",
+            )
+            .bind(file_id)
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap_or_default();
+            orphan_infos.push(OrphanInfo { file_id: *file_id, size, locations });
+        }
 
-            // Get all locations for physical cleanup
-            let locations = FileLocation::find_all_for_file(&self.pool, *file_id)
-                .await
-                .unwrap_or_default();
+        // Step 3: Delete orphan DB records within the transaction
+        for info in &orphan_infos {
+            freed_bytes += info.size;
 
-            // Delete from storage backends (best effort)
-            for location in &locations {
+            sqlx::query("DELETE FROM file_locations WHERE file_id = $1")
+                .bind(info.file_id)
+                .execute(&mut *tx)
+                .await?;
+
+            sqlx::query("DELETE FROM files WHERE id = $1")
+                .bind(info.file_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        tx.commit().await?;
+
+        // Step 4: Physical storage cleanup (best effort, outside transaction)
+        for info in &orphan_infos {
+            for location in &info.locations {
                 if let Ok(backend) = self.registry.get(&location.storage_id).await {
                     if let Err(e) = backend.delete(&location.storage_path).await {
                         tracing::warn!(
-                            file_id = %file_id,
+                            file_id = %info.file_id,
                             storage_id = %location.storage_id,
                             error = %e,
                             "Failed to delete physical file during bulk cleanup"
@@ -396,17 +431,6 @@ impl FileService {
                     }
                 }
             }
-
-            // Delete file_locations and file record from DB
-            sqlx::query("DELETE FROM file_locations WHERE file_id = $1")
-                .bind(file_id)
-                .execute(&self.pool)
-                .await?;
-
-            sqlx::query("DELETE FROM files WHERE id = $1")
-                .bind(file_id)
-                .execute(&self.pool)
-                .await?;
         }
 
         Ok(BulkDeleteResult {

@@ -13,3 +13,9 @@ get {
 auth:bearer {
   token: {{access_token}}
 }
+
+script:post-response {
+  if (res.status === 200 && res.body.length > 0) {
+    bru.setVar("projectId", res.body[0].id);
+  }
+}

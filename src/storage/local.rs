@@ -126,6 +126,7 @@ impl StorageBackend for LocalDiskBackend {
         &self,
         path: &str,
         expires_in: Duration,
+        _filename: Option<&str>,
     ) -> AppResult<Option<String>> {
         let expires_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -309,7 +310,7 @@ mod tests {
         let (_dir, backend) = setup();
         let path = "abcdef0123456789";
         let url = backend
-            .generate_temp_url(path, Duration::from_secs(3600))
+            .generate_temp_url(path, Duration::from_secs(3600), None)
             .await
             .unwrap();
 

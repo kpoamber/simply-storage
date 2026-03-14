@@ -31,6 +31,7 @@ pub trait StorageBackend: Send + Sync {
         &self,
         path: &str,
         expires_in: Duration,
+        filename: Option<&str>,
     ) -> AppResult<Option<String>>;
 
     /// List files under the given prefix.

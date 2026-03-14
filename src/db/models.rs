@@ -19,6 +19,19 @@ pub struct Project {
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
+/// Project with assignment role, returned when listing user's project assignments.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ProjectAssignment {
+    pub id: Uuid,
+    pub name: String,
+    pub slug: String,
+    pub hot_to_cold_days: Option<i32>,
+    pub owner_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub assignment_role: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateProject {
     pub name: String,
@@ -878,7 +891,7 @@ fn build_bulk_delete_clause(
 
     if filters.last_accessed_before.is_some() {
         conditions.push(format!(
-            "NOT EXISTS (SELECT 1 FROM file_locations fl WHERE fl.file_id = fr.file_id AND fl.last_accessed_at >= ${})",
+            "NOT EXISTS (SELECT 1 FROM file_locations fl WHERE fl.file_id = fr.file_id AND (fl.last_accessed_at IS NULL OR fl.last_accessed_at >= ${}))",
             param_idx
         ));
         param_idx += 1;
@@ -964,11 +977,14 @@ impl FileReference {
 
     /// Execute bulk delete: delete matching file references and return their file_ids.
     /// Returns (deleted_count, affected_file_ids).
-    pub async fn execute_bulk_delete(
-        pool: &PgPool,
+    pub async fn execute_bulk_delete<'e, E>(
+        executor: E,
         project_id: Uuid,
         filters: &BulkDeleteFilters,
-    ) -> AppResult<(i64, Vec<Uuid>)> {
+    ) -> AppResult<(i64, Vec<Uuid>)>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
         let (where_clause, metadata_params, needs_files_join, _next_idx) =
             build_bulk_delete_clause(filters, 2)?;
 
@@ -990,7 +1006,7 @@ impl FileReference {
         bind_bulk_delete_args(&mut args, project_id, filters, &metadata_params)?;
 
         let rows: Vec<(Uuid,)> = sqlx::query_as_with(&sql, args)
-            .fetch_all(pool)
+            .fetch_all(executor)
             .await?;
 
         let file_ids: Vec<Uuid> = rows.iter().map(|r| r.0).collect();
@@ -1002,7 +1018,10 @@ impl FileReference {
 
 impl File {
     /// Find file IDs from the given list that have zero remaining file_references.
-    pub async fn find_orphaned_from_ids(pool: &PgPool, file_ids: &[Uuid]) -> AppResult<Vec<Uuid>> {
+    pub async fn find_orphaned_from_ids<'e, E>(executor: E, file_ids: &[Uuid]) -> AppResult<Vec<Uuid>>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
         if file_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -1015,7 +1034,7 @@ impl File {
                )"#,
         )
         .bind(file_ids)
-        .fetch_all(pool)
+        .fetch_all(executor)
         .await?;
 
         Ok(rows.into_iter().map(|r| r.0).collect())
@@ -1676,6 +1695,8 @@ pub struct MemberInfo {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub assigned_at: DateTime<Utc>,
+    #[sqlx(default)]
+    pub assignment_role: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1862,18 +1883,20 @@ pub struct UserProject {
     pub id: Uuid,
     pub user_id: Uuid,
     pub project_id: Uuid,
+    pub role: String,
     pub created_at: DateTime<Utc>,
 }
 
 impl UserProject {
-    pub async fn create(pool: &PgPool, user_id: Uuid, project_id: Uuid) -> AppResult<UserProject> {
+    pub async fn create(pool: &PgPool, user_id: Uuid, project_id: Uuid, role: &str) -> AppResult<UserProject> {
         let row = sqlx::query_as::<_, UserProject>(
-            r#"INSERT INTO user_projects (user_id, project_id)
-               VALUES ($1, $2)
+            r#"INSERT INTO user_projects (user_id, project_id, role)
+               VALUES ($1, $2, $3)
                RETURNING *"#,
         )
         .bind(user_id)
         .bind(project_id)
+        .bind(role)
         .fetch_one(pool)
         .await
         .map_err(|e| {
@@ -1890,7 +1913,7 @@ impl UserProject {
     pub async fn list_for_project(pool: &PgPool, project_id: Uuid) -> AppResult<Vec<MemberInfo>> {
         let rows = sqlx::query_as::<_, MemberInfo>(
             r#"SELECT u.id, u.username, u.role, u.created_at, u.updated_at,
-                      up.created_at AS assigned_at
+                      up.created_at AS assigned_at, up.role AS assignment_role
                FROM users u
                JOIN user_projects up ON up.user_id = u.id
                WHERE up.project_id = $1
@@ -1903,9 +1926,11 @@ impl UserProject {
         Ok(rows)
     }
 
-    pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Project>> {
-        let rows = sqlx::query_as::<_, Project>(
-            r#"SELECT p.* FROM projects p
+    pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<ProjectAssignment>> {
+        let rows = sqlx::query_as::<_, ProjectAssignment>(
+            r#"SELECT p.id, p.name, p.slug, p.hot_to_cold_days, p.owner_id,
+                      p.created_at, p.updated_at, up.role AS assignment_role
+               FROM projects p
                JOIN user_projects up ON up.project_id = p.id
                WHERE up.user_id = $1 AND p.deleted_at IS NULL
                ORDER BY p.created_at DESC"#,
@@ -1932,6 +1957,34 @@ impl UserProject {
             ));
         }
         Ok(())
+    }
+
+    pub async fn update_role(pool: &PgPool, user_id: Uuid, project_id: Uuid, role: &str) -> AppResult<UserProject> {
+        let row = sqlx::query_as::<_, UserProject>(
+            r#"UPDATE user_projects SET role = $3
+               WHERE user_id = $1 AND project_id = $2
+               RETURNING *"#,
+        )
+        .bind(user_id)
+        .bind(project_id)
+        .bind(role)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound("User project assignment not found".to_string()))?;
+
+        Ok(row)
+    }
+
+    pub async fn get_role(pool: &PgPool, user_id: Uuid, project_id: Uuid) -> AppResult<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT role FROM user_projects WHERE user_id = $1 AND project_id = $2",
+        )
+        .bind(user_id)
+        .bind(project_id)
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(row.map(|r| r.0))
     }
 
     pub async fn is_member(pool: &PgPool, user_id: Uuid, project_id: Uuid) -> AppResult<bool> {
@@ -3135,6 +3188,7 @@ mod tests {
             id: Uuid::new_v4(),
             user_id: Uuid::new_v4(),
             project_id: Uuid::new_v4(),
+            role: "member".to_string(),
             created_at: now,
         };
 
@@ -3223,9 +3277,10 @@ mod tests {
         .unwrap();
 
         // Assign user to project
-        let assignment = UserProject::create(&pool, user.id, project.id).await.unwrap();
+        let assignment = UserProject::create(&pool, user.id, project.id, "member").await.unwrap();
         assert_eq!(assignment.user_id, user.id);
         assert_eq!(assignment.project_id, project.id);
+        assert_eq!(assignment.role, "member");
 
         // is_member should be true
         assert!(UserProject::is_member(&pool, user.id, project.id).await.unwrap());
@@ -3239,7 +3294,7 @@ mod tests {
         assert!(projects.iter().any(|p| p.id == project.id));
 
         // Duplicate assignment should return Conflict
-        let dup = UserProject::create(&pool, user.id, project.id).await;
+        let dup = UserProject::create(&pool, user.id, project.id, "member").await;
         assert!(dup.is_err());
 
         // Delete assignment

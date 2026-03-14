@@ -183,7 +183,7 @@ export default function ProjectSearch() {
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                       <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => formatBytes(v)} />
-                      <Tooltip formatter={(v: number) => formatBytes(v)} />
+                      <Tooltip formatter={(v) => formatBytes(Number(v ?? 0))} />
                       <Area type="monotone" dataKey="size" stroke="#8b5cf6" fill="#c4b5fd" />
                     </AreaChart>
                   </ResponsiveContainer>

@@ -181,9 +181,31 @@ async fn list_available_storages(
 
 // ─── Project member (user assignment) endpoints ──────────────────────────────
 
+fn default_member_role() -> String {
+    "member".to_string()
+}
+
+fn validate_member_role(role: &str) -> Result<(), AppError> {
+    if role == "member" || role == "writer" {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(format!(
+            "Invalid role '{}': must be 'member' or 'writer'",
+            role
+        )))
+    }
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct AddMemberRequest {
     user_id: Uuid,
+    #[serde(default = "default_member_role")]
+    role: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct UpdateMemberRoleRequest {
+    role: String,
 }
 
 async fn list_project_members(
@@ -214,8 +236,23 @@ async fn add_project_member(
     Project::find_by_id(pool.get_ref(), project_id).await?;
     User::find_by_id(pool.get_ref(), body.user_id).await?;
 
-    let assignment = UserProject::create(pool.get_ref(), body.user_id, project_id).await?;
+    validate_member_role(&body.role)?;
+    let assignment = UserProject::create(pool.get_ref(), body.user_id, project_id, &body.role).await?;
     Ok(HttpResponse::Created().json(assignment))
+}
+
+async fn update_project_member(
+    pool: web::Data<PgPool>,
+    path: web::Path<(Uuid, Uuid)>,
+    user: AuthenticatedUser,
+    body: web::Json<UpdateMemberRoleRequest>,
+) -> Result<HttpResponse, AppError> {
+    user.require_admin()?;
+
+    let (project_id, member_user_id) = path.into_inner();
+    validate_member_role(&body.role)?;
+    let assignment = UserProject::update_role(pool.get_ref(), member_user_id, project_id, &body.role).await?;
+    Ok(HttpResponse::Ok().json(assignment))
 }
 
 async fn remove_project_member(
@@ -263,6 +300,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     )
     .service(
         web::resource("/projects/{id}/members/{user_id}")
+            .route(web::put().to(update_project_member))
             .route(web::delete().to(remove_project_member)),
     );
 }

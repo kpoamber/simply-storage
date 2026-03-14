@@ -142,7 +142,7 @@ impl AzureBlobBackend {
     }
 
     /// Generate a Service SAS URL for read access to a blob.
-    fn generate_sas_url(&self, blob_path: &str, expires_in: Duration) -> AppResult<String> {
+    fn generate_sas_url(&self, blob_path: &str, expires_in: Duration, filename: Option<&str>) -> AppResult<String> {
         let now = Utc::now();
         let expiry = now
             + chrono::Duration::from_std(expires_in)
@@ -154,22 +154,27 @@ impl AzureBlobBackend {
         let sr = "b";
         let sv = API_VERSION;
 
+        let rscd = filename
+            .map(|f| format!("attachment; filename=\"{}\"", f))
+            .unwrap_or_default();
+
         let canonical_resource = format!(
             "/blob/{}/{}/{}",
             self.account_name, self.container, blob_path
         );
 
         // String to sign for Service SAS (version 2020-10-02)
-        // sp\nst\nse\ncanonicalizedResource\nidentifier\nIP\nprotocol\nversion\nresource\n
-        // snapshot\nencryptionScope\nrscc\nrscd\nrsce\nrscl\nrsct
+        // 15 fields: sp\nst\nse\ncanonicalized\nidentifier\nIP\nprotocol\nversion\nresource\n
+        //            snapshot\nrscc\nrscd\nrsce\nrscl\nrsct
+        // Note: signedEncryptionScope added only in 2020-12-06+, not present here
         let string_to_sign = format!(
-            "{}\n{}\n{}\n{}\n\n\n{}\n{}\n\n\n\n\n\n",
-            sp, st, se, canonical_resource, sv, sr,
+            "{}\n{}\n{}\n{}\n\n\n\n{}\n{}\n\n\n{}\n\n\n",
+            sp, st, se, canonical_resource, sv, sr, rscd,
         );
 
         let sig = self.hmac_sign(&string_to_sign)?;
 
-        let url = format!(
+        let mut url = format!(
             "{}?sp={}&st={}&se={}&sv={}&sr={}&sig={}",
             self.blob_url(blob_path),
             sp,
@@ -179,6 +184,10 @@ impl AzureBlobBackend {
             sr,
             urlencoding::encode(&sig),
         );
+
+        if !rscd.is_empty() {
+            url.push_str(&format!("&rscd={}", urlencoding::encode(&rscd)));
+        }
 
         Ok(url)
     }
@@ -448,9 +457,10 @@ impl StorageBackend for AzureBlobBackend {
         &self,
         path: &str,
         expires_in: Duration,
+        filename: Option<&str>,
     ) -> AppResult<Option<String>> {
         let bp = self.blob_path(path);
-        let url = self.generate_sas_url(&bp, expires_in)?;
+        let url = self.generate_sas_url(&bp, expires_in, filename)?;
         Ok(Some(url))
     }
 
@@ -630,7 +640,7 @@ mod tests {
     fn test_sas_url_format() {
         let backend = AzureBlobBackend::new(test_config()).unwrap();
         let sas_url = backend
-            .generate_sas_url("path/to/file.txt", Duration::from_secs(3600))
+            .generate_sas_url("path/to/file.txt", Duration::from_secs(3600), None)
             .unwrap();
 
         assert!(sas_url.contains("path/to/file.txt"));
@@ -646,7 +656,7 @@ mod tests {
     fn test_sas_url_with_prefix() {
         let backend = AzureBlobBackend::new(test_config_with_prefix()).unwrap();
         let sas_url = backend
-            .generate_sas_url("my-prefix/file.txt", Duration::from_secs(300))
+            .generate_sas_url("my-prefix/file.txt", Duration::from_secs(300), None)
             .unwrap();
 
         assert!(sas_url.contains("my-prefix/file.txt"));
@@ -758,7 +768,7 @@ mod tests {
     async fn test_generate_temp_url_returns_sas_url() {
         let backend = AzureBlobBackend::new(test_config()).unwrap();
         let result = backend
-            .generate_temp_url("test-file.txt", Duration::from_secs(3600))
+            .generate_temp_url("test-file.txt", Duration::from_secs(3600), None)
             .await;
 
         assert!(result.is_ok());

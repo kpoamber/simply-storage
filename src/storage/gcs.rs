@@ -398,6 +398,7 @@ impl StorageBackend for GcsBackend {
         &self,
         path: &str,
         expires_in: Duration,
+        _filename: Option<&str>,
     ) -> AppResult<Option<String>> {
         let object = self.object_path(path);
         let url = self.generate_signed_url_v4(&object, expires_in)?;
@@ -787,7 +788,7 @@ mod tests {
     async fn test_generate_temp_url_returns_signed_url() {
         let backend = GcsBackend::new(test_config()).unwrap();
         let result = backend
-            .generate_temp_url("test-file.txt", Duration::from_secs(3600))
+            .generate_temp_url("test-file.txt", Duration::from_secs(3600), None)
             .await;
 
         assert!(result.is_ok());

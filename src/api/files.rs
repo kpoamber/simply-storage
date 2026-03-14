@@ -92,7 +92,24 @@ async fn check_file_access(
     Ok(())
 }
 
-/// Check that the user has write access (owner or admin) to at least one project referencing this file.
+/// Check that the user has write access to a project (admin, owner, or writer member).
+async fn require_project_write_access(
+    pool: &PgPool,
+    user: &AuthenticatedUser,
+    project: &Project,
+) -> Result<(), AppError> {
+    if user.is_admin() || user.is_owner(project.owner_id) {
+        return Ok(());
+    }
+    match UserProject::get_role(pool, user.user_id, project.id).await? {
+        Some(role) if role == "writer" => Ok(()),
+        _ => Err(AppError::Forbidden(
+            "Access denied: writer, owner, or admin access required".to_string(),
+        )),
+    }
+}
+
+/// Check that the user has write access (owner, admin, or writer) to at least one project referencing this file.
 async fn check_file_write_access(
     pool: &PgPool,
     file_id: Uuid,
@@ -106,7 +123,10 @@ async fn check_file_write_access(
             SELECT 1 FROM file_references fr
             JOIN projects p ON p.id = fr.project_id
             WHERE fr.file_id = $1 AND p.deleted_at IS NULL
-            AND p.owner_id = $2
+            AND (p.owner_id = $2 OR EXISTS (
+                SELECT 1 FROM user_projects up
+                WHERE up.project_id = p.id AND up.user_id = $2 AND up.role = 'writer'
+            ))
         )"#,
     )
     .bind(file_id)
@@ -116,7 +136,7 @@ async fn check_file_write_access(
 
     if !row.0 {
         return Err(AppError::Forbidden(
-            "Access denied: owner or admin required".to_string(),
+            "Access denied: writer, owner, or admin required".to_string(),
         ));
     }
     Ok(())
@@ -158,7 +178,7 @@ async fn upload_file(
 
     // Verify project exists and user has access
     let project = Project::find_by_id(pool.get_ref(), project_id).await?;
-    user.require_owner_or_admin(project.owner_id)?;
+    require_project_write_access(pool.get_ref(), &user, &project).await?;
 
     let mut file_data: Option<(String, String, BytesMut)> = None;
     let mut metadata = serde_json::json!({});
@@ -372,7 +392,7 @@ async fn delete_file_reference(
     let file_id = path.into_inner();
     // Check ownership of the specific project being removed from
     let project = Project::find_by_id(pool.get_ref(), query.project_id).await?;
-    user.require_owner_or_admin(project.owner_id)?;
+    require_project_write_access(pool.get_ref(), &user, &project).await?;
 
     FileReference::delete_by_file_and_project(pool.get_ref(), file_id, query.project_id).await?;
     Ok(HttpResponse::NoContent().finish())
@@ -474,7 +494,7 @@ async fn bulk_delete_preview(
 
     // Verify project exists and user is owner or admin
     let project = Project::find_by_id(pool.get_ref(), project_id).await?;
-    user.require_owner_or_admin(project.owner_id)?;
+    require_project_write_access(pool.get_ref(), &user, &project).await?;
 
     let filters = body.into_inner();
     if !filters.has_any_filter() {
@@ -498,7 +518,7 @@ async fn bulk_delete(
 
     // Verify project exists and user is owner or admin
     let project = Project::find_by_id(pool.get_ref(), project_id).await?;
-    user.require_owner_or_admin(project.owner_id)?;
+    require_project_write_access(pool.get_ref(), &user, &project).await?;
 
     let filters = body.into_inner();
     if !filters.has_any_filter() {

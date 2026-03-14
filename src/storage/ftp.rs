@@ -169,6 +169,7 @@ impl StorageBackend for FtpBackend {
         &self,
         _path: &str,
         _expires_in: Duration,
+        _filename: Option<&str>,
     ) -> AppResult<Option<String>> {
         // FTP does not support direct URL access; downloads are proxied through the web service.
         Ok(None)
@@ -259,7 +260,7 @@ mod tests {
     async fn test_generate_temp_url_returns_none() {
         let backend = FtpBackend::new(test_config());
         let result = backend
-            .generate_temp_url("test.txt", Duration::from_secs(3600))
+            .generate_temp_url("test.txt", Duration::from_secs(3600), None)
             .await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());

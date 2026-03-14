@@ -290,6 +290,7 @@ impl StorageBackend for S3StorageBackend {
         &self,
         path: &str,
         expires_in: Duration,
+        _filename: Option<&str>,
     ) -> AppResult<Option<String>> {
         let key = self.object_key(path);
 
@@ -528,7 +529,7 @@ mod tests {
         let backend = S3StorageBackend::new(test_config()).await;
 
         let result = backend
-            .generate_temp_url("test-file.txt", Duration::from_secs(3600))
+            .generate_temp_url("test-file.txt", Duration::from_secs(3600), None)
             .await;
 
         // The presigned URL generation should succeed even without a real endpoint
@@ -546,7 +547,7 @@ mod tests {
         let backend = S3StorageBackend::new(test_config_with_prefix()).await;
 
         let result = backend
-            .generate_temp_url("test-file.txt", Duration::from_secs(300))
+            .generate_temp_url("test-file.txt", Duration::from_secs(300), None)
             .await;
 
         assert!(result.is_ok());

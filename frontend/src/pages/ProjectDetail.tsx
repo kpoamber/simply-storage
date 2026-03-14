@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Upload, Download, Link2, ArchiveRestore, Trash2,
-  ChevronLeft, ChevronRight, Search, Check, Plus, X, Pencil, ChevronDown, ChevronUp, AlertTriangle,
+  ChevronLeft, ChevronRight, Search, Plus, X, Pencil, ChevronDown, ChevronUp, AlertTriangle,
 } from 'lucide-react';
 import apiClient, { uploadFile } from '../api/client';
 import { ProjectWithStats, FileReference, TempLinkResponse, StorageBackend, ProjectStorageAssignment, AuthUser, MemberInfo, formatBytes } from '../api/types';
@@ -830,6 +830,9 @@ function FileRow({ fileRef, projectId, canWrite }: { fileRef: FileReference; pro
   const queryClient = useQueryClient();
   const [copiedLink, setCopiedLink] = useState(false);
   const [metadataExpanded, setMetadataExpanded] = useState(false);
+  const [showLinkDialog, setShowLinkDialog] = useState(false);
+  const [linkExpiry, setLinkExpiry] = useState('');
+  const [generatedLink, setGeneratedLink] = useState('');
 
   const metadataEntries = Object.entries(fileRef.metadata || {});
 
@@ -841,9 +844,19 @@ function FileRow({ fileRef, projectId, canWrite }: { fileRef: FileReference; pro
     },
   });
 
+  const getExpiresInSecs = (): number => {
+    if (!linkExpiry) return 3600;
+    const expiryDate = new Date(linkExpiry);
+    const now = new Date();
+    const diffSecs = Math.max(60, Math.floor((expiryDate.getTime() - now.getTime()) / 1000));
+    return Math.min(diffSecs, 86400);
+  };
+
   const handleDownload = async () => {
     try {
-      const res = await apiClient.get<TempLinkResponse>(`/files/${fileRef.file_id}/link`);
+      const res = await apiClient.get<TempLinkResponse>(`/files/${fileRef.file_id}/link`, {
+        params: { expires_in: 3600 },
+      });
       window.open(res.data.url, '_blank');
     } catch {
       // error handled by axios interceptor
@@ -851,14 +864,29 @@ function FileRow({ fileRef, projectId, canWrite }: { fileRef: FileReference; pro
   };
 
   const handleGetLink = async () => {
+    setShowLinkDialog(true);
+    setGeneratedLink('');
+    // Default expiry: 1 hour from now
+    const defaultExpiry = new Date(Date.now() + 3600 * 1000);
+    setLinkExpiry(defaultExpiry.toISOString().slice(0, 16));
+  };
+
+  const handleGenerateLink = async () => {
     try {
-      const res = await apiClient.get<TempLinkResponse>(`/files/${fileRef.file_id}/link`);
-      await navigator.clipboard.writeText(window.location.origin + res.data.url);
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2000);
+      const expiresIn = getExpiresInSecs();
+      const res = await apiClient.get<TempLinkResponse>(`/files/${fileRef.file_id}/link`, {
+        params: { expires_in: expiresIn },
+      });
+      setGeneratedLink(res.data.url);
     } catch {
       // error handled by axios interceptor
     }
+  };
+
+  const handleCopyLink = async () => {
+    await navigator.clipboard.writeText(generatedLink);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
   };
 
   const handleRestore = async () => {
@@ -927,8 +955,8 @@ function FileRow({ fileRef, projectId, canWrite }: { fileRef: FileReference; pro
           <button onClick={handleDownload} title="Download" className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700">
             <Download className="h-4 w-4" />
           </button>
-          <button onClick={handleGetLink} title="Copy temp link" className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700">
-            {copiedLink ? <Check className="h-4 w-4 text-green-600" /> : <Link2 className="h-4 w-4" />}
+          <button onClick={handleGetLink} title="Get temp link" className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700">
+            <Link2 className="h-4 w-4" />
           </button>
           {canWrite && (
             <button onClick={handleRestore} title="Restore from cold" className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700">
@@ -945,6 +973,52 @@ function FileRow({ fileRef, projectId, canWrite }: { fileRef: FileReference; pro
             </button>
           )}
         </div>
+        {showLinkDialog && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowLinkDialog(false)}>
+            <div className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h3 className="font-medium text-gray-800">Temporary Link for {fileRef.original_name}</h3>
+                <button onClick={() => setShowLinkDialog(false)} className="text-gray-400 hover:text-gray-600">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="mt-3">
+                <label className="block text-xs text-gray-500">Link expires at</label>
+                <input
+                  type="datetime-local"
+                  value={linkExpiry}
+                  onChange={e => setLinkExpiry(e.target.value)}
+                  className="mt-1 w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+                />
+              </div>
+              <button
+                onClick={handleGenerateLink}
+                className="mt-3 rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700"
+              >
+                Generate Link
+              </button>
+              {generatedLink && (
+                <div className="mt-3">
+                  <label className="block text-xs text-gray-500">Generated URL</label>
+                  <div className="mt-1 flex gap-2">
+                    <input
+                      readOnly
+                      value={generatedLink}
+                      className="flex-1 rounded border border-gray-300 bg-gray-50 px-3 py-1.5 text-xs font-mono"
+                      onClick={e => (e.target as HTMLInputElement).select()}
+                    />
+                    <button
+                      onClick={handleCopyLink}
+                      className="rounded bg-gray-200 px-3 py-1.5 text-sm hover:bg-gray-300"
+                    >
+                      {copiedLink ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </td>
     </tr>
   );

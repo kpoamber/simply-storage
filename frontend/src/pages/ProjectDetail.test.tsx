@@ -191,7 +191,7 @@ describe('ProjectDetail', () => {
     });
 
     expect(screen.getAllByTitle('Download').length).toBeGreaterThan(0);
-    expect(screen.getAllByTitle('Copy temp link').length).toBeGreaterThan(0);
+    expect(screen.getAllByTitle('Get temp link').length).toBeGreaterThan(0);
     expect(screen.getAllByTitle('Restore from cold').length).toBeGreaterThan(0);
     expect(screen.getAllByTitle('Delete').length).toBeGreaterThan(0);
   });
