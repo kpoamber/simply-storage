@@ -62,7 +62,7 @@ pub(crate) fn validate_link_accessible(link: &SharedLink) -> AppResult<()> {
     }
     if let Some(expires_at) = link.expires_at {
         if Utc::now() > expires_at {
-            return Err(AppError::NotFound("Shared link has expired".to_string()));
+            return Err(AppError::NotFound("Shared link not found".to_string()));
         }
     }
     Ok(())
