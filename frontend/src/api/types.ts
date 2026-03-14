@@ -128,11 +128,16 @@ export interface AuthUser {
 
 export interface MemberInfo extends AuthUser {
   assigned_at: string;
+  assignment_role?: string;
+}
+
+export interface ProjectAssignment extends Project {
+  assignment_role: string;
 }
 
 export interface UserWithAssignments {
   user: AuthUser;
-  projects: Project[];
+  projects: ProjectAssignment[];
   storages: StorageBase[];
 }
 

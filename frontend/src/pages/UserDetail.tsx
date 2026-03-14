@@ -6,6 +6,7 @@ import apiClient from '../api/client';
 import type {
   UserWithAssignments,
   Project,
+  ProjectAssignment,
   StorageBackend,
   StorageBase,
 } from '../api/types';
@@ -230,10 +231,11 @@ function ProjectAssignmentsSection({
   assignedProjects,
 }: {
   userId: string;
-  assignedProjects: Project[];
+  assignedProjects: ProjectAssignment[];
 }) {
   const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
+  const [addRole, setAddRole] = useState('member');
   const [error, setError] = useState<string | null>(null);
 
   const { data: allProjects } = useQuery<Project[]>({
@@ -247,17 +249,33 @@ function ProjectAssignmentsSection({
   );
 
   const addMutation = useMutation({
-    mutationFn: (projectId: string) =>
-      apiClient.post(`/projects/${projectId}/members`, { user_id: userId }),
+    mutationFn: ({ projectId, role }: { projectId: string; role: string }) =>
+      apiClient.post(`/projects/${projectId}/members`, { user_id: userId, role }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user', userId] });
       setShowAdd(false);
+      setAddRole('member');
       setError(null);
     },
     onError: (err: unknown) => {
       const message =
         (err as { response?: { data?: { error?: string } } })?.response?.data
           ?.error || 'Failed to add project assignment';
+      setError(message);
+    },
+  });
+
+  const updateRoleMutation = useMutation({
+    mutationFn: ({ projectId, role }: { projectId: string; role: string }) =>
+      apiClient.put(`/projects/${projectId}/members/${userId}`, { role }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['user', userId] });
+      setError(null);
+    },
+    onError: (err: unknown) => {
+      const message =
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || 'Failed to update role';
       setError(message);
     },
   });
@@ -309,6 +327,9 @@ function ProjectAssignmentsSection({
                 <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">
                   Slug
                 </th>
+                <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">
+                  Role
+                </th>
                 <th className="px-4 py-2 text-center text-xs font-medium uppercase text-gray-500">
                   Actions
                 </th>
@@ -326,6 +347,19 @@ function ProjectAssignmentsSection({
                     </Link>
                   </td>
                   <td className="px-4 py-2 text-sm text-gray-500">{p.slug}</td>
+                  <td className="px-4 py-2 text-sm">
+                    <select
+                      value={p.assignment_role}
+                      onChange={(e) =>
+                        updateRoleMutation.mutate({ projectId: p.id, role: e.target.value })
+                      }
+                      disabled={updateRoleMutation.isPending}
+                      className="rounded border border-gray-300 px-2 py-1 text-xs"
+                    >
+                      <option value="member">member</option>
+                      <option value="writer">writer</option>
+                    </select>
+                  </td>
                   <td className="px-4 py-2 text-center">
                     <button
                       onClick={() => removeMutation.mutate(p.id)}
@@ -344,15 +378,13 @@ function ProjectAssignmentsSection({
       )}
 
       {showAdd && (
-        <AddAssignmentModal
-          title="Add Project Assignment"
+        <AddProjectModal
           items={unassignedProjects ?? []}
-          getLabel={(p) => `${p.name} (${p.slug})`}
-          getId={(p) => p.id}
-          onSelect={(id) => addMutation.mutate(id)}
-          onClose={() => setShowAdd(false)}
+          role={addRole}
+          onRoleChange={setAddRole}
+          onSelect={(id) => addMutation.mutate({ projectId: id, role: addRole })}
+          onClose={() => { setShowAdd(false); setAddRole('member'); }}
           isPending={addMutation.isPending}
-          emptyMessage="No unassigned projects available."
         />
       )}
     </div>
@@ -505,6 +537,80 @@ function StorageAssignmentsSection({
           emptyMessage="No unassigned storages available."
         />
       )}
+    </div>
+  );
+}
+
+function AddProjectModal({
+  items,
+  role,
+  onRoleChange,
+  onSelect,
+  onClose,
+  isPending,
+}: {
+  items: Project[];
+  role: string;
+  onRoleChange: (role: string) => void;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+  isPending: boolean;
+}) {
+  const [selectedId, setSelectedId] = useState('');
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-medium text-gray-800">Add Project Assignment</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {items.length === 0 ? (
+          <p className="mt-4 text-sm text-gray-400">No unassigned projects available.</p>
+        ) : (
+          <div className="mt-4 space-y-3">
+            <select
+              value={selectedId}
+              onChange={(e) => setSelectedId(e.target.value)}
+              className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+            >
+              <option value="">Select project...</option>
+              {items.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.slug})
+                </option>
+              ))}
+            </select>
+            <div>
+              <label className="block text-xs text-gray-500">Role</label>
+              <select
+                value={role}
+                onChange={(e) => onRoleChange(e.target.value)}
+                className="mt-1 rounded border border-gray-300 px-3 py-1.5 text-sm"
+              >
+                <option value="member">member (read only)</option>
+                <option value="writer">writer (read + write)</option>
+              </select>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4 flex gap-2">
+          <button
+            onClick={() => onSelect(selectedId)}
+            disabled={!selectedId || isPending}
+            className="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isPending ? 'Adding...' : 'Add'}
+          </button>
+          <button onClick={onClose} className="rounded bg-gray-200 px-4 py-1.5 text-sm hover:bg-gray-300">
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

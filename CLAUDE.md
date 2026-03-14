@@ -63,7 +63,7 @@ docker-compose up --build --scale app=3  # Scale app instances
 - Bulk deletion: POST /projects/{project_id}/files/bulk-delete with metadata filters, date ranges, size ranges; includes preview endpoint and orphan file cleanup
 - Authentication: JWT access tokens (Bearer header) + refresh tokens, argon2 password hashing
 - Authorization: `AuthenticatedUser` extractor from request, role-based (admin/user) with owner and membership checks
-- User-resource assignments: many-to-many via `user_projects` and `user_storages` junction tables; members get read access, owners/admins get write access
+- User-resource assignments: many-to-many via `user_projects` (with role: member/writer) and `user_storages` junction tables; members get read access, writers/owners/admins get write access
 
 ## Database
 
