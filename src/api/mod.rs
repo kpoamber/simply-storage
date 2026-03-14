@@ -26,7 +26,7 @@ pub struct PaginationParams {
 
 impl PaginationParams {
     pub fn limit(&self) -> i64 {
-        self.per_page.unwrap_or(50).clamp(1, 100)
+        self.per_page.unwrap_or(50).clamp(1, 1000)
     }
 
     pub fn offset(&self) -> i64 {
@@ -172,9 +172,9 @@ mod tests {
     fn test_pagination_clamping() {
         let params = PaginationParams {
             page: Some(0),
-            per_page: Some(200),
+            per_page: Some(2000),
         };
-        assert_eq!(params.limit(), 100);
+        assert_eq!(params.limit(), 1000);
         assert_eq!(params.offset(), 0);
 
         let params2 = PaginationParams {
