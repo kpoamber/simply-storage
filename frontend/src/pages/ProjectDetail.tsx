@@ -1,12 +1,13 @@
 import { useState, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Upload, Download, Link2, ArchiveRestore, Trash2,
-  ChevronLeft, ChevronRight, Search, Plus, X, Pencil, ChevronDown, ChevronUp, AlertTriangle,
+  Upload, Download, Link2, ArchiveRestore, Trash2, Share2,
+  ChevronLeft, ChevronRight, Search, Plus, X, Pencil, ChevronDown, ChevronUp, AlertTriangle, Check, Copy,
 } from 'lucide-react';
 import apiClient, { uploadFile } from '../api/client';
-import { ProjectWithStats, FileReference, TempLinkResponse, StorageBackend, ProjectStorageAssignment, AuthUser, MemberInfo, formatBytes } from '../api/types';
+import { ProjectWithStats, FileReference, TempLinkResponse, StorageBackend, ProjectStorageAssignment, AuthUser, MemberInfo, CreateSharedLinkRequest, SharedLink, formatBytes } from '../api/types';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function ProjectDetail() {
@@ -16,6 +17,9 @@ export default function ProjectDetail() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const perPage = 20;
+
+  // Share dialog state — lifted here so it survives FileRow unmounting
+  const [shareFile, setShareFile] = useState<FileReference | null>(null);
 
   const { data: projectData, isLoading } = useQuery<ProjectWithStats>({
     queryKey: ['project', id],
@@ -105,6 +109,7 @@ export default function ProjectDetail() {
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search files..."
+              autoComplete="off"
               className="rounded border border-gray-300 py-1.5 pl-8 pr-3 text-sm"
             />
           </div>
@@ -126,7 +131,7 @@ export default function ProjectDetail() {
               </thead>
               <tbody className="divide-y divide-gray-200 bg-white">
                 {filteredFiles.map(f => (
-                  <FileRow key={f.id} fileRef={f} projectId={id!} canWrite={canWrite} />
+                  <FileRow key={f.id} fileRef={f} projectId={id!} canWrite={canWrite} onShare={setShareFile} />
                 ))}
               </tbody>
             </table>
@@ -151,7 +156,191 @@ export default function ProjectDetail() {
           </button>
         </div>
       </div>
+
+      {shareFile && (
+        <ShareDialog
+          fileRef={shareFile}
+          projectId={id!}
+          onClose={() => setShareFile(null)}
+        />
+      )}
     </div>
+  );
+}
+
+function ShareDialog({ fileRef, projectId, onClose }: { fileRef: FileReference; projectId: string; onClose: () => void }) {
+  const [password, setPassword] = useState('');
+  const [expiresHours, setExpiresHours] = useState('');
+  const [maxDownloads, setMaxDownloads] = useState('');
+  const [error, setError] = useState('');
+  const [createdLink, setCreatedLink] = useState<SharedLink | null>(null);
+
+  const createMutation = useMutation({
+    mutationFn: (req: CreateSharedLinkRequest) =>
+      apiClient.post<SharedLink>(`/projects/${projectId}/shared-links`, req).then(r => r.data),
+    onSuccess: (link: SharedLink) => {
+      setCreatedLink(link);
+      setError('');
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Failed to create shared link';
+      setError(msg);
+    },
+  });
+
+  const handleCreate = () => {
+    const req: CreateSharedLinkRequest = { file_id: fileRef.file_id };
+    if (password) req.password = password;
+    if (expiresHours) {
+      const parsed = parseFloat(expiresHours);
+      if (isNaN(parsed) || parsed <= 0) {
+        setError('Expiration hours must be a positive number');
+        return;
+      }
+      req.expires_in_seconds = Math.round(parsed * 3600);
+    }
+    if (maxDownloads) {
+      const parsed = parseInt(maxDownloads, 10);
+      if (isNaN(parsed) || parsed <= 0) {
+        setError('Max downloads must be a positive number');
+        return;
+      }
+      req.max_downloads = parsed;
+    }
+    createMutation.mutate(req);
+  };
+
+  const getLinkUrl = (token: string) => `${window.location.origin}/share/${token}`;
+  const getDirectUrl = (token: string) => `${window.location.origin}/s/${token}/download`;
+
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const handleCopyField = (value: string, field: string) => {
+    navigator.clipboard.writeText(value).then(() => {
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 2000);
+    });
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="font-medium text-gray-800">Share {fileRef.original_name}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {!createdLink ? (
+          <div className="mt-4 space-y-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Password (optional)</label>
+              <input
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="Leave empty for public access"
+                autoComplete="new-password"
+                className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Expires in (hours)</label>
+                <input
+                  type="number"
+                  value={expiresHours}
+                  onChange={e => setExpiresHours(e.target.value)}
+                  placeholder="No expiration"
+                  min="0.01"
+                  className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Max downloads</label>
+                <input
+                  type="number"
+                  value={maxDownloads}
+                  onChange={e => setMaxDownloads(e.target.value)}
+                  placeholder="Unlimited"
+                  min="1"
+                  className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+                />
+              </div>
+            </div>
+            {error && <p className="text-sm text-red-600">{error}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={handleCreate}
+                disabled={createMutation.isPending}
+                className="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {createMutation.isPending ? 'Creating...' : 'Create Shared Link'}
+              </button>
+              <button
+                onClick={onClose}
+                className="rounded bg-gray-200 px-4 py-1.5 text-sm text-gray-700 hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 space-y-3">
+            <p className="text-sm text-green-600">Shared link created!</p>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Share page</label>
+              <div className="flex gap-2">
+                <input
+                  readOnly
+                  value={getLinkUrl(createdLink.token)}
+                  className="flex-1 rounded border border-gray-300 bg-gray-50 px-3 py-1.5 text-xs font-mono"
+                  onClick={e => (e.target as HTMLInputElement).select()}
+                />
+                <button
+                  onClick={() => handleCopyField(getLinkUrl(createdLink.token), 'page')}
+                  className="flex items-center gap-1 rounded bg-gray-200 px-3 py-1.5 text-sm hover:bg-gray-300"
+                >
+                  {copiedField === 'page' ? <><Check className="h-3.5 w-3.5 text-green-600" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy</>}
+                </button>
+              </div>
+            </div>
+            {!createdLink.password_protected && (
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Direct download URL</label>
+                <div className="flex gap-2">
+                  <input
+                    readOnly
+                    value={getDirectUrl(createdLink.token)}
+                    className="flex-1 rounded border border-gray-300 bg-gray-50 px-3 py-1.5 text-xs font-mono"
+                    onClick={e => (e.target as HTMLInputElement).select()}
+                  />
+                  <button
+                    onClick={() => handleCopyField(getDirectUrl(createdLink.token), 'direct')}
+                    className="flex items-center gap-1 rounded bg-gray-200 px-3 py-1.5 text-sm hover:bg-gray-300"
+                  >
+                    {copiedField === 'direct' ? <><Check className="h-3.5 w-3.5 text-green-600" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy</>}
+                  </button>
+                </div>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-3 text-xs text-gray-500">
+              {createdLink.password_protected && <span>Password protected (direct download not available)</span>}
+              {createdLink.expires_at && <span>Expires: {new Date(createdLink.expires_at).toLocaleString()}</span>}
+              {createdLink.max_downloads != null && <span>Max downloads: {createdLink.max_downloads}</span>}
+            </div>
+            <button
+              onClick={onClose}
+              className="rounded bg-gray-200 px-4 py-1.5 text-sm text-gray-700 hover:bg-gray-300"
+            >
+              Close
+            </button>
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -833,7 +1022,7 @@ function FileUploadZone({ projectId }: { projectId: string }) {
   );
 }
 
-function FileRow({ fileRef, projectId, canWrite }: { fileRef: FileReference; projectId: string; canWrite: boolean }) {
+function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileReference; projectId: string; canWrite: boolean; onShare: (f: FileReference) => void }) {
   const queryClient = useQueryClient();
   const [copiedLink, setCopiedLink] = useState(false);
   const [metadataExpanded, setMetadataExpanded] = useState(false);
@@ -965,6 +1154,9 @@ function FileRow({ fileRef, projectId, canWrite }: { fileRef: FileReference; pro
           <button onClick={handleGetLink} title="Get temp link" className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700">
             <Link2 className="h-4 w-4" />
           </button>
+          <button onClick={() => onShare(fileRef)} title="Create shared link" className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-blue-600" data-testid="share-file-button">
+            <Share2 className="h-4 w-4" />
+          </button>
           {canWrite && (
             <button onClick={handleRestore} title="Restore from cold" className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700">
               <ArchiveRestore className="h-4 w-4" />
@@ -980,7 +1172,7 @@ function FileRow({ fileRef, projectId, canWrite }: { fileRef: FileReference; pro
             </button>
           )}
         </div>
-        {showLinkDialog && (
+        {showLinkDialog && createPortal(
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowLinkDialog(false)}>
             <div className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl" onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between">
@@ -1024,7 +1216,8 @@ function FileRow({ fileRef, projectId, canWrite }: { fileRef: FileReference; pro
                 </div>
               )}
             </div>
-          </div>
+          </div>,
+          document.body,
         )}
       </td>
     </tr>

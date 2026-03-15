@@ -94,15 +94,19 @@ export default function SharedLinks() {
     createMutation.mutate(req);
   }
 
-  function copyLink(token: string) {
-    navigator.clipboard.writeText(getLinkUrl(token)).then(() => {
-      setCopiedToken(token);
+  function copyToClipboard(text: string, key: string) {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedToken(key);
       setTimeout(() => setCopiedToken(null), 2000);
     });
   }
 
   function getLinkUrl(token: string) {
     return `${window.location.origin}/share/${token}`;
+  }
+
+  function getDirectUrl(token: string) {
+    return `${window.location.origin}/s/${token}/download`;
   }
 
   return (
@@ -151,6 +155,7 @@ export default function SharedLinks() {
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="Leave empty for public"
+                  autoComplete="new-password"
                   className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
                   data-testid="password-input"
                 />
@@ -231,22 +236,44 @@ export default function SharedLinks() {
                 <tr key={link.id} data-testid="link-row">
                   <td className="px-4 py-2 text-sm text-gray-800">{link.original_name}</td>
                   <td className="px-4 py-2 text-sm">
-                    <div className="flex items-center gap-1">
-                      <code className="text-xs text-gray-500 bg-gray-100 px-1 py-0.5 rounded max-w-[200px] truncate">
-                        {getLinkUrl(link.token)}
-                      </code>
-                      <button
-                        onClick={() => copyLink(link.token)}
-                        className="p-1 text-gray-400 hover:text-blue-600"
-                        title="Copy link"
-                        data-testid={`copy-link-${link.token}`}
-                      >
-                        {copiedToken === link.token ? (
-                          <Check className="h-3.5 w-3.5 text-green-600" />
-                        ) : (
-                          <Copy className="h-3.5 w-3.5" />
-                        )}
-                      </button>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-gray-400 w-10 shrink-0">page</span>
+                        <code className="text-xs text-gray-500 bg-gray-100 px-1 py-0.5 rounded max-w-[200px] truncate">
+                          {getLinkUrl(link.token)}
+                        </code>
+                        <button
+                          onClick={() => copyToClipboard(getLinkUrl(link.token), `page-${link.token}`)}
+                          className="p-1 text-gray-400 hover:text-blue-600"
+                          title="Copy share page URL"
+                          data-testid={`copy-link-${link.token}`}
+                        >
+                          {copiedToken === `page-${link.token}` ? (
+                            <Check className="h-3.5 w-3.5 text-green-600" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      </div>
+                      {!link.password_protected && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] text-gray-400 w-10 shrink-0">direct</span>
+                          <code className="text-xs text-gray-500 bg-gray-100 px-1 py-0.5 rounded max-w-[200px] truncate">
+                            {getDirectUrl(link.token)}
+                          </code>
+                          <button
+                            onClick={() => copyToClipboard(getDirectUrl(link.token), `direct-${link.token}`)}
+                            className="p-1 text-gray-400 hover:text-blue-600"
+                            title="Copy direct download URL"
+                          >
+                            {copiedToken === `direct-${link.token}` ? (
+                              <Check className="h-3.5 w-3.5 text-green-600" />
+                            ) : (
+                              <Copy className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-2 text-sm">
