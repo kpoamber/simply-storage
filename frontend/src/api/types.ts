@@ -30,6 +30,7 @@ export interface StorageBase {
   is_hot: boolean;
   project_id: string | null;
   enabled: boolean;
+  supports_direct_links: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -76,8 +77,14 @@ export interface FileMetadata {
   references: FileReference[];
 }
 
-export interface TempLinkResponse {
+export interface TempLinkEntry {
+  storage_name: string;
+  storage_type: string;
   url: string;
+}
+
+export interface TempLinkResponse {
+  links: TempLinkEntry[];
   expires_in_seconds: number;
 }
 

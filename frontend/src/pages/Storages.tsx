@@ -20,7 +20,7 @@ export default function Storages() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; storage_type: string; config: Record<string, unknown>; is_hot: boolean }) =>
+    mutationFn: (data: { name: string; storage_type: string; config: Record<string, unknown>; is_hot: boolean; supports_direct_links: boolean }) =>
       apiClient.post('/storages', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['storages'] });
@@ -29,7 +29,7 @@ export default function Storages() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; config?: Record<string, unknown>; is_hot?: boolean; enabled?: boolean } }) =>
+    mutationFn: ({ id, data }: { id: string; data: { name?: string; config?: Record<string, unknown>; is_hot?: boolean; enabled?: boolean; supports_direct_links?: boolean } }) =>
       apiClient.put(`/storages/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['storages'] });
@@ -162,7 +162,7 @@ function EditStorageModal({
 }: {
   storageId: string;
   storages: StorageBackend[];
-  onSubmit: (data: { name?: string; config?: Record<string, unknown>; is_hot?: boolean; enabled?: boolean }) => void;
+  onSubmit: (data: { name?: string; config?: Record<string, unknown>; is_hot?: boolean; enabled?: boolean; supports_direct_links?: boolean }) => void;
   onCancel: () => void;
   isLoading: boolean;
 }) {
@@ -184,8 +184,9 @@ function EditStorageModal({
             storage_type: storage.storage_type,
             config: storage.config,
             is_hot: storage.is_hot,
+            supports_direct_links: storage.supports_direct_links,
           }}
-          onSubmit={(data) => onSubmit({ name: data.name, config: data.config, is_hot: data.is_hot })}
+          onSubmit={(data) => onSubmit({ name: data.name, config: data.config, is_hot: data.is_hot, supports_direct_links: data.supports_direct_links })}
           isLoading={isLoading}
           onCancel={onCancel}
           isEdit

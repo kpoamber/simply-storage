@@ -80,8 +80,9 @@ interface StorageFormProps {
     storage_type: string;
     config: Record<string, unknown>;
     is_hot: boolean;
+    supports_direct_links: boolean;
   };
-  onSubmit: (data: { name: string; storage_type: string; config: Record<string, unknown>; is_hot: boolean }) => void;
+  onSubmit: (data: { name: string; storage_type: string; config: Record<string, unknown>; is_hot: boolean; supports_direct_links: boolean }) => void;
   onCancel: () => void;
   isLoading: boolean;
   isEdit?: boolean;
@@ -91,6 +92,7 @@ export default function StorageForm({ initialValues, onSubmit, onCancel, isLoadi
   const [name, setName] = useState(initialValues?.name ?? '');
   const [storageType, setStorageType] = useState(initialValues?.storage_type ?? 'local');
   const [isHot, setIsHot] = useState(initialValues?.is_hot ?? true);
+  const [supportsDirectLinks, setSupportsDirectLinks] = useState(initialValues?.supports_direct_links ?? false);
   const [configValues, setConfigValues] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
     if (initialValues?.config) {
@@ -123,7 +125,7 @@ export default function StorageForm({ initialValues, onSubmit, onCancel, isLoadi
         config[field.key] = field.type === 'number' ? parseInt(val, 10) : val;
       }
     }
-    onSubmit({ name, storage_type: storageType, config, is_hot: isHot });
+    onSubmit({ name, storage_type: storageType, config, is_hot: isHot, supports_direct_links: supportsDirectLinks });
   };
 
   return (
@@ -155,7 +157,7 @@ export default function StorageForm({ initialValues, onSubmit, onCancel, isLoadi
         </div>
       </div>
 
-      <div>
+      <div className="space-y-2">
         <label className="flex items-center gap-2 text-sm text-gray-700">
           <input
             type="checkbox"
@@ -164,6 +166,15 @@ export default function StorageForm({ initialValues, onSubmit, onCancel, isLoadi
             className="rounded border-gray-300"
           />
           Hot storage (fast access tier)
+        </label>
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={supportsDirectLinks}
+            onChange={e => setSupportsDirectLinks(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+          Supports direct links (generate presigned URLs)
         </label>
       </div>
 

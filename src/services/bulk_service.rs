@@ -526,6 +526,7 @@ mod tests {
             is_hot: Some(true),
             project_id: None,
             enabled: Some(true),
+            supports_direct_links: None,
         };
         let storage = Storage::create(&pool, &create_storage).await.unwrap();
         registry.register(storage.id, backend).await;

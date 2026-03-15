@@ -45,11 +45,14 @@ pub struct FileReferenceWithSync {
 #[derive(Debug, Deserialize)]
 pub struct TempLinkQuery {
     pub expires_in: Option<u64>,
+    /// When true (default), only return links from storages with supports_direct_links.
+    /// When false, return links from any storage (used for download).
+    pub direct_only: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct TempLinkResponse {
-    pub url: String,
+    pub links: Vec<crate::services::file_service::TempLinkEntry>,
     pub expires_in_seconds: u64,
 }
 
@@ -375,10 +378,11 @@ async fn get_temp_link(
     let expires_in_secs = query.expires_in.unwrap_or(3600).min(86400);
     let expires_in = std::time::Duration::from_secs(expires_in_secs);
 
-    let url = file_service.generate_temp_link(file_id, expires_in).await?;
+    let direct_only = query.direct_only.unwrap_or(false);
+    let links = file_service.generate_temp_links(file_id, expires_in, direct_only).await?;
 
     Ok(HttpResponse::Ok().json(TempLinkResponse {
-        url,
+        links,
         expires_in_seconds: expires_in_secs,
     }))
 }
@@ -654,12 +658,18 @@ mod tests {
 
     #[test]
     fn test_temp_link_response_serialization() {
+        use crate::services::file_service::TempLinkEntry;
         let resp = TempLinkResponse {
-            url: "/download/local?path=abc&expires=123&sig=xyz".to_string(),
+            links: vec![TempLinkEntry {
+                storage_name: "S3 Primary".to_string(),
+                storage_type: "s3".to_string(),
+                url: "/download/local?path=abc&expires=123&sig=xyz".to_string(),
+            }],
             expires_in_seconds: 3600,
         };
         let json = serde_json::to_value(&resp).unwrap();
-        assert!(json["url"].as_str().unwrap().contains("/download/local"));
+        assert!(json["links"][0]["url"].as_str().unwrap().contains("/download/local"));
+        assert_eq!(json["links"][0]["storage_name"], "S3 Primary");
         assert_eq!(json["expires_in_seconds"], 3600);
     }
 

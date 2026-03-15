@@ -23,6 +23,14 @@ pub struct UploadResult {
     pub sync_tasks_created: usize,
 }
 
+/// A single entry in the multi-storage temp link response.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TempLinkEntry {
+    pub storage_name: String,
+    pub storage_type: String,
+    pub url: String,
+}
+
 /// Result returned after a successful file download.
 #[derive(Debug)]
 pub struct DownloadResult {
@@ -208,18 +216,31 @@ impl FileService {
         )))
     }
 
-    /// Generate a temporary download link for a file.
-    pub async fn generate_temp_link(
+    /// Generate temporary download links for a file.
+    /// When `direct_only` is true, only storages with `supports_direct_links` are used.
+    /// When false, all storages are tried (used for download).
+    pub async fn generate_temp_links(
         &self,
         file_id: Uuid,
         expires_in: std::time::Duration,
-    ) -> AppResult<String> {
+        direct_only: bool,
+    ) -> AppResult<Vec<TempLinkEntry>> {
         let _file = File::find_by_id(&self.pool, file_id).await?;
         let locations = FileLocation::find_for_file(&self.pool, file_id).await?;
         let refs = FileReference::find_by_file_id(&self.pool, file_id).await?;
         let original_name = refs.first().map(|r| r.original_name.clone());
 
+        let mut links = Vec::new();
+
         for location in &locations {
+            let storage = match Storage::find_by_id(&self.pool, location.storage_id).await {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            if direct_only && !storage.supports_direct_links {
+                continue;
+            }
+
             let backends = self
                 .resolve_backends_for_location(&location.storage_id, &refs)
                 .await;
@@ -231,7 +252,12 @@ impl FileService {
                 {
                     Ok(Some(url)) => {
                         let _ = FileLocation::touch_accessed(&self.pool, location.id).await;
-                        return Ok(url);
+                        links.push(TempLinkEntry {
+                            storage_name: storage.name.clone(),
+                            storage_type: storage.storage_type.clone(),
+                            url,
+                        });
+                        break; // one link per storage is enough
                     }
                     Ok(None) => continue,
                     Err(_) => continue,
@@ -239,10 +265,14 @@ impl FileService {
             }
         }
 
-        Err(AppError::NotFound(format!(
-            "No temp URL available for file {}",
-            file_id
-        )))
+        if links.is_empty() {
+            return Err(AppError::NotFound(format!(
+                "No temp URL available for file {}",
+                file_id
+            )));
+        }
+
+        Ok(links)
     }
 
     /// Resolve all possible backends for a storage location, considering container overrides
@@ -675,6 +705,7 @@ mod tests {
                 is_hot: false,
                 project_id: None,
                 enabled: true,
+                supports_direct_links: false,
                 created_at: now,
                 updated_at: now,
             },
@@ -686,6 +717,7 @@ mod tests {
                 is_hot: true,
                 project_id: None,
                 enabled: true,
+                supports_direct_links: false,
                 created_at: now,
                 updated_at: now,
             },
@@ -731,6 +763,7 @@ mod tests {
             is_hot: false,
             project_id: None,
             enabled: true,
+            supports_direct_links: false,
             created_at: now,
             updated_at: now,
         }];
@@ -935,6 +968,7 @@ mod tests {
             is_hot: Some(true),
             project_id: None,
             enabled: Some(true),
+            supports_direct_links: None,
         };
         let storage = Storage::create(&pool, &create_storage).await.unwrap();
 

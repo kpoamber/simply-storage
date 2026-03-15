@@ -1,0 +1,1 @@
+ALTER TABLE storages ADD COLUMN supports_direct_links BOOLEAN NOT NULL DEFAULT FALSE;

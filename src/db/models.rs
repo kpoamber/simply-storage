@@ -176,6 +176,7 @@ pub struct Storage {
     pub is_hot: bool,
     pub project_id: Option<Uuid>,
     pub enabled: bool,
+    pub supports_direct_links: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -207,6 +208,7 @@ pub struct CreateStorage {
     pub is_hot: Option<bool>,
     pub project_id: Option<Uuid>,
     pub enabled: Option<bool>,
+    pub supports_direct_links: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,13 +219,14 @@ pub struct UpdateStorage {
     pub is_hot: Option<bool>,
     pub project_id: Option<Option<Uuid>>,
     pub enabled: Option<bool>,
+    pub supports_direct_links: Option<bool>,
 }
 
 impl Storage {
     pub async fn create(pool: &PgPool, input: &CreateStorage) -> AppResult<Storage> {
         let row = sqlx::query_as::<_, Storage>(
-            r#"INSERT INTO storages (name, storage_type, config, is_hot, project_id, enabled)
-               VALUES ($1, $2, $3, $4, $5, $6)
+            r#"INSERT INTO storages (name, storage_type, config, is_hot, project_id, enabled, supports_direct_links)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
                RETURNING *"#,
         )
         .bind(&input.name)
@@ -232,6 +235,7 @@ impl Storage {
         .bind(input.is_hot.unwrap_or(true))
         .bind(input.project_id)
         .bind(input.enabled.unwrap_or(true))
+        .bind(input.supports_direct_links.unwrap_or(false))
         .fetch_one(pool)
         .await?;
 
@@ -305,11 +309,14 @@ impl Storage {
             None => current.project_id,
         };
         let enabled = input.enabled.unwrap_or(current.enabled);
+        let supports_direct_links = input
+            .supports_direct_links
+            .unwrap_or(current.supports_direct_links);
 
         let row = sqlx::query_as::<_, Storage>(
             r#"UPDATE storages
-               SET name = $1, storage_type = $2, config = $3, is_hot = $4, project_id = $5, enabled = $6
-               WHERE id = $7
+               SET name = $1, storage_type = $2, config = $3, is_hot = $4, project_id = $5, enabled = $6, supports_direct_links = $7
+               WHERE id = $8
                RETURNING *"#,
         )
         .bind(name)
@@ -318,6 +325,7 @@ impl Storage {
         .bind(is_hot)
         .bind(project_id)
         .bind(enabled)
+        .bind(supports_direct_links)
         .bind(id)
         .fetch_optional(pool)
         .await?

@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, Search, Plus, X, Pencil, ChevronDown, ChevronUp, AlertTriangle, Check, Copy,
 } from 'lucide-react';
 import apiClient, { uploadFile } from '../api/client';
-import { ProjectWithStats, FileReference, TempLinkResponse, StorageBackend, ProjectStorageAssignment, AuthUser, MemberInfo, CreateSharedLinkRequest, SharedLink, formatBytes } from '../api/types';
+import { ProjectWithStats, FileReference, TempLinkResponse, TempLinkEntry, StorageBackend, ProjectStorageAssignment, AuthUser, MemberInfo, CreateSharedLinkRequest, SharedLink, formatBytes } from '../api/types';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function ProjectDetail() {
@@ -1024,11 +1024,11 @@ function FileUploadZone({ projectId }: { projectId: string }) {
 
 function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileReference; projectId: string; canWrite: boolean; onShare: (f: FileReference) => void }) {
   const queryClient = useQueryClient();
-  const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedLink, setCopiedLink] = useState<string | null>(null);
   const [metadataExpanded, setMetadataExpanded] = useState(false);
   const [showLinkDialog, setShowLinkDialog] = useState(false);
   const [linkExpiry, setLinkExpiry] = useState('');
-  const [generatedLink, setGeneratedLink] = useState('');
+  const [generatedLinks, setGeneratedLinks] = useState<TempLinkEntry[]>([]);
 
   const metadataEntries = Object.entries(fileRef.metadata || {});
 
@@ -1051,9 +1051,11 @@ function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileRefer
   const handleDownload = async () => {
     try {
       const res = await apiClient.get<TempLinkResponse>(`/files/${fileRef.file_id}/link`, {
-        params: { expires_in: 3600 },
+        params: { expires_in: 3600, direct_only: false },
       });
-      window.open(res.data.url, '_blank');
+      if (res.data.links.length > 0) {
+        window.open(res.data.links[0].url, '_blank');
+      }
     } catch {
       // error handled by axios interceptor
     }
@@ -1061,7 +1063,7 @@ function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileRefer
 
   const handleGetLink = async () => {
     setShowLinkDialog(true);
-    setGeneratedLink('');
+    setGeneratedLinks([]);
     // Default expiry: 1 hour from now
     const defaultExpiry = new Date(Date.now() + 3600 * 1000);
     setLinkExpiry(defaultExpiry.toISOString().slice(0, 16));
@@ -1073,16 +1075,16 @@ function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileRefer
       const res = await apiClient.get<TempLinkResponse>(`/files/${fileRef.file_id}/link`, {
         params: { expires_in: expiresIn },
       });
-      setGeneratedLink(res.data.url);
+      setGeneratedLinks(res.data.links);
     } catch {
       // error handled by axios interceptor
     }
   };
 
-  const handleCopyLink = async () => {
-    await navigator.clipboard.writeText(generatedLink);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
+  const handleCopyLink = async (url: string) => {
+    await navigator.clipboard.writeText(url);
+    setCopiedLink(url);
+    setTimeout(() => setCopiedLink(null), 2000);
   };
 
   const handleRestore = async () => {
@@ -1194,25 +1196,33 @@ function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileRefer
                 onClick={handleGenerateLink}
                 className="mt-3 rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700"
               >
-                Generate Link
+                Generate Links
               </button>
-              {generatedLink && (
-                <div className="mt-3">
-                  <label className="block text-xs text-gray-500">Generated URL</label>
-                  <div className="mt-1 flex gap-2">
-                    <input
-                      readOnly
-                      value={generatedLink}
-                      className="flex-1 rounded border border-gray-300 bg-gray-50 px-3 py-1.5 text-xs font-mono"
-                      onClick={e => (e.target as HTMLInputElement).select()}
-                    />
-                    <button
-                      onClick={handleCopyLink}
-                      className="rounded bg-gray-200 px-3 py-1.5 text-sm hover:bg-gray-300"
-                    >
-                      {copiedLink ? 'Copied!' : 'Copy'}
-                    </button>
-                  </div>
+              {generatedLinks.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  <label className="block text-xs text-gray-500">Generated URLs</label>
+                  {generatedLinks.map((entry) => (
+                    <div key={entry.url} className="rounded border border-gray-200 bg-gray-50 p-2">
+                      <div className="mb-1 flex items-center gap-2">
+                        <span className="text-xs font-medium text-gray-700">{entry.storage_name}</span>
+                        <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500">{entry.storage_type}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          readOnly
+                          value={entry.url}
+                          className="flex-1 rounded border border-gray-300 bg-white px-3 py-1.5 text-xs font-mono"
+                          onClick={e => (e.target as HTMLInputElement).select()}
+                        />
+                        <button
+                          onClick={() => handleCopyLink(entry.url)}
+                          className="rounded bg-gray-200 px-3 py-1.5 text-sm hover:bg-gray-300"
+                        >
+                          {copiedLink === entry.url ? 'Copied!' : 'Copy'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

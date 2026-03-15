@@ -90,14 +90,14 @@ describe('StorageForm', () => {
 
   it('shows Update button in edit mode', () => {
     render(<StorageForm {...defaultProps} isEdit initialValues={{
-      name: 'Test', storage_type: 'local', config: { path: '/data' }, is_hot: true,
+      name: 'Test', storage_type: 'local', config: { path: '/data' }, is_hot: true, supports_direct_links: false,
     }} />);
     expect(screen.getByText('Update')).toBeInTheDocument();
   });
 
   it('disables storage type selector in edit mode', () => {
     render(<StorageForm {...defaultProps} isEdit initialValues={{
-      name: 'Test', storage_type: 's3', config: {}, is_hot: true,
+      name: 'Test', storage_type: 's3', config: {}, is_hot: true, supports_direct_links: false,
     }} />);
     expect(screen.getByLabelText('Storage Type')).toBeDisabled();
   });
@@ -115,6 +115,7 @@ describe('StorageForm', () => {
       storage_type: 'local',
       config: { path: '/mnt/test' },
       is_hot: true,
+      supports_direct_links: false,
     }));
   });
 

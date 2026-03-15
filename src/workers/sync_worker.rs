@@ -655,6 +655,7 @@ mod tests {
             is_hot: Some(true),
             project_id: None,
             enabled: Some(true),
+            supports_direct_links: None,
         };
         let source_storage = Storage::create(&pool, &create_source).await.unwrap();
         registry
@@ -673,6 +674,7 @@ mod tests {
             is_hot: Some(false),
             project_id: None,
             enabled: Some(true),
+            supports_direct_links: None,
         };
         let target_storage = Storage::create(&pool, &create_target).await.unwrap();
         registry
