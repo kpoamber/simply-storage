@@ -1,0 +1,89 @@
+#cloud-config
+# Innovare Storage - Server Bootstrap via Terraform
+# Installs Docker, creates deploy user, mounts backup volume, sets up cron
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - docker.io
+  - docker-compose-plugin
+  - curl
+  - jq
+  - unzip
+
+users:
+  - name: deploy
+    groups: docker, sudo
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ${ssh_authorized_key}
+
+write_files:
+  - path: /opt/innovare-storage/.env
+    permissions: "0600"
+    owner: deploy:deploy
+    content: |
+      DOMAIN=${domain}
+      DEPLOY_PROFILE=${deploy_profile}
+%{ for key, value in app_env_vars ~}
+      ${key}=${value}
+%{ endfor ~}
+
+  - path: /opt/innovare-storage/backup-cron.sh
+    permissions: "0755"
+    owner: deploy:deploy
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      BACKUP_DIR="/backups"
+      RETENTION_DAYS="${lookup(app_env_vars, "BACKUP_RETENTION_DAYS", "30")}"
+      LOG_FILE="/var/log/innovare-backup.log"
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting backup..." >> "$LOG_FILE"
+      if [ -f /opt/innovare-storage/deploy/scripts/backup.sh ]; then
+        /opt/innovare-storage/deploy/scripts/backup.sh >> "$LOG_FILE" 2>&1
+      else
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] backup.sh not found, skipping" >> "$LOG_FILE"
+      fi
+      # Rotate old backups
+      find "$BACKUP_DIR" -name "*.sql.gz" -mtime +$RETENTION_DAYS -delete 2>/dev/null || true
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] Backup complete" >> "$LOG_FILE"
+
+runcmd:
+  # Enable and start Docker
+  - systemctl enable docker
+  - systemctl start docker
+
+  # Authenticate to GHCR if credentials provided
+  - |
+    if [ -n "${ghcr_token}" ] && [ -n "${ghcr_user}" ]; then
+      echo "${ghcr_token}" | docker login ghcr.io -u "${ghcr_user}" --password-stdin
+    fi
+
+  # Mount backup volume
+  - mkdir -p /backups
+  - |
+    DEVICE="${volume_device}"
+    if [ -b "$DEVICE" ]; then
+      # Format only if not already formatted
+      blkid "$DEVICE" || mkfs.ext4 "$DEVICE"
+      mount "$DEVICE" /backups
+      echo "$DEVICE /backups ext4 defaults 0 2" >> /etc/fstab
+    fi
+  - chown deploy:deploy /backups
+
+  # Create application directories
+  - mkdir -p /opt/innovare-storage/deploy
+  - chown -R deploy:deploy /opt/innovare-storage
+
+  # Set up backup cron (daily at 2:00 AM)
+  - |
+    CRON_SCHEDULE="${lookup(app_env_vars, "BACKUP_SCHEDULE", "0 2 * * *")}"
+    echo "$CRON_SCHEDULE deploy /opt/innovare-storage/backup-cron.sh" > /etc/cron.d/innovare-backup
+    chmod 0644 /etc/cron.d/innovare-backup
+
+  # Configure SSH hardening
+  - sed -i 's/#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+  - sed -i 's/#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+  - systemctl restart sshd

@@ -63,13 +63,13 @@
 - Create: `terraform/tfvars/medium.tfvars`
 - Create: `terraform/tfvars/large.tfvars`
 
-- [ ] Создать `versions.tf`: required_providers (hetznercloud/hcloud), terraform backend config (local state, с комментарием для remote backend)
-- [ ] Создать `variables.tf`: hcloud_token, server_type, location, ssh_key_name, domain, deploy_profile (small/medium/large), app_env_vars (map), backup_volume_size
-- [ ] Создать `main.tf`: hcloud_ssh_key, hcloud_server, hcloud_firewall (порты 22, 80, 443), hcloud_network + subnet (для multi-node), hcloud_volume для бэкапов
-- [ ] Создать `cloud-init.yml`: установка Docker + Docker Compose, создание пользователя deploy, настройка SSH, монтирование volume для бэкапов, настройка cron для автоматических бэкапов
-- [ ] Создать tfvars для профилей: small (cx22 - 2vCPU/4GB), medium (cx32 - 4vCPU/8GB), large (cx42 - 8vCPU/16GB)
-- [ ] Создать `outputs.tf`: server_ip, server_status, ssh_connection_string, backup_volume_id
-- [ ] Verify: `terraform validate` и `terraform plan` без ошибок (dry-run)
+- [x] Создать `versions.tf`: required_providers (hetznercloud/hcloud), terraform backend config (local state, с комментарием для remote backend)
+- [x] Создать `variables.tf`: hcloud_token, server_type, location, ssh_key_name, domain, deploy_profile (small/medium/large), app_env_vars (map), backup_volume_size
+- [x] Создать `main.tf`: hcloud_ssh_key, hcloud_server, hcloud_firewall (порты 22, 80, 443), hcloud_network + subnet (для multi-node), hcloud_volume для бэкапов
+- [x] Создать `cloud-init.yml`: установка Docker + Docker Compose, создание пользователя deploy, настройка SSH, монтирование volume для бэкапов, настройка cron для автоматических бэкапов
+- [x] Создать tfvars для профилей: small (cx22 - 2vCPU/4GB), medium (cx32 - 4vCPU/8GB), large (cx42 - 8vCPU/16GB)
+- [x] Создать `outputs.tf`: server_ip, server_status, ssh_connection_string, backup_volume_id
+- [x] Verify: `terraform validate` и `terraform plan` без ошибок (dry-run)
 
 ### Task 4: Database Backup и Restore
 
