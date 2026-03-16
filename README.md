@@ -492,13 +492,78 @@ IMAGE_REPO=ghcr.io/yourorg/innovare-storage:latest ./deploy/deploy.sh --join 10.
 ./deploy/deploy.sh --update
 ```
 
-### CI/CD
+### CI/CD Pipeline
 
-GitHub Actions workflow (`.github/workflows/build-push.yml`) triggers on push to `main`:
-- Builds Docker image (multi-stage: frontend + backend)
-- Pushes to GHCR with commit SHA and `latest` tags
+The project uses GitHub Actions for continuous integration, Docker image builds, and automated deployment. The pipeline chain is: CI -> Build & Push -> Deploy.
 
-See [deploy/README-deploy.md](deploy/README-deploy.md) for the full deployment guide including TLS configuration and monitoring.
+| Workflow | Trigger | Description |
+|----------|---------|-------------|
+| `ci.yml` | Push (any branch), PR to main | Backend (clippy, tests) + frontend (lint, build) + Docker build test |
+| `build-push.yml` | Push to main, tags `v*` | Build Docker image, push to GHCR (depends on CI passing) |
+| `deploy-hetzner.yml` | Manual / auto after build | Deploy to Hetzner Cloud server via SSH |
+| `deploy-windows.yml` | Manual / auto after build | Deploy to Windows Server via SSH |
+| `backup.yml` | Daily 2:00 UTC, manual | Database backup (PostgreSQL/Citus) |
+| `restore.yml` | Manual | Restore database from backup |
+
+### Production Deployment Profiles
+
+Production uses compose overlay files in `deploy/` for different server sizes:
+
+```bash
+# Small (1 app replica, standalone Postgres, 2 vCPU / 4 GB)
+docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.small.yml up -d
+
+# Medium (2 app replicas, Citus with 2 workers, 4 vCPU / 8 GB)
+docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.medium.yml up -d
+
+# Large (4 app replicas, Citus with 4 workers, 8 vCPU / 16 GB)
+docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.large.yml up -d
+```
+
+Copy `deploy/.env.example` to `deploy/.env` and configure before deploying. See [deploy/README-deploy.md](deploy/README-deploy.md) for full details.
+
+### Infrastructure (Terraform)
+
+Hetzner Cloud infrastructure is managed via Terraform in `terraform/`:
+
+```bash
+cd terraform
+terraform init
+terraform plan -var-file=tfvars/medium.tfvars   # Preview changes
+terraform apply -var-file=tfvars/medium.tfvars   # Create/update infrastructure
+```
+
+Profiles: `small.tfvars` (cx22), `medium.tfvars` (cx32), `large.tfvars` (cx42). Cloud-init automatically provisions Docker, deploy user, SSH, and backup cron.
+
+### Database Backup & Restore
+
+Automated daily backups via GitHub Actions (`backup.yml`) or manual scripts:
+
+```bash
+# Manual backup
+deploy/scripts/backup.sh --profile small --backup-dir /backups
+
+# Restore from date
+deploy/scripts/restore.sh --date 20260316 --profile small
+
+# Restore from file
+deploy/scripts/restore.sh --file /backups/backup-20260316-020000.tar.gz --profile small
+```
+
+Deploy scripts automatically create a pre-deploy backup and perform rollback on failure.
+
+### Required GitHub Secrets
+
+| Secret | Used By | Description |
+|--------|---------|-------------|
+| `HETZNER_SSH_KEY` | deploy-hetzner, backup, restore | SSH private key for Hetzner server |
+| `HETZNER_HOST` | deploy-hetzner, backup, restore | Hetzner server IP or hostname |
+| `DEPLOY_USER` | deploy-hetzner | SSH user on Hetzner (default: `deploy`) |
+| `WINDOWS_SSH_KEY` | deploy-windows, backup, restore | SSH private key for Windows server |
+| `WINDOWS_HOST` | deploy-windows, backup, restore | Windows server IP or hostname |
+| `WINDOWS_USER` | deploy-windows, backup, restore | SSH user on Windows server |
+
+See `deploy/.env.example` for all application environment variables.
 
 ## Project Structure
 
@@ -546,7 +611,29 @@ frontend/src/
 
 migrations/         # SQL schema migrations (015 files)
 docker/             # nginx.conf
-deploy/             # deploy.sh, cloud-init.yml
+deploy/             # Production deployment files
+├── docker-compose.prod.yml   # Base production compose (GHCR image)
+├── docker-compose.{small,medium,large}.yml  # Scale profile overrides
+├── .env.example              # Environment variable template
+├── docker/nginx-prod.conf    # Production nginx with TLS
+├── README-deploy.md          # Deployment guide
+└── scripts/
+    ├── deploy.sh             # Hetzner deploy (pull, backup, up, health check, rollback)
+    ├── deploy-windows.sh     # Windows Server deploy via SSH
+    ├── backup.sh             # PostgreSQL/Citus backup
+    ├── backup-cron.sh        # Cron wrapper with rotation and logging
+    └── restore.sh            # Database restore from backup
+terraform/          # Hetzner Cloud infrastructure (Terraform)
+├── main.tf, variables.tf, outputs.tf, versions.tf
+├── cloud-init.yml            # Server provisioning template
+└── tfvars/{small,medium,large}.tfvars  # Server size profiles
+.github/workflows/  # CI/CD pipelines
+├── ci.yml                    # Tests, linting, Docker build test
+├── build-push.yml            # Docker image build & push to GHCR
+├── deploy-hetzner.yml        # Hetzner Cloud deployment
+├── deploy-windows.yml        # Windows Server deployment
+├── backup.yml                # Scheduled/manual database backup
+└── restore.yml               # Manual database restore
 ```
 
 ## License

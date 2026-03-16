@@ -90,6 +90,27 @@ Auth-related:
 - `APP_AUTH__DEFAULT_ADMIN_USERNAME` - Default admin username (default: `admin`)
 - `APP_AUTH__DEFAULT_ADMIN_PASSWORD` - Default admin password (default: `Innovare2026!`)
 
+## CI/CD & Deployment
+
+- `.github/workflows/ci.yml` - CI pipeline: backend-checks (clippy, test), frontend-checks (lint, build), docker-build-test; triggered on push/PR
+- `.github/workflows/build-push.yml` - Docker image build & push to GHCR; depends on CI passing; semver tagging for `v*` tags; optional auto-deploy trigger
+- `.github/workflows/deploy-hetzner.yml` - Deploy to Hetzner Cloud via SSH; inputs: environment (staging/production), profile (small/medium/large)
+- `.github/workflows/deploy-windows.yml` - Deploy to Windows Server via SSH; inputs: profile, image_tag
+- `.github/workflows/backup.yml` - Database backup (daily 2:00 UTC schedule + manual); supports Hetzner and Windows servers
+- `.github/workflows/restore.yml` - Database restore from backup (manual trigger with date or file input)
+- `deploy/docker-compose.prod.yml` - Base production compose using GHCR image, with nginx, certbot, named volumes
+- `deploy/docker-compose.{small,medium,large}.yml` - Scale profile overrides (1/2/4 app replicas, standalone postgres / Citus 2 workers / Citus 4 workers)
+- `deploy/.env.example` - Template for all production environment variables
+- `deploy/docker/nginx-prod.conf` - Production nginx config with TLS via Certbot/Let's Encrypt
+- `deploy/scripts/deploy.sh` - Hetzner deploy script: GHCR pull, pre-deploy backup, docker compose up with profile, health check, rollback on failure
+- `deploy/scripts/deploy-windows.sh` - Windows Server deploy script via SSH with same backup/rollback pattern
+- `deploy/scripts/backup.sh` - PostgreSQL/Citus backup: pg_dump for standalone, coordinator+workers for Citus; gzip compression
+- `deploy/scripts/backup-cron.sh` - Cron wrapper: logging, retention-based rotation, optional webhook notification
+- `deploy/scripts/restore.sh` - Database restore: accepts --file or --date, stops app containers, restores DB, restarts, health check
+- `terraform/` - Hetzner Cloud infrastructure as code (hcloud provider): server, firewall, network, backup volume
+- `terraform/cloud-init.yml` - Server provisioning: Docker, deploy user, SSH, backup cron, volume mount
+- `terraform/tfvars/{small,medium,large}.tfvars` - Server size profiles: cx22/cx32/cx42
+
 ## Optional Features
 
 - `samba` - Enables Samba/SMB storage backend (requires pavao crate)

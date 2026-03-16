@@ -140,6 +140,6 @@
 
 ### Task 9: Update documentation
 
-- [ ] Обновить README.md: секция Deployment с описанием CI/CD pipeline, профилей, настройки секретов, бэкапов и восстановления
-- [ ] Обновить CLAUDE.md: добавить информацию о deploy/, terraform/ структуре, CI/CD workflows, и backup/restore скриптах
-- [ ] Move this plan to `docs/plans/completed/`
+- [x] Обновить README.md: секция Deployment с описанием CI/CD pipeline, профилей, настройки секретов, бэкапов и восстановления
+- [x] Обновить CLAUDE.md: добавить информацию о deploy/, terraform/ структуре, CI/CD workflows, и backup/restore скриптах
+- [x] Move this plan to `docs/plans/completed/`
