@@ -38,6 +38,9 @@ jobs:
   deploy:
     name: Deploy (windows / ${{ inputs.profile }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     environment:
       name: windows-production
     concurrency:

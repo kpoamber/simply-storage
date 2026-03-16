@@ -9,6 +9,9 @@
 /frontend/dist/
 /frontend/node_modules/
 
+# Root node_modules (if accidentally installed)
+/node_modules/
+
 # Terraform
 terraform/.terraform/
 terraform/*.tfstate

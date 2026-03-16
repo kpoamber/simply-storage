@@ -39,22 +39,22 @@ jobs:
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.HETZNER_HOST }}
-          username: deploy
+          username: ${{ secrets.DEPLOY_USER || 'deploy' }}
           key: ${{ secrets.HETZNER_SSH_KEY }}
           script_stop: true
           script: |
-            # Source server .env to get actual DEPLOY_PROFILE for scheduled runs
+            # Source server .env to get actual credentials and DEPLOY_PROFILE for scheduled runs
             if [ -f ${{ env.DEPLOY_DIR_HETZNER }}/.env ]; then
               set -a; source ${{ env.DEPLOY_DIR_HETZNER }}/.env; set +a
             fi
             export PROFILE="${{ inputs.profile || '' }}"
             export PROFILE="${PROFILE:-${DEPLOY_PROFILE:-small}}"
             export BACKUP_DIR="/backups"
-            export POSTGRES_USER="${{ secrets.POSTGRES_USER || 'innovare' }}"
-            export POSTGRES_DB="${{ secrets.POSTGRES_DB || 'innovare_storage' }}"
+            export POSTGRES_USER="${POSTGRES_USER:-${{ secrets.POSTGRES_USER || 'innovare' }}}"
+            export POSTGRES_DB="${POSTGRES_DB:-${{ secrets.POSTGRES_DB || 'innovare_storage' }}}"
             export COMPOSE_PROJECT="innovare-storage"
-            export BACKUP_RETENTION_DAYS="${{ secrets.BACKUP_RETENTION_DAYS || '30' }}"
-            export WEBHOOK_URL="${{ secrets.BACKUP_WEBHOOK_URL }}"
+            export BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-${{ secrets.BACKUP_RETENTION_DAYS || '30' }}}"
+            export WEBHOOK_URL="${WEBHOOK_URL:-${{ secrets.BACKUP_WEBHOOK_URL }}}"
 
             cd ${{ env.DEPLOY_DIR_HETZNER }}
             chmod +x scripts/backup-cron.sh scripts/backup.sh
@@ -85,18 +85,18 @@ jobs:
           key: ${{ secrets.WINDOWS_SSH_KEY }}
           script_stop: true
           script: |
-            # Source server .env to get actual DEPLOY_PROFILE for scheduled runs
+            # Source server .env to get actual credentials and DEPLOY_PROFILE for scheduled runs
             if [ -f ${{ env.DEPLOY_DIR_WINDOWS }}/.env ]; then
               set -a; source ${{ env.DEPLOY_DIR_WINDOWS }}/.env; set +a
             fi
             export PROFILE="${{ inputs.profile || '' }}"
             export PROFILE="${PROFILE:-${DEPLOY_PROFILE:-small}}"
             export BACKUP_DIR="/c/backups/innovare"
-            export POSTGRES_USER="${{ secrets.POSTGRES_USER || 'innovare' }}"
-            export POSTGRES_DB="${{ secrets.POSTGRES_DB || 'innovare_storage' }}"
+            export POSTGRES_USER="${POSTGRES_USER:-${{ secrets.POSTGRES_USER || 'innovare' }}}"
+            export POSTGRES_DB="${POSTGRES_DB:-${{ secrets.POSTGRES_DB || 'innovare_storage' }}}"
             export COMPOSE_PROJECT="innovare-storage"
-            export BACKUP_RETENTION_DAYS="${{ secrets.BACKUP_RETENTION_DAYS || '30' }}"
-            export WEBHOOK_URL="${{ secrets.BACKUP_WEBHOOK_URL }}"
+            export BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-${{ secrets.BACKUP_RETENTION_DAYS || '30' }}}"
+            export WEBHOOK_URL="${WEBHOOK_URL:-${{ secrets.BACKUP_WEBHOOK_URL }}}"
 
             cd ${{ env.DEPLOY_DIR_WINDOWS }}
             chmod +x scripts/backup-cron.sh scripts/backup.sh

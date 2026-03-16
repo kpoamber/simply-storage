@@ -33,8 +33,8 @@ services:
       - APP_SYNC__POLL_INTERVAL_SECS=5
       - APP_SYNC__TIER_SCAN_INTERVAL_SECS=300
       - RUST_LOG=${RUST_LOG:-info}
-      - APP_AUTH__DEFAULT_ADMIN_USERNAME=myname
-      - APP_AUTH__DEFAULT_ADMIN_PASSWORD=MySecurePass!
+      - APP_AUTH__DEFAULT_ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - APP_AUTH__DEFAULT_ADMIN_PASSWORD=${ADMIN_PASSWORD:-LocalDev2026!}
     volumes:
       - app_data:/app/data
     depends_on:

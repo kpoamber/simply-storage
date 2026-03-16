@@ -13,6 +13,35 @@ services:
     environment:
       - APP_DATABASE__MAX_CONNECTIONS=10
       - APP_SYNC__NUM_WORKERS=4
+    depends_on:
+      citus-init:
+        condition: service_completed_successfully
+
+  citus-init:
+    image: citusdata/citus:12.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      postgres-worker-1:
+        condition: service_healthy
+      postgres-worker-2:
+        condition: service_healthy
+    environment:
+      - PGHOST=postgres
+      - PGUSER=${POSTGRES_USER:-innovare}
+      - PGPASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      - PGDATABASE=${POSTGRES_DB:-innovare_storage}
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        for worker in postgres-worker-1 postgres-worker-2; do
+          echo "Registering $${worker} with Citus coordinator..."
+          psql -c "SELECT citus_add_node('$${worker}', 5432);" 2>/dev/null || echo "  Already registered or skipped"
+        done
+        echo "Citus worker registration complete"
+    restart: "no"
+    networks:
+      - innovare
 
   postgres:
     deploy:
