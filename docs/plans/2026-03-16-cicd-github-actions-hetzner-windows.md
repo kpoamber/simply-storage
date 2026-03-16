@@ -43,13 +43,13 @@
 - Create: `deploy/.env.example` (шаблон переменных окружения)
 - Create: `deploy/docker/nginx-prod.conf` (production nginx с TLS через Certbot/Let's Encrypt)
 
-- [ ] Создать `docker-compose.prod.yml`: image из GHCR вместо build, переменные из .env файла, именованные volumes для данных и БД
-- [ ] Создать `docker-compose.small.yml`: 1 app replica, один postgres без citus workers, сниженные лимиты памяти
-- [ ] Создать `docker-compose.medium.yml`: 2 app replicas, citus coordinator + 2 workers (как текущий docker-compose.yml)
-- [ ] Создать `docker-compose.large.yml`: 4 app replicas, citus coordinator + 4 workers, увеличенные connection pools и буферы
-- [ ] Создать `.env.example` с документированными переменными: IMAGE_TAG, POSTGRES_PASSWORD, APP_AUTH__JWT_SECRET, DOMAIN, BACKUP_RETENTION_DAYS, BACKUP_SCHEDULE и т.д.
-- [ ] Создать production nginx.conf с TLS конфигурацией (certbot-совместимой)
-- [ ] Verify: `docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.small.yml config` валиден
+- [x] Создать `docker-compose.prod.yml`: image из GHCR вместо build, переменные из .env файла, именованные volumes для данных и БД
+- [x] Создать `docker-compose.small.yml`: 1 app replica, один postgres без citus workers, сниженные лимиты памяти
+- [x] Создать `docker-compose.medium.yml`: 2 app replicas, citus coordinator + 2 workers (как текущий docker-compose.yml)
+- [x] Создать `docker-compose.large.yml`: 4 app replicas, citus coordinator + 4 workers, увеличенные connection pools и буферы
+- [x] Создать `.env.example` с документированными переменными: IMAGE_TAG, POSTGRES_PASSWORD, APP_AUTH__JWT_SECRET, DOMAIN, BACKUP_RETENTION_DAYS, BACKUP_SCHEDULE и т.д.
+- [x] Создать production nginx.conf с TLS конфигурацией (certbot-совместимой)
+- [x] Verify: `docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.small.yml config` валиден
 
 ### Task 3: Terraform для Hetzner Cloud
 

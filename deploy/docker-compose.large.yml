@@ -1,0 +1,153 @@
+# Large profile: 4 app replicas, Citus coordinator + 4 workers, increased resources
+# Usage: docker compose -f docker-compose.prod.yml -f docker-compose.large.yml up -d
+
+services:
+  app:
+    deploy:
+      replicas: 4
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+    environment:
+      - APP_DATABASE__MAX_CONNECTIONS=20
+      - APP_SYNC__NUM_WORKERS=8
+
+  postgres:
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+    command: >
+      postgres
+      -c shared_buffers=512MB
+      -c effective_cache_size=1536MB
+      -c work_mem=16MB
+      -c maintenance_work_mem=256MB
+      -c max_connections=200
+      -c max_worker_processes=16
+      -c max_parallel_workers_per_gather=4
+      -c max_parallel_workers=8
+
+  postgres-worker-1:
+    image: citusdata/citus:12.1
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-innovare}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      - POSTGRES_DB=${POSTGRES_DB:-innovare_storage}
+    volumes:
+      - postgres_worker1_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-innovare} -d ${POSTGRES_DB:-innovare_storage}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    restart: unless-stopped
+    networks:
+      - innovare
+
+  postgres-worker-2:
+    image: citusdata/citus:12.1
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-innovare}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      - POSTGRES_DB=${POSTGRES_DB:-innovare_storage}
+    volumes:
+      - postgres_worker2_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-innovare} -d ${POSTGRES_DB:-innovare_storage}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    restart: unless-stopped
+    networks:
+      - innovare
+
+  postgres-worker-3:
+    image: citusdata/citus:12.1
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-innovare}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      - POSTGRES_DB=${POSTGRES_DB:-innovare_storage}
+    volumes:
+      - postgres_worker3_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-innovare} -d ${POSTGRES_DB:-innovare_storage}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    restart: unless-stopped
+    networks:
+      - innovare
+
+  postgres-worker-4:
+    image: citusdata/citus:12.1
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-innovare}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      - POSTGRES_DB=${POSTGRES_DB:-innovare_storage}
+    volumes:
+      - postgres_worker4_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-innovare} -d ${POSTGRES_DB:-innovare_storage}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    restart: unless-stopped
+    networks:
+      - innovare
+
+  nginx:
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+volumes:
+  postgres_worker1_data:
+  postgres_worker2_data:
+  postgres_worker3_data:
+  postgres_worker4_data:

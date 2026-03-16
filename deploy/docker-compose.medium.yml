@@ -1,0 +1,94 @@
+# Medium profile: 2 app replicas, Citus coordinator + 2 workers
+# Usage: docker compose -f docker-compose.prod.yml -f docker-compose.medium.yml up -d
+
+services:
+  app:
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    environment:
+      - APP_DATABASE__MAX_CONNECTIONS=10
+      - APP_SYNC__NUM_WORKERS=4
+
+  postgres:
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c effective_cache_size=512MB
+      -c work_mem=8MB
+      -c maintenance_work_mem=128MB
+      -c max_connections=100
+
+  postgres-worker-1:
+    image: citusdata/citus:12.1
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-innovare}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      - POSTGRES_DB=${POSTGRES_DB:-innovare_storage}
+    volumes:
+      - postgres_worker1_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-innovare} -d ${POSTGRES_DB:-innovare_storage}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    restart: unless-stopped
+    networks:
+      - innovare
+
+  postgres-worker-2:
+    image: citusdata/citus:12.1
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-innovare}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      - POSTGRES_DB=${POSTGRES_DB:-innovare_storage}
+    volumes:
+      - postgres_worker2_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-innovare} -d ${POSTGRES_DB:-innovare_storage}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    restart: unless-stopped
+    networks:
+      - innovare
+
+  nginx:
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+volumes:
+  postgres_worker1_data:
+  postgres_worker2_data:
