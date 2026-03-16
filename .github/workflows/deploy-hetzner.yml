@@ -1,0 +1,140 @@
+name: Deploy to Hetzner Cloud
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+      profile:
+        description: 'Scale profile'
+        required: true
+        type: choice
+        options:
+          - small
+          - medium
+          - large
+        default: small
+      image_tag:
+        description: 'Docker image tag to deploy (default: latest)'
+        required: false
+        type: string
+        default: 'latest'
+
+env:
+  DEPLOY_DIR: /opt/innovare-storage
+  REGISTRY: ghcr.io
+
+jobs:
+  deploy:
+    name: Deploy (${{ inputs.environment }} / ${{ inputs.profile }})
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+      url: https://${{ vars.DOMAIN || 'localhost' }}
+    concurrency:
+      group: deploy-hetzner-${{ inputs.environment }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.HETZNER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.HETZNER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Copy deploy files to server
+        run: |
+          SSH_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+          REMOTE_USER="${{ secrets.DEPLOY_USER || 'deploy' }}"
+          REMOTE_HOST="${{ secrets.HETZNER_HOST }}"
+
+          # Create deploy directory on server
+          ssh ${SSH_OPTS} ${REMOTE_USER}@${REMOTE_HOST} "sudo mkdir -p ${{ env.DEPLOY_DIR }}/scripts ${{ env.DEPLOY_DIR }}/docker"
+
+          # Copy compose files
+          scp ${SSH_OPTS} deploy/docker-compose.prod.yml ${REMOTE_USER}@${REMOTE_HOST}:${{ env.DEPLOY_DIR }}/
+          scp ${SSH_OPTS} deploy/docker-compose.${{ inputs.profile }}.yml ${REMOTE_USER}@${REMOTE_HOST}:${{ env.DEPLOY_DIR }}/
+          scp ${SSH_OPTS} deploy/docker/nginx-prod.conf ${REMOTE_USER}@${REMOTE_HOST}:${{ env.DEPLOY_DIR }}/docker/
+
+          # Copy scripts
+          scp ${SSH_OPTS} deploy/scripts/deploy.sh ${REMOTE_USER}@${REMOTE_HOST}:${{ env.DEPLOY_DIR }}/scripts/
+          scp ${SSH_OPTS} deploy/scripts/backup.sh ${REMOTE_USER}@${REMOTE_HOST}:${{ env.DEPLOY_DIR }}/scripts/
+          scp ${SSH_OPTS} deploy/scripts/restore.sh ${REMOTE_USER}@${REMOTE_HOST}:${{ env.DEPLOY_DIR }}/scripts/
+
+          # Make scripts executable
+          ssh ${SSH_OPTS} ${REMOTE_USER}@${REMOTE_HOST} "chmod +x ${{ env.DEPLOY_DIR }}/scripts/*.sh"
+
+      - name: Deploy application
+        run: |
+          SSH_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+          REMOTE_USER="${{ secrets.DEPLOY_USER || 'deploy' }}"
+          REMOTE_HOST="${{ secrets.HETZNER_HOST }}"
+
+          ssh ${SSH_OPTS} ${REMOTE_USER}@${REMOTE_HOST} << 'DEPLOY_EOF'
+            set -euo pipefail
+
+            export DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
+            export PROFILE="${{ inputs.profile }}"
+            export IMAGE_TAG="${{ inputs.image_tag }}"
+            export GHCR_REGISTRY="${{ env.REGISTRY }}"
+            export GHCR_USER="${{ github.actor }}"
+            export GHCR_TOKEN="${{ secrets.GITHUB_TOKEN }}"
+
+            bash "${DEPLOY_DIR}/scripts/deploy.sh" \
+              --profile "${PROFILE}" \
+              --image-tag "${IMAGE_TAG}" \
+              --deploy-dir "${DEPLOY_DIR}"
+          DEPLOY_EOF
+
+      - name: Post-deploy health check
+        run: |
+          SSH_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+          REMOTE_USER="${{ secrets.DEPLOY_USER || 'deploy' }}"
+          REMOTE_HOST="${{ secrets.HETZNER_HOST }}"
+
+          echo "Verifying deployment health from CI..."
+          sleep 5
+
+          # Check health via SSH (in case server is behind firewall)
+          ssh ${SSH_OPTS} ${REMOTE_USER}@${REMOTE_HOST} "curl -sf http://localhost/health" || {
+            echo "::error::Health check failed after deploy!"
+            ssh ${SSH_OPTS} ${REMOTE_USER}@${REMOTE_HOST} \
+              "docker compose -f ${{ env.DEPLOY_DIR }}/docker-compose.prod.yml -f ${{ env.DEPLOY_DIR }}/docker-compose.${{ inputs.profile }}.yml logs --tail=30 app" || true
+            exit 1
+          }
+
+          echo "Health check passed!"
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+  notify:
+    name: Notify deployment status
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Deployment summary
+        run: |
+          if [[ "${{ needs.deploy.result }}" == "success" ]]; then
+            echo "## ✅ Deploy Successful" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Deploy Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Profile:** ${{ inputs.profile }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image tag:** ${{ inputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY

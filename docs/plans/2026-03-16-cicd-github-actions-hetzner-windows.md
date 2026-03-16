@@ -94,13 +94,13 @@
 - Create: `.github/workflows/deploy-hetzner.yml`
 - Create: `deploy/scripts/deploy.sh` (скрипт деплоя на сервере)
 
-- [ ] Создать deploy.sh: pull GHCR image, подставить .env, запуск pre-deploy backup (вызов backup.sh), docker compose up с нужным профилем, health check, rollback при failure (восстановление из pre-deploy бэкапа)
-- [ ] Создать workflow triggered on: workflow_dispatch (manual) с inputs: environment (staging/production), profile (small/medium/large)
-- [ ] Добавить job `deploy`: SSH на Hetzner сервер, копирование deploy/ файлов, запуск deploy.sh
-- [ ] Использовать GitHub Environments (staging, production) с required reviewers для production
-- [ ] Secrets: HETZNER_SSH_KEY, HETZNER_HOST, DEPLOY_ENV (через environment secrets)
-- [ ] Добавить post-deploy health check: curl /health endpoint
-- [ ] Verify: workflow syntax валиден, все secrets задокументированы
+- [x] Создать deploy.sh: pull GHCR image, подставить .env, запуск pre-deploy backup (вызов backup.sh), docker compose up с нужным профилем, health check, rollback при failure (восстановление из pre-deploy бэкапа)
+- [x] Создать workflow triggered on: workflow_dispatch (manual) с inputs: environment (staging/production), profile (small/medium/large)
+- [x] Добавить job `deploy`: SSH на Hetzner сервер, копирование deploy/ файлов, запуск deploy.sh
+- [x] Использовать GitHub Environments (staging, production) с required reviewers для production
+- [x] Secrets: HETZNER_SSH_KEY, HETZNER_HOST, DEPLOY_ENV (через environment secrets)
+- [x] Добавить post-deploy health check: curl /health endpoint
+- [x] Verify: workflow syntax валиден, все secrets задокументированы
 
 ### Task 6: Deploy Workflow - Windows Server
 
