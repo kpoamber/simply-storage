@@ -60,7 +60,7 @@ write_files:
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] backup.sh not found, skipping" >> "$LOG_FILE"
       fi
       # Rotate old backups
-      find "$BACKUP_DIR" -name "backup_*.tar.gz" -mtime +$RETENTION_DAYS -delete 2>/dev/null || true
+      find "$BACKUP_DIR" -name "backup_*.tar.gz" -mtime +"$RETENTION_DAYS" -delete 2>/dev/null || true
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] Backup complete" >> "$LOG_FILE"
 
 runcmd:
@@ -71,7 +71,7 @@ runcmd:
   # Authenticate to GHCR if credentials provided
   - |
     if [ -n "${ghcr_token}" ] && [ -n "${ghcr_user}" ]; then
-      echo "${ghcr_token}" | docker login ghcr.io -u "${ghcr_user}" --password-stdin
+      su - deploy -c "echo '${ghcr_token}' | docker login ghcr.io -u '${ghcr_user}' --password-stdin"
     fi
 
   # Mount backup volume (wait for Terraform volume attachment to complete)

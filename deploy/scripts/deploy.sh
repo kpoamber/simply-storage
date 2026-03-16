@@ -146,7 +146,13 @@ if [[ -n "${ROLLBACK_TAG}" ]]; then
 
     # Roll back image (DB restore is not automatic - run restore.sh manually if needed)
     echo "Rolling back image..."
-    export IMAGE_TAG="${ROLLBACK_TAG##*:}"
+    if [[ "${ROLLBACK_TAG}" == *":"* ]]; then
+        export IMAGE_TAG="${ROLLBACK_TAG##*:}"
+    else
+        echo "WARNING: Could not extract tag from ${ROLLBACK_TAG}, using 'latest'"
+        export IMAGE_TAG="latest"
+    fi
+    ${COMPOSE_CMD} pull app 2>/dev/null || true
     ${COMPOSE_CMD} up -d --remove-orphans
     echo ""
 

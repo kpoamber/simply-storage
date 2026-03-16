@@ -11,7 +11,7 @@ DEPLOY_DIR="${DEPLOY_DIR:-C:/innovare-storage}"
 PROFILE="${PROFILE:-small}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-innovare-storage}"
-BACKUP_DIR="${BACKUP_DIR:-C:/innovare-storage/backups}"
+BACKUP_DIR="${BACKUP_DIR:-/c/backups/innovare}"
 HEALTH_URL="${HEALTH_URL:-http://localhost:80/health}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-120}"
 SKIP_BACKUP="${SKIP_BACKUP:-false}"
@@ -146,7 +146,13 @@ if [[ -n "${ROLLBACK_TAG}" ]]; then
 
     # Roll back image (DB restore is not automatic - run restore.sh manually if needed)
     echo "Rolling back image..."
-    export IMAGE_TAG="${ROLLBACK_TAG##*:}"
+    if [[ "${ROLLBACK_TAG}" == *":"* ]]; then
+        export IMAGE_TAG="${ROLLBACK_TAG##*:}"
+    else
+        echo "WARNING: Could not extract tag from ${ROLLBACK_TAG}, using 'latest'"
+        export IMAGE_TAG="latest"
+    fi
+    ${COMPOSE_CMD} pull app 2>/dev/null || true
     ${COMPOSE_CMD} up -d --remove-orphans
     echo ""
 
