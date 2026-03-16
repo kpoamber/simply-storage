@@ -4,17 +4,25 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   build-and-push:
+    needs: ci
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    outputs:
+      image_tag: ${{ steps.image-tag.outputs.tag }}
 
     steps:
       - name: Checkout repository
@@ -35,6 +43,8 @@ jobs:
           tags: |
             type=sha,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -48,3 +58,35 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Output image tag
+        id: image-tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Optional: auto-deploy to Hetzner after successful build
+  # Enable by setting repository variable AUTO_DEPLOY_HETZNER=true
+  deploy-hetzner:
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' && vars.AUTO_DEPLOY_HETZNER == 'true'
+    uses: ./.github/workflows/deploy-hetzner.yml
+    with:
+      environment: staging
+      profile: small
+      image_tag: ${{ needs.build-and-push.outputs.image_tag }}
+    secrets: inherit
+
+  # Optional: auto-deploy to Windows after successful build
+  # Enable by setting repository variable AUTO_DEPLOY_WINDOWS=true
+  deploy-windows:
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' && vars.AUTO_DEPLOY_WINDOWS == 'true'
+    uses: ./.github/workflows/deploy-windows.yml
+    with:
+      profile: small
+      image_tag: ${{ needs.build-and-push.outputs.image_tag }}
+    secrets: inherit

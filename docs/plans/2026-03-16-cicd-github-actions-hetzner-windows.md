@@ -120,11 +120,11 @@
 **Files:**
 - Modify: `.github/workflows/build-push.yml`
 
-- [ ] Добавить зависимость от CI workflow (needs: ci) - деплой только после прохождения тестов
-- [ ] Добавить тегирование образа по semver тегам (type=semver для git tags v*)
-- [ ] Добавить output image_tag для использования в deploy workflows
-- [ ] Добавить optional auto-trigger deploy workflows после успешного push (через workflow_call)
-- [ ] Verify: push в main вызывает CI -> Build -> (optional) Deploy chain
+- [x] Добавить зависимость от CI workflow (needs: ci) - деплой только после прохождения тестов
+- [x] Добавить тегирование образа по semver тегам (type=semver для git tags v*)
+- [x] Добавить output image_tag для использования в deploy workflows
+- [x] Добавить optional auto-trigger deploy workflows после успешного push (через workflow_call)
+- [x] Verify: push в main вызывает CI -> Build -> (optional) Deploy chain
 
 ### Task 8: Verify acceptance criteria
 

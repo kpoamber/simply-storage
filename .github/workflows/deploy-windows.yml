@@ -17,6 +17,18 @@ on:
         required: false
         type: string
         default: 'latest'
+  workflow_call:
+    inputs:
+      profile:
+        description: 'Scale profile'
+        required: true
+        type: string
+        default: 'small'
+      image_tag:
+        description: 'Docker image tag to deploy'
+        required: false
+        type: string
+        default: 'latest'
 
 env:
   DEPLOY_DIR: C:/innovare-storage
