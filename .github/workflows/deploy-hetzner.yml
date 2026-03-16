@@ -84,8 +84,8 @@ jobs:
           REMOTE_USER="${{ secrets.DEPLOY_USER || 'deploy' }}"
           REMOTE_HOST="${{ secrets.HETZNER_HOST }}"
 
-          # Create deploy directory on server
-          ssh ${SSH_OPTS} ${REMOTE_USER}@${REMOTE_HOST} "sudo mkdir -p ${{ env.DEPLOY_DIR }}/scripts ${{ env.DEPLOY_DIR }}/docker"
+          # Create deploy directory on server (owned by deploy user from cloud-init)
+          ssh ${SSH_OPTS} ${REMOTE_USER}@${REMOTE_HOST} "mkdir -p ${{ env.DEPLOY_DIR }}/scripts ${{ env.DEPLOY_DIR }}/docker"
 
           # Copy compose files
           scp ${SSH_OPTS} deploy/docker-compose.prod.yml ${REMOTE_USER}@${REMOTE_HOST}:${{ env.DEPLOY_DIR }}/

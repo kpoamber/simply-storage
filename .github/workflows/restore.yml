@@ -43,7 +43,15 @@ jobs:
           BACKUP_FILE: ${{ inputs.backup_file }}
         run: |
           if [[ -z "${BACKUP_DATE}" && -z "${BACKUP_FILE}" ]]; then
-            echo "ERROR: Must specify either backup_date or backup_file"
+            echo "::error::Must specify either backup_date or backup_file"
+            exit 1
+          fi
+          if [[ -n "${BACKUP_DATE}" && ! "${BACKUP_DATE}" =~ ^[0-9]{8}$ ]]; then
+            echo "::error::backup_date must be in YYYYMMDD format"
+            exit 1
+          fi
+          if [[ -n "${BACKUP_FILE}" && ! "${BACKUP_FILE}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+            echo "::error::backup_file contains invalid characters"
             exit 1
           fi
 
@@ -112,7 +120,15 @@ jobs:
           BACKUP_FILE: ${{ inputs.backup_file }}
         run: |
           if [[ -z "${BACKUP_DATE}" && -z "${BACKUP_FILE}" ]]; then
-            echo "ERROR: Must specify either backup_date or backup_file"
+            echo "::error::Must specify either backup_date or backup_file"
+            exit 1
+          fi
+          if [[ -n "${BACKUP_DATE}" && ! "${BACKUP_DATE}" =~ ^[0-9]{8}$ ]]; then
+            echo "::error::backup_date must be in YYYYMMDD format"
+            exit 1
+          fi
+          if [[ -n "${BACKUP_FILE}" && ! "${BACKUP_FILE}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+            echo "::error::backup_file contains invalid characters"
             exit 1
           fi
 

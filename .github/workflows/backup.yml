@@ -31,7 +31,7 @@ jobs:
   backup-hetzner:
     name: Backup (Hetzner)
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || inputs.server_target == 'hetzner'
+    if: (github.event_name == 'schedule' && vars.BACKUP_HETZNER != 'false') || inputs.server_target == 'hetzner'
     environment: production
 
     steps:
@@ -43,7 +43,12 @@ jobs:
           key: ${{ secrets.HETZNER_SSH_KEY }}
           script_stop: true
           script: |
-            export PROFILE="${{ inputs.profile || 'small' }}"
+            # Source server .env to get actual DEPLOY_PROFILE for scheduled runs
+            if [ -f ${{ env.DEPLOY_DIR_HETZNER }}/.env ]; then
+              set -a; source ${{ env.DEPLOY_DIR_HETZNER }}/.env; set +a
+            fi
+            export PROFILE="${{ inputs.profile || '' }}"
+            export PROFILE="${PROFILE:-${DEPLOY_PROFILE:-small}}"
             export BACKUP_DIR="/backups"
             export POSTGRES_USER="${{ secrets.POSTGRES_USER || 'innovare' }}"
             export POSTGRES_DB="${{ secrets.POSTGRES_DB || 'innovare_storage' }}"
@@ -68,7 +73,7 @@ jobs:
   backup-windows:
     name: Backup (Windows)
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || inputs.server_target == 'windows'
+    if: (github.event_name == 'schedule' && vars.BACKUP_WINDOWS == 'true') || inputs.server_target == 'windows'
     environment: production
 
     steps:
@@ -80,7 +85,12 @@ jobs:
           key: ${{ secrets.WINDOWS_SSH_KEY }}
           script_stop: true
           script: |
-            export PROFILE="${{ inputs.profile || 'small' }}"
+            # Source server .env to get actual DEPLOY_PROFILE for scheduled runs
+            if [ -f ${{ env.DEPLOY_DIR_WINDOWS }}/.env ]; then
+              set -a; source ${{ env.DEPLOY_DIR_WINDOWS }}/.env; set +a
+            fi
+            export PROFILE="${{ inputs.profile || '' }}"
+            export PROFILE="${PROFILE:-${DEPLOY_PROFILE:-small}}"
             export BACKUP_DIR="/c/backups/innovare"
             export POSTGRES_USER="${{ secrets.POSTGRES_USER || 'innovare' }}"
             export POSTGRES_DB="${{ secrets.POSTGRES_DB || 'innovare_storage' }}"

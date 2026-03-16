@@ -76,7 +76,7 @@ jobs:
     uses: ./.github/workflows/deploy-hetzner.yml
     with:
       environment: staging
-      profile: small
+      profile: ${{ vars.DEPLOY_PROFILE || 'small' }}
       image_tag: ${{ needs.build-and-push.outputs.image_tag }}
     secrets: inherit
 
@@ -87,6 +87,6 @@ jobs:
     if: github.ref == 'refs/heads/main' && vars.AUTO_DEPLOY_WINDOWS == 'true'
     uses: ./.github/workflows/deploy-windows.yml
     with:
-      profile: small
+      profile: ${{ vars.DEPLOY_PROFILE || 'small' }}
       image_tag: ${{ needs.build-and-push.outputs.image_tag }}
     secrets: inherit

@@ -62,7 +62,7 @@ resource "hcloud_volume" "backups" {
 resource "hcloud_volume_attachment" "backups" {
   volume_id = hcloud_volume.backups.id
   server_id = hcloud_server.innovare.id
-  automount = true
+  automount = false
 }
 
 # --- Server ---
