@@ -21,7 +21,8 @@ server {
 
 # HTTPS server
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
+    http2 on;
     server_name ${DOMAIN} www.${DOMAIN};
 
     # TLS certificates (managed by Certbot)

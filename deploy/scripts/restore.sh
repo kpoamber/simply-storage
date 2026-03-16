@@ -82,7 +82,7 @@ echo "[1] Extracting backup..."
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TEMP_DIR}"' EXIT
 tar -xzf "${BACKUP_FILE}" -C "${TEMP_DIR}"
-BACKUP_NAME="$(ls "${TEMP_DIR}")"
+BACKUP_NAME="$(ls -1 "${TEMP_DIR}" | head -1)"
 EXTRACTED="${TEMP_DIR}/${BACKUP_NAME}"
 echo "  Extracted to: ${EXTRACTED}"
 echo ""

@@ -70,7 +70,7 @@ jobs:
           REMOTE_USER="${{ secrets.WINDOWS_USER }}"
           REMOTE_HOST="${{ secrets.WINDOWS_HOST }}"
 
-          ssh ${SSH_OPTS} ${REMOTE_USER}@${REMOTE_HOST} "if not exist \"${{ env.DEPLOY_DIR }}\\scripts\" mkdir \"${{ env.DEPLOY_DIR }}\\scripts\" && if not exist \"${{ env.DEPLOY_DIR }}\\docker\" mkdir \"${{ env.DEPLOY_DIR }}\\docker\""
+          ssh ${SSH_OPTS} ${REMOTE_USER}@${REMOTE_HOST} "bash -l -c 'mkdir -p \"${{ env.DEPLOY_DIR }}/scripts\" \"${{ env.DEPLOY_DIR }}/docker\"'"
 
       - name: Copy deploy files to server
         run: |
