@@ -1,0 +1,156 @@
+name: Database Restore
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_date:
+        description: 'Backup date (YYYYMMDD format, finds latest backup for that date)'
+        required: false
+        type: string
+      backup_file:
+        description: 'Full path to backup file (overrides backup_date)'
+        required: false
+        type: string
+      profile:
+        description: 'Deployment profile'
+        required: true
+        default: 'small'
+        type: choice
+        options:
+          - small
+          - medium
+          - large
+      server_target:
+        description: 'Server to restore'
+        required: true
+        default: 'hetzner'
+        type: choice
+        options:
+          - hetzner
+          - windows
+
+env:
+  DEPLOY_DIR: /opt/innovare-storage
+
+jobs:
+  restore-hetzner:
+    name: Restore (Hetzner)
+    runs-on: ubuntu-latest
+    if: inputs.server_target == 'hetzner'
+    environment: production
+
+    steps:
+      - name: Validate inputs
+        run: |
+          if [[ -z "${{ inputs.backup_date }}" && -z "${{ inputs.backup_file }}" ]]; then
+            echo "ERROR: Must specify either backup_date or backup_file"
+            exit 1
+          fi
+
+      - name: Restore database on Hetzner server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: deploy
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          command_timeout: 30m
+          script_stop: true
+          script: |
+            export BACKUP_DIR="/mnt/backups"
+            export POSTGRES_USER="${{ secrets.POSTGRES_USER || 'innovare' }}"
+            export POSTGRES_DB="${{ secrets.POSTGRES_DB || 'innovare_storage' }}"
+            export COMPOSE_PROJECT="innovare-storage"
+            export DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
+            export PROFILE="${{ inputs.profile }}"
+            export HEALTH_URL="http://localhost:80/health"
+
+            cd ${{ env.DEPLOY_DIR }}
+            chmod +x deploy/scripts/restore.sh
+
+            RESTORE_ARGS="--profile ${{ inputs.profile }}"
+            if [[ -n "${{ inputs.backup_file }}" ]]; then
+              RESTORE_ARGS="${RESTORE_ARGS} --file ${{ inputs.backup_file }}"
+            else
+              RESTORE_ARGS="${RESTORE_ARGS} --date ${{ inputs.backup_date }}"
+            fi
+
+            ./deploy/scripts/restore.sh ${RESTORE_ARGS}
+
+      - name: Post-restore health check
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: deploy
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          script: |
+            echo "Checking application health..."
+            for i in $(seq 1 30); do
+              if curl -sf http://localhost:80/health > /dev/null 2>&1; then
+                echo "Health check passed!"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "WARNING: Health check did not pass within 60 seconds"
+            exit 1
+
+  restore-windows:
+    name: Restore (Windows)
+    runs-on: ubuntu-latest
+    if: inputs.server_target == 'windows'
+    environment: production
+
+    steps:
+      - name: Validate inputs
+        run: |
+          if [[ -z "${{ inputs.backup_date }}" && -z "${{ inputs.backup_file }}" ]]; then
+            echo "ERROR: Must specify either backup_date or backup_file"
+            exit 1
+          fi
+
+      - name: Restore database on Windows server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.WINDOWS_HOST }}
+          username: ${{ secrets.WINDOWS_USER }}
+          key: ${{ secrets.WINDOWS_SSH_KEY }}
+          command_timeout: 30m
+          script_stop: true
+          script: |
+            export BACKUP_DIR="/c/backups/innovare"
+            export POSTGRES_USER="${{ secrets.POSTGRES_USER || 'innovare' }}"
+            export POSTGRES_DB="${{ secrets.POSTGRES_DB || 'innovare_storage' }}"
+            export COMPOSE_PROJECT="innovare-storage"
+            export DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
+            export PROFILE="${{ inputs.profile }}"
+            export HEALTH_URL="http://localhost:80/health"
+
+            cd ${{ env.DEPLOY_DIR }}
+            chmod +x deploy/scripts/restore.sh
+
+            RESTORE_ARGS="--profile ${{ inputs.profile }}"
+            if [[ -n "${{ inputs.backup_file }}" ]]; then
+              RESTORE_ARGS="${RESTORE_ARGS} --file ${{ inputs.backup_file }}"
+            else
+              RESTORE_ARGS="${RESTORE_ARGS} --date ${{ inputs.backup_date }}"
+            fi
+
+            ./deploy/scripts/restore.sh ${RESTORE_ARGS}
+
+      - name: Post-restore health check
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.WINDOWS_HOST }}
+          username: ${{ secrets.WINDOWS_USER }}
+          key: ${{ secrets.WINDOWS_SSH_KEY }}
+          script: |
+            echo "Checking application health..."
+            for i in $(seq 1 30); do
+              if curl -sf http://localhost:80/health > /dev/null 2>&1; then
+                echo "Health check passed!"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "WARNING: Health check did not pass within 60 seconds"
+            exit 1

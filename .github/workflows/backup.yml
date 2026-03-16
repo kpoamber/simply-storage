@@ -1,0 +1,93 @@
+name: Database Backup
+
+on:
+  schedule:
+    # Daily at 2:00 AM UTC (configurable via BACKUP_SCHEDULE in .env)
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Deployment profile'
+        required: true
+        default: 'small'
+        type: choice
+        options:
+          - small
+          - medium
+          - large
+      server_target:
+        description: 'Server to backup'
+        required: true
+        default: 'hetzner'
+        type: choice
+        options:
+          - hetzner
+          - windows
+
+env:
+  DEPLOY_DIR: /opt/innovare-storage
+
+jobs:
+  backup-hetzner:
+    name: Backup (Hetzner)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || inputs.server_target == 'hetzner'
+    environment: production
+
+    steps:
+      - name: Run backup on Hetzner server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: deploy
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          script_stop: true
+          script: |
+            export PROFILE="${{ inputs.profile || 'small' }}"
+            export BACKUP_DIR="/mnt/backups"
+            export POSTGRES_USER="${{ secrets.POSTGRES_USER || 'innovare' }}"
+            export POSTGRES_DB="${{ secrets.POSTGRES_DB || 'innovare_storage' }}"
+            export COMPOSE_PROJECT="innovare-storage"
+            export BACKUP_RETENTION_DAYS="${{ secrets.BACKUP_RETENTION_DAYS || '30' }}"
+            export WEBHOOK_URL="${{ secrets.BACKUP_WEBHOOK_URL }}"
+
+            cd ${{ env.DEPLOY_DIR }}
+            chmod +x deploy/scripts/backup-cron.sh deploy/scripts/backup.sh
+            ./deploy/scripts/backup-cron.sh
+
+      - name: Verify backup created
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: deploy
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          script: |
+            echo "Latest backups:"
+            ls -lht /mnt/backups/backup_*.tar.gz 2>/dev/null | head -5
+
+  backup-windows:
+    name: Backup (Windows)
+    runs-on: ubuntu-latest
+    if: inputs.server_target == 'windows'
+    environment: production
+
+    steps:
+      - name: Run backup on Windows server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.WINDOWS_HOST }}
+          username: ${{ secrets.WINDOWS_USER }}
+          key: ${{ secrets.WINDOWS_SSH_KEY }}
+          script_stop: true
+          script: |
+            export PROFILE="${{ inputs.profile || 'small' }}"
+            export BACKUP_DIR="/c/backups/innovare"
+            export POSTGRES_USER="${{ secrets.POSTGRES_USER || 'innovare' }}"
+            export POSTGRES_DB="${{ secrets.POSTGRES_DB || 'innovare_storage' }}"
+            export COMPOSE_PROJECT="innovare-storage"
+            export BACKUP_RETENTION_DAYS="${{ secrets.BACKUP_RETENTION_DAYS || '30' }}"
+            export WEBHOOK_URL="${{ secrets.BACKUP_WEBHOOK_URL }}"
+
+            cd ${{ env.DEPLOY_DIR }}
+            chmod +x deploy/scripts/backup-cron.sh deploy/scripts/backup.sh
+            ./deploy/scripts/backup-cron.sh

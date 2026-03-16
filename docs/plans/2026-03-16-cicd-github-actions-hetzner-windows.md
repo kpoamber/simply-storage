@@ -80,13 +80,13 @@
 - Create: `.github/workflows/backup.yml` (ручной и scheduled workflow для бэкапов)
 - Create: `.github/workflows/restore.yml` (ручной workflow для восстановления)
 
-- [ ] Создать `backup.sh`: pg_dump для small-профиля (standalone postgres), pg_dump coordinator + каждого worker для medium/large (Citus), сжатие через gzip, именование файлов с timestamp, копирование на backup volume
-- [ ] Создать `backup-cron.sh`: вызов backup.sh с логированием в файл, ротация бэкапов по BACKUP_RETENTION_DAYS (удаление старых), отправка уведомления при ошибке (опционально через webhook)
-- [ ] Создать `restore.sh`: принимает путь к бэкапу или дату, останавливает app-контейнеры, восстанавливает БД через psql (coordinator + workers для Citus), запускает миграции если нужно, перезапускает app-контейнеры, health check
-- [ ] Создать GitHub workflow `backup.yml`: schedule (ежедневно, настраиваемый cron) + workflow_dispatch, SSH на сервер и запуск backup.sh, upload artifact с бэкапом (опционально)
-- [ ] Создать GitHub workflow `restore.yml`: workflow_dispatch с input backup_date или backup_file, SSH на сервер, запуск restore.sh, health check после восстановления
-- [ ] Добавить в docker-compose.prod.yml volume для бэкапов: `backups:/backups`
-- [ ] Verify: backup.sh и restore.sh проходят shellcheck, workflows синтаксически валидны
+- [x] Создать `backup.sh`: pg_dump для small-профиля (standalone postgres), pg_dump coordinator + каждого worker для medium/large (Citus), сжатие через gzip, именование файлов с timestamp, копирование на backup volume
+- [x] Создать `backup-cron.sh`: вызов backup.sh с логированием в файл, ротация бэкапов по BACKUP_RETENTION_DAYS (удаление старых), отправка уведомления при ошибке (опционально через webhook)
+- [x] Создать `restore.sh`: принимает путь к бэкапу или дату, останавливает app-контейнеры, восстанавливает БД через psql (coordinator + workers для Citus), запускает миграции если нужно, перезапускает app-контейнеры, health check
+- [x] Создать GitHub workflow `backup.yml`: schedule (ежедневно, настраиваемый cron) + workflow_dispatch, SSH на сервер и запуск backup.sh, upload artifact с бэкапом (опционально)
+- [x] Создать GitHub workflow `restore.yml`: workflow_dispatch с input backup_date или backup_file, SSH на сервер, запуск restore.sh, health check после восстановления
+- [x] Добавить в docker-compose.prod.yml volume для бэкапов: `backups:/backups`
+- [x] Verify: backup.sh и restore.sh проходят shellcheck, workflows синтаксически валидны
 
 ### Task 5: Deploy Workflow - Hetzner Cloud
 
