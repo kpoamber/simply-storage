@@ -32,7 +32,7 @@ done
 # --- Resolve backup file ---
 if [[ -n "${BACKUP_DATE}" && -z "${BACKUP_FILE}" ]]; then
     echo "Searching for latest backup on date ${BACKUP_DATE}..."
-    BACKUP_FILE="$(find "${BACKUP_DIR}" -maxdepth 1 -name "backup_*_${BACKUP_DATE}_*.tar.gz" -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- || true)"
+    BACKUP_FILE="$(find "${BACKUP_DIR}" -maxdepth 1 -name "backup_*_${BACKUP_DATE}_*.tar.gz" -type f -print 2>/dev/null | sort -r | head -1 || true)"
     if [[ -z "${BACKUP_FILE}" ]]; then
         echo "ERROR: No backup found for date ${BACKUP_DATE}"
         exit 1

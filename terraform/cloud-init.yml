@@ -31,23 +31,36 @@ write_files:
       ${key}=${value}
 %{ endfor ~}
 
+  - path: /etc/ssh/sshd_config.d/99-hardening.conf
+    permissions: "0644"
+    owner: root:root
+    content: |
+      PasswordAuthentication no
+      PermitRootLogin no
+
   - path: /opt/innovare-storage/backup-cron.sh
     permissions: "0755"
     owner: deploy:deploy
     content: |
       #!/usr/bin/env bash
       set -euo pipefail
-      BACKUP_DIR="/backups"
+      # Source deployment env vars for PROFILE and credentials
+      if [ -f /opt/innovare-storage/.env ]; then
+        set -a; source /opt/innovare-storage/.env; set +a
+      fi
+      export PROFILE="${DEPLOY_PROFILE:-small}"
+      export BACKUP_DIR="/backups"
+      export COMPOSE_PROJECT="innovare-storage"
       RETENTION_DAYS="${lookup(app_env_vars, "BACKUP_RETENTION_DAYS", "30")}"
       LOG_FILE="/var/log/innovare-backup.log"
-      echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting backup..." >> "$LOG_FILE"
-      if [ -f /opt/innovare-storage/deploy/scripts/backup.sh ]; then
-        /opt/innovare-storage/deploy/scripts/backup.sh >> "$LOG_FILE" 2>&1
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting backup (profile: $PROFILE)..." >> "$LOG_FILE"
+      if [ -f /opt/innovare-storage/scripts/backup.sh ]; then
+        /opt/innovare-storage/scripts/backup.sh --profile "$PROFILE" >> "$LOG_FILE" 2>&1
       else
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] backup.sh not found, skipping" >> "$LOG_FILE"
       fi
       # Rotate old backups
-      find "$BACKUP_DIR" -name "*.sql.gz" -mtime +$RETENTION_DAYS -delete 2>/dev/null || true
+      find "$BACKUP_DIR" -name "backup_*.tar.gz" -mtime +$RETENTION_DAYS -delete 2>/dev/null || true
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] Backup complete" >> "$LOG_FILE"
 
 runcmd:
@@ -61,15 +74,23 @@ runcmd:
       echo "${ghcr_token}" | docker login ghcr.io -u "${ghcr_user}" --password-stdin
     fi
 
-  # Mount backup volume
+  # Mount backup volume (wait for Terraform volume attachment to complete)
   - mkdir -p /backups
   - |
     DEVICE="${volume_device}"
+    echo "Waiting for backup volume $DEVICE to become available..."
+    for i in $(seq 1 60); do
+      [ -b "$DEVICE" ] && break
+      sleep 5
+    done
     if [ -b "$DEVICE" ]; then
       # Format only if not already formatted
       blkid "$DEVICE" || mkfs.ext4 "$DEVICE"
       mount "$DEVICE" /backups
       echo "$DEVICE /backups ext4 defaults 0 2" >> /etc/fstab
+      echo "Backup volume mounted at /backups"
+    else
+      echo "WARNING: Backup volume $DEVICE not available after 5 minutes. Backups will use root filesystem."
     fi
   - chown deploy:deploy /backups
 
@@ -83,7 +104,5 @@ runcmd:
     echo "$CRON_SCHEDULE deploy /opt/innovare-storage/backup-cron.sh" > /etc/cron.d/innovare-backup
     chmod 0644 /etc/cron.d/innovare-backup
 
-  # Configure SSH hardening
-  - sed -i 's/#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
-  - sed -i 's/#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+  # Restart SSH to pick up hardening config from write_files
   - systemctl restart sshd

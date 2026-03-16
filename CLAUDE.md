@@ -101,7 +101,7 @@ Auth-related:
 - `deploy/docker-compose.prod.yml` - Base production compose using GHCR image, with nginx, certbot, named volumes
 - `deploy/docker-compose.{small,medium,large}.yml` - Scale profile overrides (1/2/4 app replicas, standalone postgres / Citus 2 workers / Citus 4 workers)
 - `deploy/.env.example` - Template for all production environment variables
-- `deploy/docker/nginx-prod.conf` - Production nginx config with TLS via Certbot/Let's Encrypt
+- `deploy/docker/nginx-prod.conf.template` - Production nginx config template with TLS (uses envsubst for DOMAIN variable)
 - `deploy/scripts/deploy.sh` - Hetzner deploy script: GHCR pull, pre-deploy backup, docker compose up with profile, health check, rollback on failure
 - `deploy/scripts/deploy-windows.sh` - Windows Server deploy script via SSH with same backup/rollback pattern
 - `deploy/scripts/backup.sh` - PostgreSQL/Citus backup: pg_dump for standalone, coordinator+workers for Citus; gzip compression

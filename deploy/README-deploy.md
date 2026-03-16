@@ -30,84 +30,49 @@ Access the service at `http://localhost`.
 | `HMAC_SECRET` | `change-me-in-production` | HMAC secret for signed URLs |
 | `RUST_LOG` | `info` | Log level (trace, debug, info, warn, error) |
 
-## Cloud Deployment (Hetzner / DigitalOcean)
+## Cloud Deployment (Hetzner / Windows Server)
 
 ### Prerequisites
 
 1. Docker image pushed to GHCR (automatic via GitHub Actions on push to `main`)
-2. A GHCR personal access token with `read:packages` scope
-3. A Hetzner Cloud or DigitalOcean account
+2. SSH access to the target server
+3. Docker and Docker Compose installed on the target server
 
-### One-Click Deploy (New Server)
-
-#### Option A: Cloud-Init (Automated)
-
-1. Edit `deploy/cloud-init.yml` and set your GHCR credentials and image repo
-2. Create a new server via Hetzner Cloud Console or DigitalOcean:
-   - Select Ubuntu 22.04+ or Debian 12+
-   - Paste the cloud-init YAML as user-data
-3. The server will automatically:
-   - Install Docker
-   - Authenticate to GHCR
-   - Pull and start the Innovare Storage image
-   - Create a systemd service for auto-restart
-
-#### Option B: Deploy Script (Manual)
-
-SSH into the server and run:
+### Option A: Terraform (Hetzner)
 
 ```bash
-# First-time setup
-curl -O https://raw.githubusercontent.com/yourorg/innovare-storage/main/deploy/deploy.sh
-chmod +x deploy.sh
-
-# Standalone deploy
-IMAGE_REPO=ghcr.io/yourorg/innovare-storage:latest ./deploy.sh
-
-# Or join an existing cluster
-IMAGE_REPO=ghcr.io/yourorg/innovare-storage:latest ./deploy.sh --join 10.0.0.1
+cd terraform
+terraform init
+terraform plan -var-file=tfvars/small.tfvars
+terraform apply -var-file=tfvars/small.tfvars
 ```
 
-### Adding a New Node to an Existing Cluster
+The Terraform setup provisions a server with Docker, creates a deploy user, mounts a backup volume, and configures backup cron via `terraform/cloud-init.yml`.
+
+### Option B: Deploy Script (Manual)
 
 ```bash
-./deploy.sh --join <existing-node-ip>
+# Deploy with small profile
+deploy/scripts/deploy.sh --profile small --image-tag latest --deploy-dir /opt/innovare-storage
+
+# Deploy with medium profile (Citus + 2 workers)
+deploy/scripts/deploy.sh --profile medium --image-tag v1.0.0
+
+# Skip pre-deploy backup
+deploy/scripts/deploy.sh --profile small --skip-backup
 ```
 
-This will:
-1. Pull the latest Docker image from GHCR
-2. Fetch configuration from the existing node via `GET /api/system/config-export`
-3. Write the database URL and HMAC secret to a local config file
-4. Start the service container
-5. The new instance registers itself and begins sending heartbeats
+### Option C: GitHub Actions (Automated)
 
-### Rolling Updates
-
-To update to the latest image:
-
-```bash
-./deploy.sh --update
-```
-
-Or specify a specific image:
-
-```bash
-./deploy.sh --update --image ghcr.io/yourorg/innovare-storage:abc1234
-```
+Use the `deploy-hetzner.yml` or `deploy-windows.yml` workflows via GitHub Actions. Enable auto-deploy by setting repository variables `AUTO_DEPLOY_HETZNER=true` or `AUTO_DEPLOY_WINDOWS=true`.
 
 ### TLS Configuration
 
-For HTTPS support:
-
-1. Place your TLS certificates at a known path:
-   - `fullchain.pem` - Certificate chain
-   - `privkey.pem` - Private key
-
-2. Mount them in docker-compose.yml (uncomment the certs volume)
-
-3. Uncomment the HTTPS server block in `docker/nginx.conf`
-
-Alternatively, use Let's Encrypt with certbot on the host and mount the generated certs.
+TLS is managed automatically via Certbot/Let's Encrypt:
+1. Set the `DOMAIN` environment variable in your `.env` file
+2. On first deploy, a self-signed placeholder certificate is generated
+3. Run certbot to obtain a real certificate: `docker compose exec certbot certbot certonly --webroot -w /var/www/certbot -d yourdomain.com`
+4. The certbot container auto-renews certificates every 12 hours
 
 ## CI/CD Pipeline
 
@@ -141,6 +106,8 @@ Alternatively, use Let's Encrypt with certbot on the host and mount the generate
 Use compose overlay files for different server sizes:
 
 ```bash
+# From the deploy/ directory:
+
 # Small (1 app replica, standalone Postgres)
 docker compose -f docker-compose.prod.yml -f docker-compose.small.yml up -d
 

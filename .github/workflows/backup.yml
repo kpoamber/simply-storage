@@ -2,7 +2,6 @@ name: Database Backup
 
 on:
   schedule:
-    # Daily at 2:00 AM UTC (configurable via BACKUP_SCHEDULE in .env)
     - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
@@ -25,7 +24,8 @@ on:
           - windows
 
 env:
-  DEPLOY_DIR: /opt/innovare-storage
+  DEPLOY_DIR_HETZNER: /opt/innovare-storage
+  DEPLOY_DIR_WINDOWS: C:/innovare-storage
 
 jobs:
   backup-hetzner:
@@ -44,16 +44,16 @@ jobs:
           script_stop: true
           script: |
             export PROFILE="${{ inputs.profile || 'small' }}"
-            export BACKUP_DIR="/mnt/backups"
+            export BACKUP_DIR="/backups"
             export POSTGRES_USER="${{ secrets.POSTGRES_USER || 'innovare' }}"
             export POSTGRES_DB="${{ secrets.POSTGRES_DB || 'innovare_storage' }}"
             export COMPOSE_PROJECT="innovare-storage"
             export BACKUP_RETENTION_DAYS="${{ secrets.BACKUP_RETENTION_DAYS || '30' }}"
             export WEBHOOK_URL="${{ secrets.BACKUP_WEBHOOK_URL }}"
 
-            cd ${{ env.DEPLOY_DIR }}
-            chmod +x deploy/scripts/backup-cron.sh deploy/scripts/backup.sh
-            ./deploy/scripts/backup-cron.sh
+            cd ${{ env.DEPLOY_DIR_HETZNER }}
+            chmod +x scripts/backup-cron.sh scripts/backup.sh
+            ./scripts/backup-cron.sh
 
       - name: Verify backup created
         uses: appleboy/ssh-action@v1
@@ -63,12 +63,12 @@ jobs:
           key: ${{ secrets.HETZNER_SSH_KEY }}
           script: |
             echo "Latest backups:"
-            ls -lht /mnt/backups/backup_*.tar.gz 2>/dev/null | head -5
+            ls -lht /backups/backup_*.tar.gz 2>/dev/null | head -5
 
   backup-windows:
     name: Backup (Windows)
     runs-on: ubuntu-latest
-    if: inputs.server_target == 'windows'
+    if: github.event_name == 'schedule' || inputs.server_target == 'windows'
     environment: production
 
     steps:
@@ -88,6 +88,6 @@ jobs:
             export BACKUP_RETENTION_DAYS="${{ secrets.BACKUP_RETENTION_DAYS || '30' }}"
             export WEBHOOK_URL="${{ secrets.BACKUP_WEBHOOK_URL }}"
 
-            cd ${{ env.DEPLOY_DIR }}
-            chmod +x deploy/scripts/backup-cron.sh deploy/scripts/backup.sh
-            ./deploy/scripts/backup-cron.sh
+            cd ${{ env.DEPLOY_DIR_WINDOWS }}
+            chmod +x scripts/backup-cron.sh scripts/backup.sh
+            ./scripts/backup-cron.sh

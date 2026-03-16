@@ -471,26 +471,35 @@ docker-compose up --build --scale app=3
 
 Access at `http://localhost`.
 
-### Cloud Deployment (Hetzner / DigitalOcean)
+### Cloud Deployment (Hetzner / Windows Server)
 
-**Option A: Cloud-Init (automated)**
-
-1. Edit `deploy/cloud-init.yml` with your GHCR credentials and image repo
-2. Create a server via Hetzner Cloud Console or DigitalOcean, paste cloud-init YAML as user-data
-3. Server automatically installs Docker, pulls image, and starts the service
-
-**Option B: Deploy script**
+**Option A: Terraform (Hetzner)**
 
 ```bash
-# Standalone deploy
-IMAGE_REPO=ghcr.io/yourorg/innovare-storage:latest ./deploy/deploy.sh
-
-# Join existing cluster
-IMAGE_REPO=ghcr.io/yourorg/innovare-storage:latest ./deploy/deploy.sh --join 10.0.0.1
-
-# Rolling update
-./deploy/deploy.sh --update
+cd terraform
+terraform init
+terraform plan -var-file=tfvars/small.tfvars
+terraform apply -var-file=tfvars/small.tfvars
 ```
+
+The Terraform setup provisions a server with Docker, creates a deploy user, mounts a backup volume, and configures backup cron via `terraform/cloud-init.yml`.
+
+**Option B: Deploy script (manual)**
+
+```bash
+# Deploy with small profile
+deploy/scripts/deploy.sh --profile small --image-tag latest --deploy-dir /opt/innovare-storage
+
+# Deploy with medium profile (Citus + 2 workers)
+deploy/scripts/deploy.sh --profile medium --image-tag v1.0.0
+
+# Skip pre-deploy backup
+deploy/scripts/deploy.sh --profile small --skip-backup
+```
+
+**Option C: GitHub Actions (automated)**
+
+Use the `deploy-hetzner.yml` or `deploy-windows.yml` workflows via GitHub Actions. Enable auto-deploy by setting repository variables `AUTO_DEPLOY_HETZNER=true` or `AUTO_DEPLOY_WINDOWS=true`.
 
 ### CI/CD Pipeline
 
@@ -615,7 +624,7 @@ deploy/             # Production deployment files
 ├── docker-compose.prod.yml   # Base production compose (GHCR image)
 ├── docker-compose.{small,medium,large}.yml  # Scale profile overrides
 ├── .env.example              # Environment variable template
-├── docker/nginx-prod.conf    # Production nginx with TLS
+├── docker/nginx-prod.conf.template  # Production nginx with TLS (envsubst template)
 ├── README-deploy.md          # Deployment guide
 └── scripts/
     ├── deploy.sh             # Hetzner deploy (pull, backup, up, health check, rollback)

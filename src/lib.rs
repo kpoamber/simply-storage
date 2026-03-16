@@ -128,12 +128,9 @@ mod deployment_tests {
     fn test_dockerfile_exists_and_has_valid_structure() {
         let dockerfile = std::fs::read_to_string("Dockerfile").expect("Dockerfile should exist");
 
-        // Verify multi-stage build structure
         assert!(dockerfile.contains("FROM node:"), "Should have frontend build stage");
         assert!(dockerfile.contains("FROM rust:"), "Should have Rust build stage");
         assert!(dockerfile.contains("FROM debian:"), "Should have runtime stage");
-
-        // Verify key instructions
         assert!(dockerfile.contains("cargo build --release"), "Should build in release mode");
         assert!(dockerfile.contains("frontend/dist"), "Should copy frontend build output");
         assert!(dockerfile.contains("EXPOSE 8080"), "Should expose port 8080");
@@ -141,62 +138,121 @@ mod deployment_tests {
     }
 
     #[test]
-    fn test_docker_compose_exists_and_has_required_services() {
-        let compose = std::fs::read_to_string("docker-compose.yml")
-            .expect("docker-compose.yml should exist");
+    fn test_production_compose_has_required_services() {
+        let compose = std::fs::read_to_string("deploy/docker-compose.prod.yml")
+            .expect("deploy/docker-compose.prod.yml should exist");
 
         assert!(compose.contains("nginx:"), "Should have nginx service");
         assert!(compose.contains("app:"), "Should have app service");
         assert!(compose.contains("postgres:"), "Should have postgres service");
-        assert!(compose.contains("postgres-worker-1:"), "Should have Citus worker 1");
-        assert!(compose.contains("postgres-worker-2:"), "Should have Citus worker 2");
+        assert!(compose.contains("certbot:"), "Should have certbot service");
+        assert!(compose.contains("init-certs:"), "Should have init-certs service");
         assert!(compose.contains("healthcheck:"), "Should have health checks");
+        assert!(compose.contains("nginx-prod.conf.template"), "Should use nginx template");
     }
 
     #[test]
-    fn test_nginx_conf_has_required_directives() {
-        let nginx = std::fs::read_to_string("docker/nginx.conf")
-            .expect("docker/nginx.conf should exist");
+    fn test_production_nginx_has_required_directives() {
+        let nginx = std::fs::read_to_string("deploy/docker/nginx-prod.conf.template")
+            .expect("deploy/docker/nginx-prod.conf.template should exist");
 
         assert!(nginx.contains("least_conn"), "Should use least_conn load balancing");
         assert!(nginx.contains("proxy_pass"), "Should have proxy_pass");
         assert!(nginx.contains("client_max_body_size"), "Should set client_max_body_size");
         assert!(nginx.contains("proxy_read_timeout"), "Should set proxy_read_timeout");
         assert!(nginx.contains("/health"), "Should have health check location");
-        assert!(nginx.contains("ssl_certificate"), "Should have TLS support (commented)");
+        assert!(nginx.contains("ssl_certificate"), "Should have TLS configuration");
+        assert!(nginx.contains("${DOMAIN}"), "Should use DOMAIN template variable");
     }
 
     #[test]
-    fn test_github_actions_workflow_exists() {
-        let workflow = std::fs::read_to_string(".github/workflows/build-push.yml")
-            .expect("GitHub Actions workflow should exist");
+    fn test_ci_workflow_exists() {
+        let ci = std::fs::read_to_string(".github/workflows/ci.yml")
+            .expect("CI workflow should exist");
 
-        assert!(workflow.contains("push:"), "Should trigger on push");
-        assert!(workflow.contains("main"), "Should trigger on main branch");
+        assert!(ci.contains("cargo clippy"), "Should run clippy");
+        assert!(ci.contains("cargo test"), "Should run backend tests");
+        assert!(ci.contains("npm run lint"), "Should run frontend lint");
+        assert!(ci.contains("npm test"), "Should run frontend tests");
+        assert!(ci.contains("npm run build"), "Should build frontend");
+    }
+
+    #[test]
+    fn test_build_push_workflow_exists() {
+        let workflow = std::fs::read_to_string(".github/workflows/build-push.yml")
+            .expect("Build-push workflow should exist");
+
         assert!(workflow.contains("ghcr.io"), "Should use GHCR");
         assert!(workflow.contains("docker/build-push-action"), "Should use build-push action");
         assert!(workflow.contains("GITHUB_TOKEN"), "Should use GITHUB_TOKEN for auth");
+        assert!(workflow.contains("ci.yml"), "Should depend on CI workflow");
     }
 
     #[test]
-    fn test_deploy_script_exists_and_has_join_support() {
-        let script = std::fs::read_to_string("deploy/deploy.sh")
-            .expect("deploy/deploy.sh should exist");
+    fn test_deploy_workflows_exist() {
+        let hetzner = std::fs::read_to_string(".github/workflows/deploy-hetzner.yml")
+            .expect("Hetzner deploy workflow should exist");
+        let windows = std::fs::read_to_string(".github/workflows/deploy-windows.yml")
+            .expect("Windows deploy workflow should exist");
 
-        assert!(script.contains("--join"), "Should support --join flag");
-        assert!(script.contains("config-export"), "Should fetch config from existing node");
-        assert!(script.contains("docker pull"), "Should pull Docker image");
-        assert!(script.contains("docker run"), "Should start container");
+        assert!(hetzner.contains("deploy.sh"), "Hetzner should run deploy script");
+        assert!(windows.contains("deploy-windows.sh"), "Windows should run deploy-windows script");
+    }
+
+    #[test]
+    fn test_deploy_script_has_required_features() {
+        let script = std::fs::read_to_string("deploy/scripts/deploy.sh")
+            .expect("deploy/scripts/deploy.sh should exist");
+
+        assert!(script.contains("--profile"), "Should support --profile flag");
+        assert!(script.contains("--image-tag"), "Should support --image-tag flag");
+        assert!(script.contains("docker compose"), "Should use docker compose");
         assert!(script.contains("health"), "Should check health after deploy");
+        assert!(script.contains("Rollback"), "Should support rollback on failure");
+        assert!(script.contains("backup.sh"), "Should run pre-deploy backup");
     }
 
     #[test]
-    fn test_cloud_init_template_exists() {
-        let cloud_init = std::fs::read_to_string("deploy/cloud-init.yml")
-            .expect("deploy/cloud-init.yml should exist");
+    fn test_backup_restore_scripts_exist() {
+        let backup = std::fs::read_to_string("deploy/scripts/backup.sh")
+            .expect("deploy/scripts/backup.sh should exist");
+        let restore = std::fs::read_to_string("deploy/scripts/restore.sh")
+            .expect("deploy/scripts/restore.sh should exist");
+        let cron = std::fs::read_to_string("deploy/scripts/backup-cron.sh")
+            .expect("deploy/scripts/backup-cron.sh should exist");
+
+        assert!(backup.contains("pg_dump"), "Backup should use pg_dump");
+        assert!(backup.contains("tar.gz"), "Backup should compress to tar.gz");
+        assert!(restore.contains("pg_restore"), "Restore should use pg_restore");
+        assert!(cron.contains("backup.sh"), "Cron wrapper should call backup.sh");
+        assert!(cron.contains("BACKUP_RETENTION_DAYS"), "Cron should support retention");
+    }
+
+    #[test]
+    fn test_terraform_cloud_init_exists() {
+        let cloud_init = std::fs::read_to_string("terraform/cloud-init.yml")
+            .expect("terraform/cloud-init.yml should exist");
 
         assert!(cloud_init.contains("#cloud-config"), "Should be valid cloud-config");
         assert!(cloud_init.contains("docker"), "Should install Docker");
-        assert!(cloud_init.contains("ghcr.io"), "Should reference GHCR");
+        assert!(cloud_init.contains("deploy"), "Should create deploy user");
+        assert!(cloud_init.contains("backup"), "Should set up backup cron");
+        assert!(cloud_init.contains("PasswordAuthentication no"), "Should harden SSH");
+    }
+
+    #[test]
+    fn test_scale_profile_compose_files_exist() {
+        let small = std::fs::read_to_string("deploy/docker-compose.small.yml")
+            .expect("Small profile should exist");
+        let medium = std::fs::read_to_string("deploy/docker-compose.medium.yml")
+            .expect("Medium profile should exist");
+        let large = std::fs::read_to_string("deploy/docker-compose.large.yml")
+            .expect("Large profile should exist");
+
+        assert!(small.contains("app:"), "Small should configure app");
+        assert!(medium.contains("postgres-worker-1:"), "Medium should have worker 1");
+        assert!(medium.contains("postgres-worker-2:"), "Medium should have worker 2");
+        assert!(large.contains("postgres-worker-3:"), "Large should have worker 3");
+        assert!(large.contains("postgres-worker-4:"), "Large should have worker 4");
     }
 }
