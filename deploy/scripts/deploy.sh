@@ -94,8 +94,9 @@ ENV_FILE="${DEPLOY_DIR}/.env"
 if [[ -f "${ENV_FILE}" ]]; then
     echo "  Using env file: ${ENV_FILE}"
 else
-    echo "WARNING: No .env file found at ${ENV_FILE}"
-    echo "  Using environment variables from shell."
+    echo "ERROR: No .env file found at ${ENV_FILE}"
+    echo "  Create it from deploy/.env.example with required variables."
+    exit 1
 fi
 echo ""
 

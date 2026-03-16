@@ -87,7 +87,7 @@ runcmd:
       # Format only if not already formatted
       blkid "$DEVICE" || mkfs.ext4 "$DEVICE"
       mount "$DEVICE" /backups
-      echo "$DEVICE /backups ext4 defaults 0 2" >> /etc/fstab
+      grep -q "$DEVICE" /etc/fstab || echo "$DEVICE /backups ext4 defaults 0 2" >> /etc/fstab
       echo "Backup volume mounted at /backups"
     else
       echo "WARNING: Backup volume $DEVICE not available after 5 minutes. Backups will use root filesystem."

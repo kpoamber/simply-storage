@@ -64,7 +64,7 @@ jobs:
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.HETZNER_HOST }}
-          username: deploy
+          username: ${{ secrets.DEPLOY_USER || 'deploy' }}
           key: ${{ secrets.HETZNER_SSH_KEY }}
           script: |
             echo "Latest backups:"
@@ -101,3 +101,13 @@ jobs:
             cd ${{ env.DEPLOY_DIR_WINDOWS }}
             chmod +x scripts/backup-cron.sh scripts/backup.sh
             ./scripts/backup-cron.sh
+
+      - name: Verify backup created
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.WINDOWS_HOST }}
+          username: ${{ secrets.WINDOWS_USER }}
+          key: ${{ secrets.WINDOWS_SSH_KEY }}
+          script: |
+            echo "Latest backups:"
+            ls -lht /c/backups/innovare/backup_*.tar.gz 2>/dev/null | head -5

@@ -24,9 +24,11 @@ notify_error() {
     local message="$1"
     log "ERROR: ${message}"
     if [[ -n "${WEBHOOK_URL}" ]]; then
+        local payload
+        payload="$(jq -n --arg text "Innovare Storage backup FAILED: ${message}" '{text: $text}')"
         curl -sf -X POST "${WEBHOOK_URL}" \
             -H "Content-Type: application/json" \
-            -d "{\"text\": \"Innovare Storage backup FAILED: ${message}\"}" \
+            -d "${payload}" \
             >> "${LOG_FILE}" 2>&1 || true
     fi
 }

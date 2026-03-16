@@ -50,7 +50,7 @@ jobs:
             echo "::error::backup_date must be in YYYYMMDD format"
             exit 1
           fi
-          if [[ -n "${BACKUP_FILE}" && ! "${BACKUP_FILE}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+          if [[ -n "${BACKUP_FILE}" && ! "${BACKUP_FILE}" =~ ^[a-zA-Z0-9_.:/-]+$ ]]; then
             echo "::error::backup_file contains invalid characters"
             exit 1
           fi
@@ -63,7 +63,7 @@ jobs:
           RESTORE_PROFILE: ${{ inputs.profile }}
         with:
           host: ${{ secrets.HETZNER_HOST }}
-          username: deploy
+          username: ${{ secrets.DEPLOY_USER || 'deploy' }}
           key: ${{ secrets.HETZNER_SSH_KEY }}
           command_timeout: 30m
           script_stop: true
@@ -93,7 +93,7 @@ jobs:
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.HETZNER_HOST }}
-          username: deploy
+          username: ${{ secrets.DEPLOY_USER || 'deploy' }}
           key: ${{ secrets.HETZNER_SSH_KEY }}
           script: |
             echo "Checking application health..."
@@ -127,7 +127,7 @@ jobs:
             echo "::error::backup_date must be in YYYYMMDD format"
             exit 1
           fi
-          if [[ -n "${BACKUP_FILE}" && ! "${BACKUP_FILE}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+          if [[ -n "${BACKUP_FILE}" && ! "${BACKUP_FILE}" =~ ^[a-zA-Z0-9_.:/-]+$ ]]; then
             echo "::error::backup_file contains invalid characters"
             exit 1
           fi
