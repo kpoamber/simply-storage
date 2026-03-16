@@ -37,6 +37,13 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-innovare_storage}
     volumes:
       - postgres_worker1_data:/var/lib/postgresql/data
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=100
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-innovare} -d ${POSTGRES_DB:-innovare_storage}"]
       interval: 5s
@@ -64,6 +71,13 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-innovare_storage}
     volumes:
       - postgres_worker2_data:/var/lib/postgresql/data
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=100
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-innovare} -d ${POSTGRES_DB:-innovare_storage}"]
       interval: 5s

@@ -143,18 +143,7 @@ echo ""
 if [[ -n "${ROLLBACK_TAG}" ]]; then
     echo "=== Rolling back to ${ROLLBACK_TAG} ==="
 
-    # Find latest pre-deploy backup
-    LATEST_BACKUP="$(find "${BACKUP_DIR}" -maxdepth 1 -name "backup_*.tar.gz" -type f -print 2>/dev/null | sort -r | head -1 || true)"
-
-    # Restore from pre-deploy backup
-    if [[ -n "${LATEST_BACKUP}" ]]; then
-        echo "Restoring from pre-deploy backup: ${LATEST_BACKUP}"
-        bash "${DEPLOY_DIR}/scripts/restore.sh" --file "${LATEST_BACKUP}" --profile "${PROFILE}" || {
-            echo "ERROR: Rollback restore failed!"
-        }
-    fi
-
-    # Roll back image
+    # Roll back image (DB restore is not automatic - run restore.sh manually if needed)
     echo "Rolling back image..."
     export IMAGE_TAG="${ROLLBACK_TAG##*:}"
     ${COMPOSE_CMD} up -d --remove-orphans

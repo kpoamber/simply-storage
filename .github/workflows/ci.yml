@@ -62,7 +62,7 @@ jobs:
       - name: Cache npm
         uses: actions/cache@v4
         with:
-          path: frontend/node_modules
+          path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
           restore-keys: |
             npm-${{ runner.os }}-
