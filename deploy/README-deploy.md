@@ -109,6 +109,63 @@ For HTTPS support:
 
 Alternatively, use Let's Encrypt with certbot on the host and mount the generated certs.
 
+## CI/CD Pipeline
+
+### GitHub Actions Workflows
+
+| Workflow | Trigger | Description |
+|----------|---------|-------------|
+| `ci.yml` | Push (any branch), PR to main | Backend (clippy, tests) + frontend (lint, build) checks |
+| `build-push.yml` | Push to main, tags `v*` | Build Docker image, push to GHCR |
+| `deploy-hetzner.yml` | Manual (workflow_dispatch) | Deploy to Hetzner Cloud server via SSH |
+| `deploy-windows.yml` | Manual (workflow_dispatch) | Deploy to Windows Server via SSH |
+| `backup.yml` | Daily 2:00 UTC, manual | Database backup (PostgreSQL/Citus) |
+| `restore.yml` | Manual | Restore database from backup |
+
+### Required GitHub Secrets
+
+| Secret | Used By | Description |
+|--------|---------|-------------|
+| `HETZNER_SSH_KEY` | deploy-hetzner, backup, restore | SSH private key for Hetzner server |
+| `HETZNER_HOST` | deploy-hetzner, backup, restore | Hetzner server IP or hostname |
+| `DEPLOY_USER` | deploy-hetzner | SSH user on Hetzner (default: `deploy`) |
+| `WINDOWS_SSH_KEY` | deploy-windows, backup, restore | SSH private key for Windows server |
+| `WINDOWS_HOST` | deploy-windows, backup, restore | Windows server IP or hostname |
+| `WINDOWS_USER` | deploy-windows, backup, restore | SSH user on Windows server |
+| `POSTGRES_USER` | backup, restore | PostgreSQL user (default: `innovare`) |
+| `POSTGRES_DB` | backup, restore | PostgreSQL database (default: `innovare_storage`) |
+| `BACKUP_WEBHOOK_URL` | backup | Optional webhook URL for backup failure notifications |
+
+### Production Deployment Profiles
+
+Use compose overlay files for different server sizes:
+
+```bash
+# Small (1 app replica, standalone Postgres)
+docker compose -f docker-compose.prod.yml -f docker-compose.small.yml up -d
+
+# Medium (2 app replicas, Citus with 2 workers)
+docker compose -f docker-compose.prod.yml -f docker-compose.medium.yml up -d
+
+# Large (4 app replicas, Citus with 4 workers)
+docker compose -f docker-compose.prod.yml -f docker-compose.large.yml up -d
+```
+
+Copy `.env.example` to `.env` and configure before deploying.
+
+### Backup & Restore
+
+```bash
+# Manual backup
+./scripts/backup.sh --profile small --backup-dir /backups
+
+# Restore from specific date
+./scripts/restore.sh --date 20260316 --profile small
+
+# Restore from specific file
+./scripts/restore.sh --file /backups/backup-20260316-020000.tar.gz --profile small
+```
+
 ## Monitoring
 
 ### Health Check

@@ -128,15 +128,15 @@
 
 ### Task 8: Verify acceptance criteria
 
-- [ ] CI workflow запускается на PR и push, включает backend и frontend проверки
-- [ ] Production compose файлы валидны для всех 3 профилей (small, medium, large)
-- [ ] Terraform конфигурация проходит `terraform validate`
-- [ ] Deploy workflows для Hetzner и Windows имеют health checks и rollback
-- [ ] Backup workflow работает по расписанию и вручную
-- [ ] Restore workflow позволяет восстановить БД из бэкапа с указанием даты
-- [ ] Deploy скрипты делают pre-deploy backup и rollback при failure
-- [ ] Все секреты задокументированы в .env.example и README
-- [ ] `docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.{small,medium,large}.yml config` работает для каждого профиля
+- [x] CI workflow запускается на PR и push, включает backend и frontend проверки
+- [x] Production compose файлы валидны для всех 3 профилей (small, medium, large)
+- [x] Terraform конфигурация проходит `terraform validate`
+- [x] Deploy workflows для Hetzner и Windows имеют health checks и rollback
+- [x] Backup workflow работает по расписанию и вручную
+- [x] Restore workflow позволяет восстановить БД из бэкапа с указанием даты
+- [x] Deploy скрипты делают pre-deploy backup и rollback при failure
+- [x] Все секреты задокументированы в .env.example и README
+- [x] `docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.{small,medium,large}.yml config` работает для каждого профиля
 
 ### Task 9: Update documentation
 
