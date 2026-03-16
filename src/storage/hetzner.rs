@@ -73,9 +73,57 @@ impl HetznerStorageBoxBackend {
         }
     }
 
+    /// Create a single directory via MKCOL. Returns Ok for 201/405/301 (created/exists).
+    async fn mkcol(&self, raw_url: &str) -> AppResult<()> {
+        let resp = self
+            .client
+            .request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), raw_url)
+            .basic_auth(
+                self.config.effective_username(),
+                Some(&self.config.password),
+            )
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("Hetzner MKCOL failed: {}", e)))?;
+
+        let _status = resp.status().as_u16();
+        // 201 = created, 405 = already exists, 301 = redirect (exists)
+        // Ignore all — if it really fails, the subsequent PUT will tell us.
+        Ok(())
+    }
+
+    /// Ensure the base_path directory tree exists on the StorageBox.
+    async fn ensure_base_path(&self) -> AppResult<()> {
+        let base = self.config.base_path.trim_end_matches('/');
+        if base.is_empty() {
+            return Ok(());
+        }
+        let parts: Vec<&str> = base.split('/').filter(|p| !p.is_empty()).collect();
+        let mut current = String::new();
+        for part in parts {
+            if current.is_empty() {
+                current = part.to_string();
+            } else {
+                current = format!("{}/{}", current, part);
+            }
+            // Build URL directly (not via webdav_dir_url which prepends base_path)
+            let url = format!(
+                "https://{}:{}/{}/",
+                self.config.host, self.config.port, current
+            );
+            self.mkcol(&url).await?;
+        }
+        Ok(())
+    }
+
     /// Auto-create directory structure for the given file path using MKCOL.
     /// Creates each component progressively (like `mkdir -p`).
+    /// Also ensures the base_path itself exists.
     async fn ensure_parent_dirs(&self, path: &str) -> AppResult<()> {
+        // First ensure base_path exists
+        self.ensure_base_path().await?;
+
+        // Then create subdirs within base_path for the file
         if let Some((parent, _)) = path.rsplit_once('/') {
             if !parent.is_empty() {
                 let parts: Vec<&str> = parent.split('/').filter(|p| !p.is_empty()).collect();
@@ -87,27 +135,7 @@ impl HetznerStorageBoxBackend {
                         current = format!("{}/{}", current, part);
                     }
                     let url = self.webdav_dir_url(&current);
-                    // MKCOL to create directory; ignore 405 (already exists) and 301 (redirect)
-                    let resp = self
-                        .client
-                        .request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), &url)
-                        .basic_auth(
-                            self.config.effective_username(),
-                            Some(&self.config.password),
-                        )
-                        .send()
-                        .await
-                        .map_err(|e| {
-                            AppError::Internal(format!("Hetzner MKCOL request failed: {}", e))
-                        })?;
-
-                    let status = resp.status().as_u16();
-                    // 201 = created, 405 = already exists, 301 = redirect (exists)
-                    if status != 201 && status != 405 && status != 301 {
-                        // Some WebDAV servers return 409 if intermediate dirs missing,
-                        // but we create them progressively so this shouldn't happen.
-                        // Still, don't treat other statuses as fatal if the upload later succeeds.
-                    }
+                    self.mkcol(&url).await?;
                 }
             }
         }
@@ -135,7 +163,30 @@ impl StorageBackend for HetznerStorageBoxBackend {
             .map_err(|e| AppError::Internal(format!("Hetzner upload failed: {}", e)))?;
 
         let status = resp.status();
-        if !status.is_success() && status.as_u16() != 201 && status.as_u16() != 204 {
+        if status.as_u16() == 409 {
+            // 409 Conflict on PUT means parent directory doesn't exist.
+            // Ensure directories and retry once.
+            self.ensure_parent_dirs(path).await?;
+            let retry_resp = self
+                .client
+                .put(&url)
+                .basic_auth(
+                    self.config.effective_username(),
+                    Some(&self.config.password),
+                )
+                .body(data.to_vec())
+                .send()
+                .await
+                .map_err(|e| AppError::Internal(format!("Hetzner upload retry failed: {}", e)))?;
+            let retry_status = retry_resp.status();
+            if !retry_status.is_success() && retry_status.as_u16() != 201 && retry_status.as_u16() != 204 {
+                let body = retry_resp.text().await.unwrap_or_default();
+                return Err(AppError::Internal(format!(
+                    "Hetzner upload retry returned {}: {}",
+                    retry_status, body
+                )));
+            }
+        } else if !status.is_success() && status.as_u16() != 201 && status.as_u16() != 204 {
             let body = resp.text().await.unwrap_or_default();
             return Err(AppError::Internal(format!(
                 "Hetzner upload returned {}: {}",
@@ -297,6 +348,36 @@ impl StorageBackend for HetznerStorageBoxBackend {
         let entries = parse_propfind_hrefs(&body, &self.config.base_path);
 
         Ok(entries)
+    }
+
+    async fn create_container(&self, name: &str) -> AppResult<()> {
+        let url = self.webdav_dir_url(name);
+        let resp = self
+            .client
+            .request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), &url)
+            .basic_auth(
+                self.config.effective_username(),
+                Some(&self.config.password),
+            )
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("Hetzner MKCOL failed: {}", e)))?;
+
+        let status = resp.status().as_u16();
+        // 201 = created, 405 = already exists, 301 = redirect (exists)
+        if status == 201 || status == 405 || status == 301 {
+            Ok(())
+        } else {
+            let body = resp.text().await.unwrap_or_default();
+            Err(AppError::Internal(format!(
+                "Hetzner create_container returned {}: {}",
+                status, body
+            )))
+        }
+    }
+
+    fn supports_containers(&self) -> bool {
+        true
     }
 }
 

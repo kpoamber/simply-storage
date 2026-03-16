@@ -302,7 +302,31 @@ impl Storage {
 
         let name = input.name.as_deref().unwrap_or(&current.name);
         let storage_type = input.storage_type.as_deref().unwrap_or(&current.storage_type);
-        let config = input.config.as_ref().unwrap_or(&current.config);
+        // Merge config: preserve original values for sensitive fields that are
+        // missing (not sent by frontend) or sent as "***" (redacted placeholder).
+        let config = match input.config.as_ref() {
+            Some(new_config) => {
+                let mut merged = new_config.clone();
+                if let (serde_json::Value::Object(ref mut new_map), serde_json::Value::Object(ref cur_map)) =
+                    (&mut merged, &current.config)
+                {
+                    for key in SENSITIVE_CONFIG_KEYS {
+                        let should_preserve = match new_map.get(*key) {
+                            None => true,                    // field not sent
+                            Some(serde_json::Value::String(val)) if val == "***" => true, // redacted
+                            _ => false,
+                        };
+                        if should_preserve {
+                            if let Some(original) = cur_map.get(*key) {
+                                new_map.insert((*key).to_string(), original.clone());
+                            }
+                        }
+                    }
+                }
+                std::borrow::Cow::Owned(merged)
+            }
+            None => std::borrow::Cow::Borrowed(&current.config),
+        };
         let is_hot = input.is_hot.unwrap_or(current.is_hot);
         let project_id = match &input.project_id {
             Some(val) => *val,
@@ -321,7 +345,7 @@ impl Storage {
         )
         .bind(name)
         .bind(storage_type)
-        .bind(config)
+        .bind(config.as_ref())
         .bind(is_hot)
         .bind(project_id)
         .bind(enabled)
@@ -1229,6 +1253,7 @@ pub struct SyncTask {
     pub retries: i32,
     pub error_msg: Option<String>,
     pub retry_after: Option<DateTime<Utc>>,
+    pub project_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -1238,18 +1263,20 @@ pub struct CreateSyncTask {
     pub file_id: Uuid,
     pub source_storage_id: Uuid,
     pub target_storage_id: Uuid,
+    pub project_id: Option<Uuid>,
 }
 
 impl SyncTask {
     pub async fn create(pool: &PgPool, input: &CreateSyncTask) -> AppResult<SyncTask> {
         let row = sqlx::query_as::<_, SyncTask>(
-            r#"INSERT INTO sync_tasks (file_id, source_storage_id, target_storage_id)
-               VALUES ($1, $2, $3)
+            r#"INSERT INTO sync_tasks (file_id, source_storage_id, target_storage_id, project_id)
+               VALUES ($1, $2, $3, $4)
                RETURNING *"#,
         )
         .bind(input.file_id)
         .bind(input.source_storage_id)
         .bind(input.target_storage_id)
+        .bind(input.project_id)
         .fetch_one(pool)
         .await?;
 
@@ -2314,6 +2341,7 @@ mod tests {
             is_hot: Some(true),
             project_id: None,
             enabled: None,
+            supports_direct_links: None,
         };
         assert_eq!(input.storage_type, "s3");
         assert_eq!(input.config["bucket"], "my-bucket");
@@ -2361,6 +2389,7 @@ mod tests {
             is_hot: true,
             project_id: None,
             enabled: true,
+            supports_direct_links: false,
             created_at: now,
             updated_at: now,
         };
@@ -2973,6 +3002,7 @@ mod tests {
             retries: 0,
             error_msg: None,
             retry_after: None,
+            project_id: None,
             created_at: now,
             updated_at: now,
         };
@@ -2995,6 +3025,7 @@ mod tests {
             retries: 3,
             error_msg: Some("Connection timeout".to_string()),
             retry_after: None,
+            project_id: None,
             created_at: now,
             updated_at: now,
         };
@@ -3524,6 +3555,7 @@ mod tests {
                 is_hot: Some(true),
                 project_id: None,
                 enabled: Some(true),
+                supports_direct_links: None,
             },
         )
         .await

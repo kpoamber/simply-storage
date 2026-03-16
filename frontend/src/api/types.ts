@@ -40,6 +40,16 @@ export interface StorageBackend extends StorageBase {
   used_space: number;
 }
 
+export interface StorageSyncDetail {
+  storage_id: string;
+  storage_name: string;
+  storage_type: string;
+  status: string;
+  storage_path: string | null;
+  supports_direct_links: boolean;
+  synced_at: string | null;
+}
+
 export interface FileReference {
   id: string;
   file_id: string;
@@ -47,9 +57,11 @@ export interface FileReference {
   original_name: string;
   metadata: Record<string, string | number | boolean>;
   created_at: string;
+  file_size?: number;
   sync_status?: string;
   synced_storages?: number;
   total_storages?: number;
+  sync_details?: StorageSyncDetail[];
 }
 
 export interface FileRecord {
@@ -111,6 +123,7 @@ export interface SyncTask {
   status: string;
   retries: number;
   error_msg: string | null;
+  project_id: string | null;
   created_at: string;
   updated_at: string;
 }

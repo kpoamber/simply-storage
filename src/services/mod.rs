@@ -1,4 +1,5 @@
 pub mod auth_service;
+pub mod backend_resolver;
 pub mod bulk_service;
 pub mod file_service;
 pub mod shared_link_service;

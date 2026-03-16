@@ -95,11 +95,12 @@ pub async fn create_backend(
         }
         "s3" => {
             let s3_config = S3Config {
-                endpoint_url: config["endpoint_url"].as_str().map(|s| s.to_string()),
-                region: config["region"].as_str().unwrap_or("us-east-1").to_string(),
+                endpoint_url: config["endpoint_url"].as_str().map(|s| s.trim().to_string()),
+                region: config["region"].as_str().unwrap_or("us-east-1").trim().to_string(),
                 bucket: config["bucket"]
                     .as_str()
-                    .ok_or_else(|| AppError::BadRequest("s3 storage requires 'bucket' config".to_string()))?
+                    .unwrap_or("")
+                    .trim()
                     .to_string(),
                 prefix: config["prefix"].as_str().unwrap_or("").to_string(),
                 access_key_id: config["access_key_id"]
@@ -128,7 +129,8 @@ pub async fn create_backend(
                     .to_string(),
                 container: config["container"]
                     .as_str()
-                    .ok_or_else(|| AppError::BadRequest("azure storage requires 'container'".to_string()))?
+                    .unwrap_or("")
+                    .trim()
                     .to_string(),
                 prefix: config["prefix"].as_str().unwrap_or("").to_string(),
                 endpoint: config["endpoint"].as_str().map(|s| s.to_string()),
@@ -139,7 +141,8 @@ pub async fn create_backend(
             let gcs_config = GcsConfig {
                 bucket: config["bucket"]
                     .as_str()
-                    .ok_or_else(|| AppError::BadRequest("gcs storage requires 'bucket'".to_string()))?
+                    .unwrap_or("")
+                    .trim()
                     .to_string(),
                 prefix: config["prefix"].as_str().unwrap_or("").to_string(),
                 client_email: config["client_email"]
@@ -149,6 +152,9 @@ pub async fn create_backend(
                 private_key_pem: config["private_key_pem"]
                     .as_str()
                     .ok_or_else(|| AppError::BadRequest("gcs storage requires 'private_key_pem'".to_string()))?
+                    .replace('\0', "")
+                    .replace("\\n", "\n")
+                    .trim()
                     .to_string(),
                 token_uri: config["token_uri"].as_str().map(|s| s.to_string()),
                 gcp_project_id: config["gcp_project_id"].as_str().map(|s| s.to_string()),

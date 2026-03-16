@@ -4,8 +4,8 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::SyncConfig;
-use crate::db::models::{CreateFileLocation, FileLocation, ProjectStorage, Storage, SyncTask};
-use crate::storage::registry::create_backend;
+use crate::db::models::{CreateFileLocation, FileLocation, Storage, SyncTask};
+
 use crate::storage::StorageRegistry;
 
 /// Background sync worker that processes pending sync tasks.
@@ -183,8 +183,7 @@ impl SyncWorker {
         }
     }
 
-    /// Resolve the backend for a storage, applying any container/prefix overrides
-    /// from the project_storages assignment.
+    /// Resolve the backend for a storage, applying container/prefix from project slug.
     async fn resolve_backend(
         &self,
         storage_id: uuid::Uuid,
@@ -192,35 +191,14 @@ impl SyncWorker {
     ) -> Result<Arc<dyn crate::storage::traits::StorageBackend>, crate::error::AppError> {
         if let Some(pid) = project_id {
             let storage = Storage::find_by_id(&self.pool, storage_id).await?;
-            if let Some(ps) =
-                ProjectStorage::find_for_project_and_storage(&self.pool, pid, storage_id).await?
-            {
-                if ps.container_override.is_some() || ps.prefix_override.is_some() {
-                    let mut config = storage.config.clone();
-                    if let Some(ref container) = ps.container_override {
-                        match storage.storage_type.as_str() {
-                            "s3" => {
-                                config["bucket"] =
-                                    serde_json::Value::String(container.clone());
-                            }
-                            "azure" => {
-                                config["container"] =
-                                    serde_json::Value::String(container.clone());
-                            }
-                            "gcs" => {
-                                config["bucket"] =
-                                    serde_json::Value::String(container.clone());
-                            }
-                            _ => {}
-                        }
-                    }
-                    if let Some(ref prefix) = ps.prefix_override {
-                        config["prefix"] = serde_json::Value::String(prefix.clone());
-                    }
-                    return create_backend(&storage.storage_type, &config, &self.hmac_secret)
-                        .await;
-                }
-            }
+            return crate::services::backend_resolver::resolve_project_backend(
+                &self.pool,
+                &self.registry,
+                &storage,
+                pid,
+                &self.hmac_secret,
+            )
+            .await;
         }
         self.registry.get(&storage_id).await
     }
@@ -228,14 +206,8 @@ impl SyncWorker {
     /// Execute the actual sync: download from source storage, upload to target storage,
     /// and create/update the file_location record.
     async fn execute_sync(&self, task: &SyncTask) -> Result<(), crate::error::AppError> {
-        // Look up a project_id associated with this file to resolve container overrides
-        let project_id: Option<uuid::Uuid> = sqlx::query_as::<_, (uuid::Uuid,)>(
-            "SELECT project_id FROM file_references WHERE file_id = $1 LIMIT 1",
-        )
-        .bind(task.file_id)
-        .fetch_optional(&self.pool)
-        .await?
-        .map(|r| r.0);
+        // Use the project_id stored on the sync task for correct container/prefix overrides
+        let project_id = task.project_id;
 
         // Get source backend (with overrides if applicable)
         let source_backend = self.resolve_backend(task.source_storage_id, project_id).await?;
@@ -243,9 +215,11 @@ impl SyncWorker {
         // Get target backend (with overrides if applicable)
         let target_backend = self.resolve_backend(task.target_storage_id, project_id).await?;
 
-        // Find the storage path from the source file_location
+        // Find the storage path from the source file_location.
+        // Use find_all_for_file (no status filter) because the source may be
+        // 'archived' (restore from cold) or 'synced' (normal sync).
         let source_locations =
-            FileLocation::find_for_file(&self.pool, task.file_id).await?;
+            FileLocation::find_all_for_file(&self.pool, task.file_id).await?;
         let source_location = source_locations
             .iter()
             .find(|loc| loc.storage_id == task.source_storage_id)
@@ -479,6 +453,7 @@ mod tests {
             retries: 2,
             error_msg: Some("timeout".to_string()),
             retry_after: None,
+            project_id: None,
             created_at: now,
             updated_at: now,
         };
@@ -514,6 +489,7 @@ mod tests {
             file_id,
             source_storage_id: source_id,
             target_storage_id: target_id,
+            project_id: None,
         };
         let task = SyncTask::create(&pool, &create_task).await.unwrap();
         assert_eq!(task.status, "pending");
@@ -548,6 +524,7 @@ mod tests {
             file_id,
             source_storage_id: source_id,
             target_storage_id: target_id,
+            project_id: None,
         };
         let task = SyncTask::create(&pool, &create_task).await.unwrap();
 
@@ -573,6 +550,7 @@ mod tests {
             file_id,
             source_storage_id: source_id,
             target_storage_id: target_id,
+            project_id: None,
         };
         let task = SyncTask::create(&pool, &create_task).await.unwrap();
 

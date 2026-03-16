@@ -12,8 +12,8 @@ use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::db::models::{
-    BulkDeleteFilters, File, FileLocation, FileReference, MetadataFilter, Project, Storage,
-    UserProject,
+    BulkDeleteFilters, CreateSyncTask, File, FileLocation, FileReference, MetadataFilter, Project,
+    Storage, SyncTask, UserProject,
 };
 use crate::error::AppError;
 use crate::services::{FileService, TierService};
@@ -34,12 +34,25 @@ pub struct FileMetadata {
 }
 
 #[derive(Debug, Serialize)]
+pub struct StorageSyncDetail {
+    pub storage_id: Uuid,
+    pub storage_name: String,
+    pub storage_type: String,
+    pub status: String,
+    pub storage_path: Option<String>,
+    pub supports_direct_links: bool,
+    pub synced_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct FileReferenceWithSync {
     #[serde(flatten)]
     pub file_ref: FileReference,
+    pub file_size: i64,
     pub sync_status: String,
     pub synced_storages: i64,
     pub total_storages: i64,
+    pub sync_details: Vec<StorageSyncDetail>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +61,8 @@ pub struct TempLinkQuery {
     /// When true (default), only return links from storages with supports_direct_links.
     /// When false, return links from any storage (used for download).
     pub direct_only: Option<bool>,
+    /// If set, only generate a link for this specific storage.
+    pub storage_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize)]
@@ -276,27 +291,53 @@ async fn list_project_files(
         FileReference::list_for_project(pool.get_ref(), project_id, query.limit(), query.offset())
             .await?;
 
-    // Count total enabled storages available for this project
-    let total_storages = Storage::list_for_project(pool.get_ref(), project_id)
-        .await?
-        .len() as i64;
+    // Get project storages for sync detail enrichment
+    let project_storages = Storage::list_for_project(pool.get_ref(), project_id).await?;
+    let total_storages = project_storages.len() as i64;
 
-    // Enrich each file reference with sync status
+    // Enrich each file reference with sync status and per-storage details
     let mut result = Vec::with_capacity(refs.len());
     for file_ref in refs {
-        let synced_count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM file_locations WHERE file_id = $1 AND status = 'synced'",
-        )
-        .bind(file_ref.file_id)
-        .fetch_one(pool.get_ref())
-        .await
-        .unwrap_or((0,));
+        // Get file size
+        let file_size = File::find_by_id(pool.get_ref(), file_ref.file_id)
+            .await
+            .map(|f| f.size)
+            .unwrap_or(0);
+
+        // Get sync details per project storage
+        let all_locations = FileLocation::find_all_for_file(pool.get_ref(), file_ref.file_id)
+            .await
+            .unwrap_or_default();
+
+        let mut sync_details = Vec::new();
+        let mut synced_count = 0i64;
+        for ps in &project_storages {
+            let loc = all_locations.iter().find(|l| l.storage_id == ps.id);
+            let (status, synced_at, storage_path) = match loc {
+                Some(l) => {
+                    if l.status == "synced" {
+                        synced_count += 1;
+                    }
+                    (l.status.clone(), l.synced_at, Some(l.storage_path.clone()))
+                }
+                None => ("not_synced".to_string(), None, None),
+            };
+            sync_details.push(StorageSyncDetail {
+                storage_id: ps.id,
+                storage_name: ps.name.clone(),
+                storage_type: ps.storage_type.clone(),
+                status,
+                storage_path,
+                supports_direct_links: ps.supports_direct_links,
+                synced_at,
+            });
+        }
 
         let sync_status = if total_storages == 0 {
             "no_storage".to_string()
-        } else if synced_count.0 >= total_storages {
+        } else if synced_count >= total_storages {
             "synced".to_string()
-        } else if synced_count.0 > 0 {
+        } else if synced_count > 0 {
             "partial".to_string()
         } else {
             "pending".to_string()
@@ -304,9 +345,11 @@ async fn list_project_files(
 
         result.push(FileReferenceWithSync {
             file_ref,
+            file_size,
             sync_status,
-            synced_storages: synced_count.0,
+            synced_storages: synced_count,
             total_storages,
+            sync_details,
         });
     }
 
@@ -379,7 +422,9 @@ async fn get_temp_link(
     let expires_in = std::time::Duration::from_secs(expires_in_secs);
 
     let direct_only = query.direct_only.unwrap_or(false);
-    let links = file_service.generate_temp_links(file_id, expires_in, direct_only).await?;
+    let links = file_service
+        .generate_temp_links(file_id, expires_in, direct_only, query.storage_id)
+        .await?;
 
     Ok(HttpResponse::Ok().json(TempLinkResponse {
         links,
@@ -413,6 +458,46 @@ async fn restore_file(
 
     let task = tier_service.restore_file(file_id).await?;
     Ok(HttpResponse::Accepted().json(task))
+}
+
+// ─── Force sync ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ForceSyncRequest {
+    pub target_storage_id: Uuid,
+    pub project_id: Uuid,
+}
+
+async fn force_sync_to_storage(
+    user: AuthenticatedUser,
+    pool: web::Data<PgPool>,
+    path: web::Path<Uuid>,
+    body: web::Json<ForceSyncRequest>,
+) -> Result<HttpResponse, AppError> {
+    let file_id = path.into_inner();
+    check_file_write_access(pool.get_ref(), file_id, &user).await?;
+
+    // Find a source storage that has the file
+    let locations = FileLocation::find_all_for_file(pool.get_ref(), file_id).await?;
+    let source = locations
+        .iter()
+        .find(|l| l.status == "synced" && l.storage_id != body.target_storage_id)
+        .ok_or_else(|| {
+            AppError::NotFound("No synced source storage found for this file".to_string())
+        })?;
+
+    let task = SyncTask::create(
+        pool.get_ref(),
+        &CreateSyncTask {
+            file_id,
+            source_storage_id: source.storage_id,
+            target_storage_id: body.target_storage_id,
+            project_id: Some(body.project_id),
+        },
+    )
+    .await?;
+
+    Ok(HttpResponse::Created().json(task))
 }
 
 // ─── Metadata search ─────────────────────────────────────────────────────────
@@ -635,7 +720,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     )
     .service(web::resource("/files/{id}/download").route(web::get().to(download_file)))
     .service(web::resource("/files/{id}/link").route(web::get().to(get_temp_link)))
-    .service(web::resource("/files/{id}/restore").route(web::post().to(restore_file)));
+    .service(web::resource("/files/{id}/restore").route(web::post().to(restore_file)))
+    .service(web::resource("/files/{id}/sync").route(web::post().to(force_sync_to_storage)));
 }
 
 #[cfg(test)]
@@ -797,15 +883,27 @@ mod tests {
                 metadata: meta.clone(),
                 created_at: now,
             },
+            file_size: 1024,
             sync_status: "synced".to_string(),
             synced_storages: 2,
             total_storages: 2,
+            sync_details: vec![StorageSyncDetail {
+                storage_id: uuid::Uuid::new_v4(),
+                storage_name: "S3 Primary".to_string(),
+                storage_type: "s3".to_string(),
+                status: "synced".to_string(),
+                storage_path: Some("ab/cd/abcdef1234".to_string()),
+                supports_direct_links: true,
+                synced_at: Some(now),
+            }],
         };
         let json = serde_json::to_value(&ref_with_sync).unwrap();
         // metadata should be flattened into the top-level JSON
         assert_eq!(json["metadata"]["env"], "staging");
         assert_eq!(json["metadata"]["version"], 2);
         assert_eq!(json["sync_status"], "synced");
+        assert_eq!(json["file_size"], 1024);
+        assert_eq!(json["sync_details"][0]["storage_name"], "S3 Primary");
     }
 
     #[test]

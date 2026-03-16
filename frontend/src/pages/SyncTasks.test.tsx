@@ -20,27 +20,27 @@ const mockSyncTasks = [
   {
     id: 'st1', file_id: 'f1111111-aaaa-bbbb-cccc-dddddddddddd',
     source_storage_id: 's1', target_storage_id: 's2',
-    status: 'pending', retries: 0, error_msg: null,
+    status: 'pending', retries: 0, error_msg: null, project_id: null,
     created_at: '2026-01-15T10:00:00Z', updated_at: '2026-01-15T10:00:00Z',
   },
   {
     id: 'st2', file_id: 'f2222222-aaaa-bbbb-cccc-dddddddddddd',
     source_storage_id: 's1', target_storage_id: 's3',
-    status: 'failed', retries: 3, error_msg: 'Connection timeout',
+    status: 'failed', retries: 3, error_msg: 'Connection timeout', project_id: null,
     created_at: '2026-01-14T10:00:00Z', updated_at: '2026-01-14T12:00:00Z',
   },
   {
     id: 'st3', file_id: 'f3333333-aaaa-bbbb-cccc-dddddddddddd',
     source_storage_id: 's2', target_storage_id: 's1',
-    status: 'completed', retries: 0, error_msg: null,
+    status: 'completed', retries: 0, error_msg: null, project_id: null,
     created_at: '2026-01-13T10:00:00Z', updated_at: '2026-01-13T11:00:00Z',
   },
 ];
 
 const mockStorages = [
-  { id: 's1', name: 'Local Primary', storage_type: 'local', is_hot: true, enabled: true, file_count: 0, used_space: 0, config: {}, project_id: null, created_at: '', updated_at: '' },
-  { id: 's2', name: 'S3 Backup', storage_type: 's3', is_hot: false, enabled: true, file_count: 0, used_space: 0, config: {}, project_id: null, created_at: '', updated_at: '' },
-  { id: 's3', name: 'Azure Cold', storage_type: 'azure', is_hot: false, enabled: true, file_count: 0, used_space: 0, config: {}, project_id: null, created_at: '', updated_at: '' },
+  { id: 's1', name: 'Local Primary', storage_type: 'local', is_hot: true, enabled: true, supports_direct_links: false, file_count: 0, used_space: 0, config: {}, project_id: null, created_at: '', updated_at: '' },
+  { id: 's2', name: 'S3 Backup', storage_type: 's3', is_hot: false, enabled: true, supports_direct_links: false, file_count: 0, used_space: 0, config: {}, project_id: null, created_at: '', updated_at: '' },
+  { id: 's3', name: 'Azure Cold', storage_type: 'azure', is_hot: false, enabled: true, supports_direct_links: false, file_count: 0, used_space: 0, config: {}, project_id: null, created_at: '', updated_at: '' },
 ];
 
 function renderSyncTasks() {

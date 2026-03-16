@@ -202,8 +202,11 @@ impl StorageBackend for S3StorageBackend {
         match result {
             Ok(_) => Ok(()),
             Err(e) => {
-                let err_str = format!("{}", e);
-                if err_str.contains("NoSuchBucket") {
+                // Check for NoSuchBucket using both Display and Debug representations,
+                // since AWS SDK may wrap the error code differently depending on version.
+                let err_display = format!("{}", e);
+                let err_debug = format!("{:?}", e);
+                if err_display.contains("NoSuchBucket") || err_debug.contains("NoSuchBucket") {
                     tracing::info!(bucket = %self.bucket, "Bucket not found, creating automatically");
                     self.create_container(&self.bucket.clone()).await?;
 
@@ -217,7 +220,10 @@ impl StorageBackend for S3StorageBackend {
                         .map_err(|e| AppError::Internal(format!("S3 upload failed: {}", e)))?;
                     Ok(())
                 } else {
-                    Err(AppError::Internal(format!("S3 upload failed: {}", e)))
+                    Err(AppError::Internal(format!(
+                        "S3 upload failed: {} (details: {:?})",
+                        e, e
+                    )))
                 }
             }
         }

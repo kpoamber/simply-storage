@@ -294,6 +294,7 @@ mod tests {
             is_hot: true,
             project_id: None,
             enabled: true,
+            supports_direct_links: false,
             created_at: now,
             updated_at: now,
         };

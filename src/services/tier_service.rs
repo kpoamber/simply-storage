@@ -13,6 +13,7 @@ pub struct ArchivableFile {
     pub hot_location_id: Uuid,
     pub hot_storage_id: Uuid,
     pub storage_path: String,
+    pub project_id: Uuid,
 }
 
 /// A hot storage location ready to be marked as archived.
@@ -51,7 +52,8 @@ impl TierService {
                 fl.file_id,
                 fl.id as hot_location_id,
                 fl.storage_id as hot_storage_id,
-                fl.storage_path
+                fl.storage_path,
+                fr.project_id
             FROM file_locations fl
             JOIN storages s ON s.id = fl.storage_id AND s.is_hot = TRUE AND s.enabled = TRUE
             JOIN file_references fr ON fr.file_id = fl.file_id
@@ -93,6 +95,7 @@ impl TierService {
                     file_id: file.file_id,
                     source_storage_id: file.hot_storage_id,
                     target_storage_id: cold_storage.id,
+                    project_id: Some(file.project_id),
                 };
                 match SyncTask::create(&self.pool, &create_task).await {
                     Ok(_) => {
@@ -201,6 +204,15 @@ impl TierService {
             AppError::NotFound("No hot storage available for restore".to_string())
         })?;
 
+        // Resolve project_id from file_references
+        let project_id: Option<Uuid> = sqlx::query_as::<_, (Uuid,)>(
+            "SELECT project_id FROM file_references WHERE file_id = $1 LIMIT 1",
+        )
+        .bind(file_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(|r| r.0);
+
         // Create sync task from cold to hot
         let task = SyncTask::create(
             &self.pool,
@@ -208,6 +220,7 @@ impl TierService {
                 file_id,
                 source_storage_id: cold_loc.storage_id,
                 target_storage_id: hot_storage.id,
+                project_id,
             },
         )
         .await?;
@@ -253,6 +266,7 @@ mod tests {
             hot_location_id: Uuid::new_v4(),
             hot_storage_id: Uuid::new_v4(),
             storage_path: "ab/cd/abcdef1234".to_string(),
+            project_id: Uuid::new_v4(),
         };
         assert_eq!(file.storage_path, "ab/cd/abcdef1234");
     }
@@ -264,6 +278,7 @@ mod tests {
             hot_location_id: Uuid::new_v4(),
             hot_storage_id: Uuid::new_v4(),
             storage_path: "hash123".to_string(),
+            project_id: Uuid::new_v4(),
         };
         let json = serde_json::to_value(&file).unwrap();
         assert_eq!(json["storage_path"], "hash123");

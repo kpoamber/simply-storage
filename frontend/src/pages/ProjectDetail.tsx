@@ -94,7 +94,7 @@ export default function ProjectDetail() {
 
       {canWrite && <ProjectSettingsForm project={project} />}
 
-      {canWrite && <ProjectStoragesSection projectId={id!} />}
+      {canWrite && <ProjectStoragesSection projectId={id!} projectSlug={project.slug} />}
 
       {isAdmin && <ProjectMembersSection projectId={id!} ownerId={project.owner_id} />}
 
@@ -123,6 +123,7 @@ export default function ProjectDetail() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Name</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium uppercase text-gray-500">Size</th>
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Metadata</th>
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Sync</th>
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Created</th>
@@ -431,7 +432,7 @@ function ProjectSettingsForm({ project }: { project: ProjectWithStats['project']
 
 const CLOUD_TYPES = ['s3', 'azure', 'gcs'];
 
-function ProjectStoragesSection({ projectId }: { projectId: string }) {
+function ProjectStoragesSection({ projectId, projectSlug }: { projectId: string; projectSlug: string }) {
   const queryClient = useQueryClient();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingAssignment, setEditingAssignment] = useState<ProjectStorageAssignment | null>(null);
@@ -518,7 +519,7 @@ function ProjectStoragesSection({ projectId }: { projectId: string }) {
                       {a.is_hot ? 'hot' : 'cold'}
                     </span>
                   </td>
-                  <td className="px-4 py-2 text-sm text-gray-500">{a.container_override ?? '\u2014'}</td>
+                  <td className="px-4 py-2 text-sm text-gray-500">{a.container_override || <span className="text-gray-400">{projectSlug}-{a.id.slice(0, 6)}</span>}</td>
                   <td className="px-4 py-2 text-sm text-gray-500">{a.prefix_override ?? '\u2014'}</td>
                   <td className="px-4 py-2 text-sm">
                     <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${a.is_active ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-500'}`}>
@@ -556,7 +557,7 @@ function ProjectStoragesSection({ projectId }: { projectId: string }) {
             <div className="mt-4 space-y-3">
               <div>
                 <label className="block text-xs text-gray-500">Container Override</label>
-                <input value={editContainer} onChange={e => setEditContainer(e.target.value)} placeholder="Leave empty for default" className="mt-1 w-full rounded border border-gray-300 px-3 py-1.5 text-sm" />
+                <input value={editContainer} onChange={e => setEditContainer(e.target.value)} placeholder={`Auto: ${projectSlug}-${editingAssignment?.id.slice(0, 6) ?? 'xxxxxx'}`} className="mt-1 w-full rounded border border-gray-300 px-3 py-1.5 text-sm" />
               </div>
               <div>
                 <label className="block text-xs text-gray-500">Prefix Override</label>
@@ -578,7 +579,7 @@ function ProjectStoragesSection({ projectId }: { projectId: string }) {
       )}
 
       {showAddDialog && (
-        <AddStorageDialog projectId={projectId} onClose={() => setShowAddDialog(false)} />
+        <AddStorageDialog projectId={projectId} projectSlug={projectSlug} onClose={() => setShowAddDialog(false)} />
       )}
     </div>
   );
@@ -746,7 +747,7 @@ function AddMemberSelect({ users, onSelect, isPending }: { users: AuthUser[]; on
   );
 }
 
-function AddStorageDialog({ projectId, onClose }: { projectId: string; onClose: () => void }) {
+function AddStorageDialog({ projectId, projectSlug, onClose }: { projectId: string; projectSlug: string; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [selectedStorageId, setSelectedStorageId] = useState('');
   const [containerOverride, setContainerOverride] = useState('');
@@ -835,7 +836,7 @@ function AddStorageDialog({ projectId, onClose }: { projectId: string; onClose: 
                 onChange={e => setContainerOverride(e.target.value)}
                 className="mt-1 w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
               >
-                <option value="">Default (from storage config)</option>
+                <option value="">Auto ({projectSlug}-xxxxxx)</option>
                 {containers?.map(c => (
                   <option key={c} value={c}>{c}</option>
                 ))}
@@ -1027,6 +1028,7 @@ function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileRefer
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
   const [metadataExpanded, setMetadataExpanded] = useState(false);
   const [showLinkDialog, setShowLinkDialog] = useState(false);
+  const [showSyncDetails, setShowSyncDetails] = useState(false);
   const [linkExpiry, setLinkExpiry] = useState('');
   const [generatedLinks, setGeneratedLinks] = useState<TempLinkEntry[]>([]);
 
@@ -1112,6 +1114,9 @@ function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileRefer
   return (
     <tr>
       <td className="px-4 py-2 text-sm text-gray-900">{fileRef.original_name}</td>
+      <td className="whitespace-nowrap px-4 py-2 text-sm text-right text-gray-500">
+        {fileRef.file_size != null ? formatBytes(fileRef.file_size) : '--'}
+      </td>
       <td className="px-4 py-2 text-sm">
         {metadataEntries.length === 0 ? (
           <span className="text-gray-400">--</span>
@@ -1141,9 +1146,93 @@ function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileRefer
         )}
       </td>
       <td className="whitespace-nowrap px-4 py-2 text-sm">
-        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${syncColor}`}>
+        <button
+          onClick={() => setShowSyncDetails(true)}
+          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium cursor-pointer hover:opacity-80 ${syncColor}`}
+        >
           {syncLabel}
-        </span>
+        </button>
+        {showSyncDetails && fileRef.sync_details && createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowSyncDetails(false)}>
+            <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h3 className="font-medium text-gray-800">Sync Details — {fileRef.original_name}</h3>
+                <button onClick={() => setShowSyncDetails(false)} className="text-gray-400 hover:text-gray-600">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="mt-4 space-y-3">
+                {fileRef.sync_details.map((d) => (
+                  <div key={d.storage_id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={`h-2.5 w-2.5 rounded-full ${d.status === 'synced' ? 'bg-green-500' : d.status === 'not_synced' ? 'bg-red-400' : 'bg-yellow-400'}`} />
+                        <span className="text-sm font-medium text-gray-800">{d.storage_name}</span>
+                        <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500">{d.storage_type}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400">
+                          {d.status === 'synced' && d.synced_at
+                            ? new Date(d.synced_at).toLocaleString()
+                            : d.status === 'not_synced' ? 'not synced' : d.status}
+                        </span>
+                        {d.status !== 'synced' && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                await apiClient.post(`/files/${fileRef.file_id}/sync`, {
+                                  target_storage_id: d.storage_id,
+                                  project_id: projectId,
+                                });
+                                queryClient.invalidateQueries({ queryKey: ['project-files', projectId] });
+                              } catch { /* handled by interceptor */ }
+                            }}
+                            className="rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700"
+                          >
+                            Sync
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    {d.storage_path && (
+                      <div className="mt-1.5 overflow-hidden rounded bg-gray-100 px-2 py-1">
+                        <div className="truncate font-mono text-[11px] text-gray-400" title={d.storage_path}>{d.storage_path}</div>
+                      </div>
+                    )}
+                    {d.status === 'synced' && d.supports_direct_links && (
+                      <div className="mt-1.5">
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await apiClient.get<TempLinkResponse>(`/files/${fileRef.file_id}/link`, {
+                                params: { expires_in: 3600, storage_id: d.storage_id },
+                              });
+                              if (res.data.links.length > 0) {
+                                const url = res.data.links[0].url;
+                                try {
+                                  await navigator.clipboard.writeText(url);
+                                } catch {
+                                  // Fallback: prompt user to copy
+                                  window.prompt('Copy this link:', url);
+                                }
+                                setCopiedLink(d.storage_id);
+                                setTimeout(() => setCopiedLink(null), 3000);
+                              }
+                            } catch { /* handled by interceptor */ }
+                          }}
+                          className="rounded bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-100"
+                        >
+                          {copiedLink === d.storage_id ? 'Copied!' : 'Copy Public Link'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
       </td>
       <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-500">
         {new Date(fileRef.created_at).toLocaleDateString()}

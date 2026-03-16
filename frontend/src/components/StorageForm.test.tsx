@@ -29,7 +29,6 @@ describe('StorageForm', () => {
     fireEvent.change(screen.getByLabelText('Storage Type'), { target: { value: 's3' } });
 
     expect(screen.getByPlaceholderText('us-east-1')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('my-bucket')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('https://ams3.digitaloceanspaces.com')).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('/data/storage')).not.toBeInTheDocument();
   });
@@ -40,7 +39,6 @@ describe('StorageForm', () => {
 
     expect(screen.getByText('Account Name *')).toBeInTheDocument();
     expect(screen.getByText('Account Key *')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('my-container')).toBeInTheDocument();
   });
 
   it('switches to GCS fields', () => {

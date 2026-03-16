@@ -117,6 +117,7 @@ impl BulkService {
                     file_id: *file_id,
                     source_storage_id: source.storage_id,
                     target_storage_id,
+                    project_id: None,
                 };
                 match SyncTask::create(&self.pool, &create_task).await {
                     Ok(_) => sync_tasks_created += 1,

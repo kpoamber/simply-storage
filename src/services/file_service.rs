@@ -7,10 +7,10 @@ use uuid::Uuid;
 use crate::db::models::{
     is_unique_violation, BulkDeleteFilters, BulkDeletePreview, BulkDeleteResult, CreateFile,
     CreateFileLocation, CreateFileReference, CreateSyncTask, File, FileLocation, FileReference,
-    ProjectStorage, Storage, SyncTask,
+    Storage, SyncTask,
 };
 use crate::error::{AppError, AppResult};
-use crate::storage::registry::create_backend;
+
 use crate::storage::traits::StorageBackend;
 use crate::storage::StorageRegistry;
 
@@ -98,7 +98,8 @@ impl FileService {
         let primary_storage = self.find_primary_storage(&storages).await?;
 
         // Build the content-addressable storage path from the hash
-        let storage_path = hash.clone();
+        // e.g. "ab/cd/abcdef1234..." for directory sharding
+        let storage_path = content_addressed_path(&hash);
 
         // 3b. If this is a new file, upload to primary storage
         if is_new {
@@ -131,24 +132,77 @@ impl FileService {
         };
         let file_reference = FileReference::create(&self.pool, &create_ref).await?;
 
-        // 5. Create sync_tasks for remaining storages (if new file)
+        // 5. Create sync_tasks for storages that don't have this file yet.
+        // For new files: all storages except primary need sync.
+        // For duplicates: check which project storages are missing the file.
+        // Sync task creation failures are non-fatal — the file is already
+        // safely stored on at least one storage and can be synced later.
         let mut sync_tasks_created = 0;
-        if is_new {
-            for storage in &storages {
-                if storage.id == primary_storage.id {
+        let existing_locations = FileLocation::find_all_for_file(&self.pool, file.id).await
+            .unwrap_or_default();
+        let existing_storage_ids: std::collections::HashSet<Uuid> = existing_locations
+            .iter()
+            .map(|loc| loc.storage_id)
+            .collect();
+
+        // Find a source storage that has the file and is accessible (registered backend).
+        // For new files: primary storage. For duplicates: any synced location with a
+        // registered backend, preferring storages assigned to this project.
+        let source_storage_id = if is_new {
+            primary_storage.id
+        } else {
+            let project_storage_ids: std::collections::HashSet<Uuid> =
+                storages.iter().map(|s| s.id).collect();
+            let mut best_source = None;
+            let mut fallback_source = None;
+            for loc in &existing_locations {
+                if loc.status != "synced" {
                     continue;
                 }
-                // Only create sync task if the backend is registered
-                if !self.registry.contains(&storage.id).await {
+                if !self.registry.contains(&loc.storage_id).await {
                     continue;
                 }
-                let create_task = CreateSyncTask {
-                    file_id: file.id,
-                    source_storage_id: primary_storage.id,
-                    target_storage_id: storage.id,
-                };
-                SyncTask::create(&self.pool, &create_task).await?;
-                sync_tasks_created += 1;
+                if project_storage_ids.contains(&loc.storage_id) {
+                    best_source = Some(loc.storage_id);
+                    break; // prefer project storage
+                }
+                if fallback_source.is_none() {
+                    fallback_source = Some(loc.storage_id);
+                }
+            }
+            best_source
+                .or(fallback_source)
+                .unwrap_or(primary_storage.id)
+        };
+
+        for storage in &storages {
+            if storage.id == source_storage_id {
+                continue;
+            }
+            // Skip if file already exists on this storage
+            if existing_storage_ids.contains(&storage.id) {
+                continue;
+            }
+            // Only create sync task if the backend is registered
+            if !self.registry.contains(&storage.id).await {
+                continue;
+            }
+            let create_task = CreateSyncTask {
+                file_id: file.id,
+                source_storage_id,
+                target_storage_id: storage.id,
+                project_id: Some(project_id),
+            };
+            match SyncTask::create(&self.pool, &create_task).await {
+                Ok(_) => sync_tasks_created += 1,
+                Err(e) => {
+                    tracing::warn!(
+                        file_id = %file.id,
+                        target_storage = %storage.id,
+                        error = %e,
+                        "Failed to create sync task, file uploaded but sync deferred"
+                    );
+                }
             }
         }
 
@@ -224,6 +278,7 @@ impl FileService {
         file_id: Uuid,
         expires_in: std::time::Duration,
         direct_only: bool,
+        storage_id_filter: Option<Uuid>,
     ) -> AppResult<Vec<TempLinkEntry>> {
         let _file = File::find_by_id(&self.pool, file_id).await?;
         let locations = FileLocation::find_for_file(&self.pool, file_id).await?;
@@ -233,6 +288,12 @@ impl FileService {
         let mut links = Vec::new();
 
         for location in &locations {
+            // Filter by specific storage if requested
+            if let Some(filter_id) = storage_id_filter {
+                if location.storage_id != filter_id {
+                    continue;
+                }
+            }
             let storage = match Storage::find_by_id(&self.pool, location.storage_id).await {
                 Ok(s) => s,
                 Err(_) => continue,
@@ -275,73 +336,36 @@ impl FileService {
         Ok(links)
     }
 
-    /// Resolve all possible backends for a storage location, considering container overrides
-    /// from project_storages. Returns override-based backends first, then the default backend.
+    /// Resolve all possible backends for a storage location, considering container overrides.
     async fn resolve_backends_for_location(
         &self,
         storage_id: &Uuid,
         file_refs: &[FileReference],
     ) -> Vec<Arc<dyn StorageBackend>> {
-        let mut backends: Vec<Arc<dyn StorageBackend>> = Vec::new();
-
-        // Try project-specific overrides first
-        if let Ok(storage) = Storage::find_by_id(&self.pool, *storage_id).await {
-            for fref in file_refs {
-                if let Ok(backend) = self.get_project_backend(&storage, fref.project_id).await {
-                    backends.push(backend);
-                }
-            }
-        }
-
-        // Fallback: default backend from registry (if not already covered)
-        if let Ok(default_backend) = self.registry.get(storage_id).await {
-            backends.push(default_backend);
-        }
-
-        backends
+        crate::services::backend_resolver::resolve_backends_for_location(
+            &self.pool,
+            &self.registry,
+            storage_id,
+            file_refs,
+            &self.hmac_secret,
+        )
+        .await
     }
 
-    /// Get storage backends for a project, applying container/prefix overrides from project_storages.
-    /// Returns (Storage, backend, effective_storage_path_prefix) tuples.
+    /// Get storage backend for a project with container derived from project slug.
     async fn get_project_backend(
         &self,
         storage: &Storage,
         project_id: Uuid,
     ) -> AppResult<Arc<dyn StorageBackend>> {
-        let assignment =
-            ProjectStorage::find_for_project_and_storage(&self.pool, project_id, storage.id)
-                .await?;
-
-        if let Some(ps) = assignment {
-            if ps.container_override.is_some() || ps.prefix_override.is_some() {
-                let mut config = storage.config.clone();
-                if let Some(ref container) = ps.container_override {
-                    match storage.storage_type.as_str() {
-                        "s3" => {
-                            config["bucket"] =
-                                serde_json::Value::String(container.clone());
-                        }
-                        "azure" => {
-                            config["container"] =
-                                serde_json::Value::String(container.clone());
-                        }
-                        "gcs" => {
-                            config["bucket"] =
-                                serde_json::Value::String(container.clone());
-                        }
-                        _ => {}
-                    }
-                }
-                if let Some(ref prefix) = ps.prefix_override {
-                    config["prefix"] = serde_json::Value::String(prefix.clone());
-                }
-                return create_backend(&storage.storage_type, &config, &self.hmac_secret)
-                    .await;
-            }
-        }
-
-        // No overrides — use default backend from registry
-        self.registry.get(&storage.id).await
+        crate::services::backend_resolver::resolve_project_backend(
+            &self.pool,
+            &self.registry,
+            storage,
+            project_id,
+            &self.hmac_secret,
+        )
+        .await
     }
 
     /// Find the primary storage for uploading: first hot, enabled storage
@@ -476,6 +500,16 @@ pub fn compute_sha256(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hex::encode(hasher.finalize())
+}
+
+/// Build a content-addressable storage path from a SHA-256 hex hash.
+/// Splits into nested directories to avoid flat directory performance issues:
+/// `abcdef1234...` → `ab/cd/abcdef1234...`
+pub fn content_addressed_path(hash: &str) -> String {
+    if hash.len() < 4 {
+        return hash.to_string();
+    }
+    format!("{}/{}/{}", &hash[..2], &hash[2..4], hash)
 }
 
 #[cfg(test)]
@@ -788,16 +822,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_storage_path_is_hash() {
-        // Verify that the storage path used for content-addressable storage
-        // is the SHA-256 hash itself
+    async fn test_storage_path_is_sharded() {
+        // Verify that the storage path uses content-addressable sharding
         let data = Bytes::from("test content");
         let hash = compute_sha256(&data);
-        let storage_path = hash.clone();
+        let storage_path = content_addressed_path(&hash);
 
-        // The path should be the full 64-char hex hash
-        assert_eq!(storage_path.len(), 64);
-        assert_eq!(storage_path, hash);
+        // Path should be ab/cd/full_hash
+        assert!(storage_path.starts_with(&hash[..2]));
+        assert!(storage_path.contains('/'));
+        assert!(storage_path.ends_with(&hash));
+        assert_eq!(storage_path, format!("{}/{}/{}", &hash[..2], &hash[2..4], hash));
+    }
+
+    #[test]
+    fn test_content_addressed_path() {
+        let hash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+        assert_eq!(content_addressed_path(hash), "ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890");
+
+        // Short hash fallback
+        assert_eq!(content_addressed_path("abc"), "abc");
     }
 
     #[tokio::test]

@@ -7,10 +7,10 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::db::models::{
-    CreateSharedLink, File, FileLocation, FileReference, ProjectStorage, SharedLink, Storage,
+    CreateSharedLink, File, FileLocation, FileReference, SharedLink,
 };
 use crate::error::{AppError, AppResult};
-use crate::storage::registry::create_backend;
+
 use crate::storage::traits::StorageBackend;
 use crate::storage::StorageRegistry;
 
@@ -313,56 +313,14 @@ impl SharedLinkService {
         storage_id: &Uuid,
         file_refs: &[FileReference],
     ) -> Vec<Arc<dyn StorageBackend>> {
-        let mut backends: Vec<Arc<dyn StorageBackend>> = Vec::new();
-
-        if let Ok(storage) = Storage::find_by_id(&self.pool, *storage_id).await {
-            for fref in file_refs {
-                if let Ok(backend) = self.get_project_backend(&storage, fref.project_id).await {
-                    backends.push(backend);
-                }
-            }
-        }
-
-        // Fallback: default backend from registry
-        if let Ok(default_backend) = self.registry.get(storage_id).await {
-            backends.push(default_backend);
-        }
-
-        backends
-    }
-
-    /// Get storage backend with project-specific container/prefix overrides.
-    async fn get_project_backend(
-        &self,
-        storage: &Storage,
-        project_id: Uuid,
-    ) -> AppResult<Arc<dyn StorageBackend>> {
-        let assignment =
-            ProjectStorage::find_for_project_and_storage(&self.pool, project_id, storage.id)
-                .await?;
-
-        if let Some(ps) = assignment {
-            if ps.container_override.is_some() || ps.prefix_override.is_some() {
-                let mut config = storage.config.clone();
-                if let Some(ref container) = ps.container_override {
-                    match storage.storage_type.as_str() {
-                        "s3" | "gcs" => {
-                            config["bucket"] = serde_json::Value::String(container.clone());
-                        }
-                        "azure" => {
-                            config["container"] = serde_json::Value::String(container.clone());
-                        }
-                        _ => {}
-                    }
-                }
-                if let Some(ref prefix) = ps.prefix_override {
-                    config["prefix"] = serde_json::Value::String(prefix.clone());
-                }
-                return create_backend(&storage.storage_type, &config, &self.hmac_secret).await;
-            }
-        }
-
-        self.registry.get(&storage.id).await
+        crate::services::backend_resolver::resolve_backends_for_location(
+            &self.pool,
+            &self.registry,
+            storage_id,
+            file_refs,
+            &self.hmac_secret,
+        )
+        .await
     }
 }
 
