@@ -59,13 +59,14 @@ echo ""
 # --- Determine compose files ---
 COMPOSE_BASE="${DEPLOY_DIR}/docker-compose.prod.yml"
 COMPOSE_PROFILE="${DEPLOY_DIR}/docker-compose.${PROFILE}.yml"
-COMPOSE_CMD="docker compose -f ${COMPOSE_BASE} -f ${COMPOSE_PROFILE} -p ${COMPOSE_PROJECT}"
+COMPOSE_CMD="docker compose --env-file ${DEPLOY_DIR}/.env -f ${COMPOSE_BASE} -f ${COMPOSE_PROFILE} -p ${COMPOSE_PROJECT}"
 
 # --- Helper: restore dump to container ---
 restore_container() {
     local container="$1"
     local dump_file="$2"
     echo "  Restoring ${dump_file} -> ${container}..."
+    set +e
     docker exec -i "${container}" pg_restore \
         -U "${POSTGRES_USER}" \
         -d "${POSTGRES_DB}" \
@@ -74,7 +75,16 @@ restore_container() {
         --clean \
         --if-exists \
         < "${dump_file}"
-    echo "  Done."
+    local rc=$?
+    set -e
+    if [[ ${rc} -eq 0 ]]; then
+        echo "  Done."
+    elif [[ ${rc} -eq 1 ]]; then
+        echo "  WARNING: pg_restore completed with warnings (exit code 1). This is usually safe."
+    else
+        echo "  ERROR: pg_restore failed with exit code ${rc}"
+        return ${rc}
+    fi
 }
 
 # --- Extract backup ---
@@ -85,6 +95,13 @@ tar -xzf "${BACKUP_FILE}" -C "${TEMP_DIR}"
 BACKUP_NAME="$(ls -1 "${TEMP_DIR}" | head -1)"
 EXTRACTED="${TEMP_DIR}/${BACKUP_NAME}"
 echo "  Extracted to: ${EXTRACTED}"
+
+# Warn if backup profile doesn't match target profile
+BACKUP_PROFILE="$(echo "${BACKUP_NAME}" | sed -n 's/backup_\([a-z]*\)_.*/\1/p')"
+if [[ -n "${BACKUP_PROFILE}" && "${BACKUP_PROFILE}" != "${PROFILE}" ]]; then
+    echo "  WARNING: Backup was created with profile '${BACKUP_PROFILE}' but restoring to profile '${PROFILE}'."
+    echo "  This may result in incomplete data restoration if worker counts differ."
+fi
 echo ""
 
 # --- Stop app containers (keep database running) ---

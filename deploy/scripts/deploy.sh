@@ -34,7 +34,7 @@ done
 # --- Compose command helper ---
 COMPOSE_BASE="${DEPLOY_DIR}/docker-compose.prod.yml"
 COMPOSE_PROFILE="${DEPLOY_DIR}/docker-compose.${PROFILE}.yml"
-COMPOSE_CMD="docker compose -f ${COMPOSE_BASE} -f ${COMPOSE_PROFILE} -p ${COMPOSE_PROJECT}"
+COMPOSE_CMD="docker compose --env-file ${DEPLOY_DIR}/.env -f ${COMPOSE_BASE} -f ${COMPOSE_PROFILE} -p ${COMPOSE_PROJECT}"
 
 # --- Validate profile ---
 if [[ ! -f "${COMPOSE_PROFILE}" ]]; then

@@ -8,8 +8,7 @@ COPY frontend/ .
 RUN npm run build
 
 # ─── Stage 2: Build Rust backend ───────────────────────────────────────────
-FROM rust:latest AS backend-builder
-# Pin the runtime to the same distro as the builder to avoid glibc mismatch
+FROM rust:1.85-bookworm AS backend-builder
 
 WORKDIR /app
 
@@ -28,7 +27,7 @@ COPY migrations/ migrations/
 RUN cargo build --release
 
 # ─── Stage 3: Minimal runtime image ───────────────────────────────────────
-FROM debian:trixie-slim AS runtime
+FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \

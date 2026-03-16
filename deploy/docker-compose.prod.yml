@@ -15,6 +15,8 @@ services:
         condition: service_healthy
       init-certs:
         condition: service_completed_successfully
+    # Reload nginx every 12h to pick up renewed TLS certificates from certbot
+    entrypoint: "/bin/sh -c '/docker-entrypoint.sh nginx -g \"daemon off;\" & NGINX_PID=$$!; while :; do sleep 12h & wait $$!; nginx -s reload 2>/dev/null || true; done & wait $$NGINX_PID'"
     restart: unless-stopped
     networks:
       - innovare

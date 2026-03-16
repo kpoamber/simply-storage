@@ -25,10 +25,10 @@ write_files:
     permissions: "0600"
     owner: deploy:deploy
     content: |
-      DOMAIN=${domain}
-      DEPLOY_PROFILE=${deploy_profile}
+      DOMAIN="${domain}"
+      DEPLOY_PROFILE="${deploy_profile}"
 %{ for key, value in app_env_vars ~}
-      ${key}=${value}
+      ${key}="${value}"
 %{ endfor ~}
 
   - path: /etc/ssh/sshd_config.d/99-hardening.conf

@@ -13,7 +13,6 @@ POSTGRES_USER="${POSTGRES_USER:-innovare}"
 POSTGRES_DB="${POSTGRES_DB:-innovare_storage}"
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-innovare-storage}"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
-BACKUP_NAME="backup_${PROFILE}_${TIMESTAMP}"
 
 # --- Parse arguments ---
 while [[ $# -gt 0 ]]; do
