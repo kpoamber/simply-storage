@@ -48,10 +48,10 @@ write_files:
       if [ -f /opt/innovare-storage/.env ]; then
         set -a; source /opt/innovare-storage/.env; set +a
       fi
-      export PROFILE="${DEPLOY_PROFILE:-small}"
+      export PROFILE="$${DEPLOY_PROFILE:-small}"
       export BACKUP_DIR="/backups"
       export COMPOSE_PROJECT="innovare-storage"
-      RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
+      RETENTION_DAYS="$${BACKUP_RETENTION_DAYS:-30}"
       LOG_FILE="/var/log/innovare-backup.log"
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting backup (profile: $PROFILE)..." >> "$LOG_FILE"
       if [ -f /opt/innovare-storage/scripts/backup.sh ]; then
