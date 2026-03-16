@@ -108,12 +108,12 @@
 - Create: `.github/workflows/deploy-windows.yml`
 - Create: `deploy/scripts/deploy-windows.sh` (скрипт деплоя через SSH на Windows с Docker)
 
-- [ ] Создать deploy-windows.sh: SSH на Windows Server, pre-deploy backup, docker compose pull, docker compose up -d с профилем, health check, rollback при failure
-- [ ] Создать workflow triggered on: workflow_dispatch с inputs: profile (small/medium/large)
-- [ ] Добавить job `deploy`: SSH на Windows Server (через OpenSSH), передача docker-compose файлов, запуск deploy скрипта
-- [ ] Secrets: WINDOWS_SSH_KEY, WINDOWS_HOST, WINDOWS_USER
-- [ ] Health check после деплоя
-- [ ] Verify: workflow syntax валиден
+- [x] Создать deploy-windows.sh: SSH на Windows Server, pre-deploy backup, docker compose pull, docker compose up -d с профилем, health check, rollback при failure
+- [x] Создать workflow triggered on: workflow_dispatch с inputs: profile (small/medium/large)
+- [x] Добавить job `deploy`: SSH на Windows Server (через OpenSSH), передача docker-compose файлов, запуск deploy скрипта
+- [x] Secrets: WINDOWS_SSH_KEY, WINDOWS_HOST, WINDOWS_USER
+- [x] Health check после деплоя
+- [x] Verify: workflow syntax валиден
 
 ### Task 7: Обновить существующий build-push.yml
 
