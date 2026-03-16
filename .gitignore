@@ -12,8 +12,16 @@
 # Root node_modules (if accidentally installed)
 /node_modules/
 
+# Environment files (may contain secrets)
+.env
+.env.local
+.env.production
+!.env.example
+!deploy/.env.example
+
 # Terraform
 terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.backup
 terraform/.terraform.tfstate.lock.info
+terraform/*.auto.tfvars

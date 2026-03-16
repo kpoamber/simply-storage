@@ -31,7 +31,7 @@ jobs:
   backup-hetzner:
     name: Backup (Hetzner)
     runs-on: ubuntu-latest
-    if: (github.event_name == 'schedule' && vars.BACKUP_HETZNER != 'false') || inputs.server_target == 'hetzner'
+    if: (github.event_name == 'schedule' && vars.BACKUP_HETZNER == 'true') || inputs.server_target == 'hetzner'
     environment: production
 
     steps:

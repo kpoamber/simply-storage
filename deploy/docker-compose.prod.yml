@@ -73,7 +73,7 @@ services:
       - innovare
 
   init-certs:
-    image: alpine:3.19
+    image: nginx:1.27-alpine
     volumes:
       - certbot_certs:/etc/letsencrypt
     environment:
@@ -86,7 +86,6 @@ services:
         if [ ! -f "$${CERT_DIR}/fullchain.pem" ]; then
           echo "No TLS cert found. Creating self-signed placeholder for $${DOMAIN}..."
           mkdir -p "$${CERT_DIR}"
-          apk add --no-cache openssl > /dev/null 2>&1
           openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
             -keyout "$${CERT_DIR}/privkey.pem" \
             -out "$${CERT_DIR}/fullchain.pem" \
