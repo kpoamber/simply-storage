@@ -103,7 +103,52 @@ echo ""
 # --- Step 5: Deploy with docker compose ---
 echo "[5/6] Starting services..."
 mkdir -p "${BACKUP_DIR}/wal" "${BACKUP_DIR}/basebackups"
-${COMPOSE_CMD} up -d --remove-orphans
+
+# Determine replica count for rolling update
+REPLICAS="$(${COMPOSE_CMD} config --format json 2>/dev/null | python3 -c "
+import sys, json
+cfg = json.load(sys.stdin)
+svc = cfg.get('services', {}).get('app', {})
+print(svc.get('deploy', {}).get('replicas', 1))
+" 2>/dev/null || echo "1")"
+
+if [[ "${REPLICAS}" -gt 1 ]]; then
+    echo "  Rolling update (${REPLICAS} replicas)..."
+
+    # Scale down to half, then back up — ensures old and new overlap
+    HALF=$(( (REPLICAS + 1) / 2 ))
+
+    # Update all non-app services first (nginx, postgres, etc.)
+    ${COMPOSE_CMD} up -d --remove-orphans --no-recreate app
+    echo "  Infrastructure services updated."
+
+    # Scale app down to half (old image containers stay while new ones start)
+    ${COMPOSE_CMD} up -d --scale app=${HALF} --no-recreate
+    echo "  Scaled down to ${HALF} replicas."
+
+    # Now recreate the remaining replicas with new image
+    ${COMPOSE_CMD} up -d --scale app=${HALF} --force-recreate app
+    echo "  First batch updated (${HALF} replicas with new image)."
+
+    # Wait for first batch to be healthy
+    echo "  Waiting for health checks..."
+    sleep 10
+    for attempt in $(seq 1 30); do
+        HEALTHY_COUNT="$(docker ps --filter "name=${COMPOSE_PROJECT}-app" --filter "health=healthy" --format '{{.ID}}' | wc -l)"
+        if [[ ${HEALTHY_COUNT} -ge ${HALF} ]]; then
+            echo "  ${HEALTHY_COUNT} replicas healthy."
+            break
+        fi
+        sleep 2
+    done
+
+    # Scale back to full with new image
+    ${COMPOSE_CMD} up -d --scale app=${REPLICAS}
+    echo "  Scaled back to ${REPLICAS} replicas."
+else
+    ${COMPOSE_CMD} up -d --remove-orphans
+fi
+
 echo "  Services started."
 echo ""
 
