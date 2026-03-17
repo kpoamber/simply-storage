@@ -4,6 +4,8 @@
 #
 # Usage: ./restore.sh --file /backups/backup_small_20260316_020000.tar.gz
 #        ./restore.sh --date 20260316  (finds latest backup for that date)
+#        ./restore.sh --pitr                              (replay all WAL)
+#        ./restore.sh --pitr --target-time '2026-03-17 14:30:00+00'
 #
 # Environment: POSTGRES_USER, POSTGRES_DB, COMPOSE_PROJECT, DEPLOY_DIR, PROFILE
 set -euo pipefail
@@ -18,6 +20,8 @@ PROFILE="${PROFILE:-small}"
 HEALTH_URL="${HEALTH_URL:-http://localhost:80/health}"
 BACKUP_FILE=""
 BACKUP_DATE=""
+PITR_MODE=false
+PITR_TARGET=""
 
 # --- Parse arguments ---
 while [[ $# -gt 0 ]]; do
@@ -25,9 +29,127 @@ while [[ $# -gt 0 ]]; do
         --file) BACKUP_FILE="$2"; shift 2 ;;
         --date) BACKUP_DATE="$2"; shift 2 ;;
         --profile) PROFILE="$2"; shift 2 ;;
+        --pitr) PITR_MODE=true; shift ;;
+        --target-time) PITR_TARGET="$2"; shift 2 ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
+
+# --- Determine compose files ---
+COMPOSE_BASE="${DEPLOY_DIR}/docker-compose.prod.yml"
+COMPOSE_PROFILE="${DEPLOY_DIR}/docker-compose.${PROFILE}.yml"
+COMPOSE_CMD="docker compose --env-file ${DEPLOY_DIR}/.env -f ${COMPOSE_BASE} -f ${COMPOSE_PROFILE} -p ${COMPOSE_PROJECT}"
+
+# --- PITR Restore Mode ---
+if [[ "${PITR_MODE}" = true ]]; then
+    BASEBACKUP_DIR="${BACKUP_DIR}/basebackups"
+    WAL_DIR="${BACKUP_DIR}/wal"
+
+    echo "=== Point-in-Time Recovery ==="
+    echo "Target: ${PITR_TARGET:-latest (replay all available WAL)}"
+    echo "Profile: ${PROFILE}"
+
+    if [[ "${PROFILE}" != "small" ]]; then
+        echo ""
+        echo "WARNING: PITR restores only the coordinator. Worker data must be restored"
+        echo "  separately using: ./restore.sh --file <backup.tar.gz> --profile ${PROFILE}"
+    fi
+    echo ""
+
+    # Find latest base backup
+    LATEST_BASE="$(find "${BASEBACKUP_DIR}" -maxdepth 1 -type d -name "basebackup_*" 2>/dev/null | sort -r | head -1)"
+    if [[ -z "${LATEST_BASE}" ]]; then
+        echo "ERROR: No base backup found in ${BASEBACKUP_DIR}"
+        echo "  Run: ./basebackup.sh first"
+        exit 1
+    fi
+    echo "Using base backup: $(basename "${LATEST_BASE}")"
+
+    WAL_COUNT="$(find "${WAL_DIR}" -maxdepth 1 -type f -name "0000*" 2>/dev/null | wc -l)"
+    echo "WAL files available: ${WAL_COUNT}"
+    echo ""
+
+    # [1] Stop all containers
+    echo "[1] Stopping all containers..."
+    ${COMPOSE_CMD} down
+    echo ""
+
+    # [2] Remove old postgres data volume
+    echo "[2] Removing old postgres data volume..."
+    docker volume rm "${COMPOSE_PROJECT}_postgres_coordinator_data" 2>/dev/null || true
+    echo ""
+
+    # [3] Restore base backup to new volume
+    echo "[3] Restoring base backup..."
+    docker volume create "${COMPOSE_PROJECT}_postgres_coordinator_data"
+    docker run --rm \
+        -v "${COMPOSE_PROJECT}_postgres_coordinator_data:/var/lib/postgresql/data" \
+        -v "${LATEST_BASE}:/backup:ro" \
+        alpine:3.21 sh -c 'cd /var/lib/postgresql/data && tar xzf /backup/base.tar.gz'
+    echo ""
+
+    # [4] Configure recovery
+    echo "[4] Configuring WAL recovery..."
+    RESTORE_CONF="restore_command = 'cp /backups/wal/%f %p'"
+    if [[ -n "${PITR_TARGET}" ]]; then
+        RESTORE_CONF="${RESTORE_CONF}
+recovery_target_time = '${PITR_TARGET}'
+recovery_target_action = 'promote'"
+    fi
+
+    docker run --rm \
+        -v "${COMPOSE_PROJECT}_postgres_coordinator_data:/var/lib/postgresql/data" \
+        alpine:3.21 sh -c "
+            touch /var/lib/postgresql/data/recovery.signal
+            echo \"${RESTORE_CONF}\" >> /var/lib/postgresql/data/postgresql.auto.conf
+        "
+    echo ""
+
+    # [5] Start postgres in recovery mode
+    echo "[5] Starting postgres (recovery mode)..."
+    ${COMPOSE_CMD} up -d postgres
+    echo "  Waiting for recovery to complete..."
+    for attempt in $(seq 1 120); do
+        if docker exec "${COMPOSE_PROJECT}-postgres-1" pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" > /dev/null 2>&1; then
+            IN_RECOVERY="$(docker exec "${COMPOSE_PROJECT}-postgres-1" psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -tAc "SELECT pg_is_in_recovery();" 2>/dev/null || echo "t")"
+            if [[ "${IN_RECOVERY}" = "f" ]]; then
+                echo "  Recovery complete!"
+                break
+            fi
+        fi
+        if [[ ${attempt} -eq 120 ]]; then
+            echo "  WARNING: Recovery not complete after 10 minutes."
+        fi
+        sleep 5
+    done
+    echo ""
+
+    # [6] Start remaining services
+    echo "[6] Starting app containers..."
+    ${COMPOSE_CMD} up -d
+    echo ""
+
+    # [7] Health check
+    echo "[7] Running health check..."
+    HEALTHY=false
+    for attempt in $(seq 1 60); do
+        if curl -sf "${HEALTH_URL}" > /dev/null 2>&1; then
+            HEALTHY=true; break
+        fi
+        sleep 2
+    done
+    if [[ "${HEALTHY}" = true ]]; then
+        echo "  Health check passed!"
+    else
+        echo "WARNING: Health check failed. Check: ${COMPOSE_CMD} logs app"
+    fi
+
+    echo ""
+    echo "=== PITR Restore Complete ==="
+    echo "Base backup: $(basename "${LATEST_BASE}")"
+    echo "Target: ${PITR_TARGET:-latest}"
+    exit 0
+fi
 
 # --- Resolve backup file ---
 if [[ -n "${BACKUP_DATE}" && -z "${BACKUP_FILE}" ]]; then
@@ -55,11 +177,6 @@ echo "=== Innovare Storage Restore ==="
 echo "Backup file: ${BACKUP_FILE}"
 echo "Profile: ${PROFILE}"
 echo ""
-
-# --- Determine compose files ---
-COMPOSE_BASE="${DEPLOY_DIR}/docker-compose.prod.yml"
-COMPOSE_PROFILE="${DEPLOY_DIR}/docker-compose.${PROFILE}.yml"
-COMPOSE_CMD="docker compose --env-file ${DEPLOY_DIR}/.env -f ${COMPOSE_BASE} -f ${COMPOSE_PROFILE} -p ${COMPOSE_PROJECT}"
 
 # --- Helper: restore dump to container ---
 restore_container() {

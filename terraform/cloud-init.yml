@@ -92,7 +92,8 @@ runcmd:
     else
       echo "WARNING: Backup volume $DEVICE not available after 5 minutes. Backups will use root filesystem."
     fi
-  - chown deploy:deploy /backups
+  - mkdir -p /backups/wal /backups/basebackups
+  - chown -R deploy:deploy /backups
 
   # Create application directories
   - mkdir -p /opt/innovare-storage/deploy

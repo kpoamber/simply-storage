@@ -12,7 +12,7 @@ LOG_DIR="${BACKUP_DIR}/logs"
 LOG_FILE="${LOG_DIR}/backup_$(date +%Y%m%d_%H%M%S).log"
 WEBHOOK_URL="${WEBHOOK_URL:-}"
 
-mkdir -p "${LOG_DIR}"
+mkdir -p "${LOG_DIR}" "${BACKUP_DIR}/wal" "${BACKUP_DIR}/basebackups"
 
 # --- Logging ---
 log() {
@@ -56,5 +56,15 @@ log "Deleted ${DELETED_COUNT} old backup(s)"
 
 # --- Rotate old logs (keep 90 days) ---
 find "${LOG_DIR}" -maxdepth 1 -name "backup_*.log" -mtime +90 -type f -delete 2>/dev/null || true
+
+# --- Weekly base backup (Sundays) for PITR ---
+if [[ "$(date +%u)" -eq 7 ]]; then
+    log "Running weekly base backup..."
+    if "${SCRIPT_DIR}/basebackup.sh" >> "${LOG_FILE}" 2>&1; then
+        log "Base backup completed successfully"
+    else
+        notify_error "basebackup.sh exited with code $?"
+    fi
+fi
 
 log "=== Scheduled backup finished ==="

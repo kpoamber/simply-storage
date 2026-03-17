@@ -102,6 +102,7 @@ echo ""
 
 # --- Step 5: Deploy with docker compose ---
 echo "[5/6] Starting services..."
+mkdir -p "${BACKUP_DIR}/wal" "${BACKUP_DIR}/basebackups"
 ${COMPOSE_CMD} up -d --remove-orphans
 echo "  Services started."
 echo ""

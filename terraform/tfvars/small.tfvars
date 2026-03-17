@@ -3,4 +3,4 @@
 
 server_type       = "cx22"
 deploy_profile    = "small"
-backup_volume_size = 30
+backup_volume_size = 10
