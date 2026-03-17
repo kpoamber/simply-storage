@@ -3,19 +3,67 @@ upstream innovare_backend {
     server app:8080;
 }
 
-# HTTP server - redirect to HTTPS + Certbot challenge
+# HTTP server - serves app behind Cloudflare Flexible SSL + Certbot challenge
 server {
     listen 80;
     server_name ${DOMAIN} www.${DOMAIN};
+
+    # Security headers
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Large file upload support
+    client_max_body_size 10G;
+
+    # Long upload/download timeout
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+    proxy_connect_timeout 30s;
 
     # Certbot ACME challenge
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
     }
 
-    # Redirect all other HTTP traffic to HTTPS
+    # Health check endpoint
+    location /health {
+        proxy_pass http://innovare_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    # API endpoints
+    location /api/ {
+        proxy_pass http://innovare_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    # Shared link public endpoints (file downloads)
+    location /s/ {
+        proxy_pass http://innovare_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    # Frontend and SPA fallback
     location / {
-        return 301 https://$host$request_uri;
+        proxy_pass http://innovare_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
     }
 }
 
