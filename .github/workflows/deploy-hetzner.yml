@@ -62,6 +62,24 @@ jobs:
       cancel-in-progress: false
 
     steps:
+      - name: Record start time
+        id: timing
+        run: echo "start_time=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Notify Telegram - started
+        run: |
+          MESSAGE="🚀 Deploy started
+          <b>Environment:</b> ${{ inputs.environment }}
+          <b>Profile:</b> ${{ inputs.profile }}
+          <b>Image:</b> ${{ inputs.image_tag }}
+          <b>Commit:</b> $(echo '${{ github.event.head_commit.message || github.sha }}' | head -1)
+          <b>By:</b> ${{ github.actor }}"
+          curl -s -X POST \
+            "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d parse_mode=HTML \
+            -d text="$MESSAGE" > /dev/null 2>&1 || true
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -138,3 +156,27 @@ jobs:
           echo "- **Image tag:** ${{ inputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify Telegram - finished
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            STATUS="✅ Deploy OK"
+          else
+            STATUS="❌ Deploy FAILED"
+          fi
+          START=${{ steps.timing.outputs.start_time }}
+          ELAPSED=$(( $(date +%s) - START ))
+          MINUTES=$(( ELAPSED / 60 ))
+          SECONDS=$(( ELAPSED % 60 ))
+          MESSAGE="${STATUS}
+          <b>Environment:</b> ${{ inputs.environment }}
+          <b>Profile:</b> ${{ inputs.profile }}
+          <b>Image:</b> ${{ inputs.image_tag }}
+          <b>Duration:</b> ${MINUTES}m ${SECONDS}s
+          <a href='https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'>View logs</a>"
+          curl -s -X POST \
+            "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d parse_mode=HTML \
+            -d text="$MESSAGE" > /dev/null 2>&1 || true
