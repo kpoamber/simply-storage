@@ -67,4 +67,9 @@ if [[ "$(date +%u)" -eq 7 ]]; then
     fi
 fi
 
+# --- Check disk space ---
+if [ -x "${SCRIPT_DIR}/check-disk.sh" ]; then
+    "${SCRIPT_DIR}/check-disk.sh" >> "${LOG_FILE}" 2>&1 || true
+fi
+
 log "=== Scheduled backup finished ==="

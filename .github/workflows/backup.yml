@@ -70,6 +70,20 @@ jobs:
             echo "Latest backups:"
             ls -lht /backups/backup_*.tar.gz 2>/dev/null | head -5
 
+      - name: Check disk space
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: ${{ secrets.DEPLOY_USER || 'deploy' }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          envs: TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID
+          script: |
+            export TELEGRAM_BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
+            export TELEGRAM_CHAT_ID="${{ secrets.TELEGRAM_CHAT_ID }}"
+            cd ${{ env.DEPLOY_DIR_HETZNER }}
+            chmod +x scripts/check-disk.sh
+            ./scripts/check-disk.sh
+
   backup-windows:
     name: Backup (Windows)
     runs-on: ubuntu-latest
