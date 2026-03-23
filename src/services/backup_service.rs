@@ -41,6 +41,11 @@ impl BackupService {
     /// Validate that a storage_path does not contain path traversal sequences
     /// or absolute path components (Unix or Windows).
     pub fn validate_storage_path(path: &str) -> AppResult<()> {
+        if path.contains('\0') {
+            return Err(AppError::BadRequest(
+                "storage_path must not contain null bytes".to_string(),
+            ));
+        }
         if path.contains("..") {
             return Err(AppError::BadRequest(
                 "storage_path must not contain '..'".to_string(),
@@ -216,12 +221,36 @@ impl BackupService {
         let dump_temp = dump_file.into_temp_path();
         let dump_path = dump_temp.to_path_buf();
 
-        let output = tokio::process::Command::new("pg_dump")
-            .arg("--no-owner")
+        // Parse the database URL so we can pass the password via PGPASSWORD
+        // env var instead of on the command line (which is visible in `ps`).
+        let parsed_url = url::Url::parse(&self.database_url)
+            .map_err(|e| AppError::Internal(format!("Invalid database URL: {}", e)))?;
+
+        let mut cmd = tokio::process::Command::new("pg_dump");
+        cmd.arg("--no-owner")
             .arg("--no-acl")
             .arg("--file")
-            .arg(&dump_path)
-            .arg(&self.database_url)
+            .arg(&dump_path);
+
+        if let Some(password) = parsed_url.password() {
+            cmd.env("PGPASSWORD", password);
+        }
+        if let Some(host) = parsed_url.host_str() {
+            cmd.arg("--host").arg(host);
+        }
+        if let Some(port) = parsed_url.port() {
+            cmd.arg("--port").arg(port.to_string());
+        }
+        let username = parsed_url.username();
+        if !username.is_empty() {
+            cmd.arg("--username").arg(username);
+        }
+        let dbname = parsed_url.path().trim_start_matches('/');
+        if !dbname.is_empty() {
+            cmd.arg("--dbname").arg(dbname);
+        }
+
+        let output = cmd
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .output()
@@ -390,13 +419,16 @@ impl BackupService {
 
     /// Delete all backup files and records for a config.
     /// Used when deleting a config with delete_backups=true.
-    /// Best-effort: logs warnings for storage deletion failures but still
-    /// removes DB records so they don't become orphaned.
+    /// Only deletes DB records whose storage files were successfully removed
+    /// (or that have no file) to avoid orphaning files on transient failures.
     pub async fn delete_all_backups_for_config(&self, config_id: Uuid) -> AppResult<u64> {
         let records = BackupRecord::list_all_by_config(&self.pool, config_id).await?;
 
+        let mut deleted = 0u64;
         for record in &records {
             if record.file_path.is_empty() {
+                BackupRecord::delete(&self.pool, record.id).await?;
+                deleted += 1;
                 continue;
             }
             if let Err(e) = self.delete_from_storage(record).await {
@@ -404,12 +436,15 @@ impl BackupService {
                     backup_id = %record.id,
                     file_path = %record.file_path,
                     error = %e,
-                    "Failed to delete backup file from storage during config cleanup"
+                    "Failed to delete backup file from storage during config cleanup, keeping DB record"
                 );
+                continue;
             }
+            BackupRecord::delete(&self.pool, record.id).await?;
+            deleted += 1;
         }
 
-        BackupRecord::delete_all_by_config(&self.pool, config_id).await
+        Ok(deleted)
     }
 
     async fn delete_from_storage(&self, record: &BackupRecord) -> AppResult<()> {
@@ -547,6 +582,12 @@ mod tests {
     #[test]
     fn test_validate_storage_path_absolute() {
         let result = BackupService::validate_storage_path("/absolute/path");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_storage_path_null_byte() {
+        let result = BackupService::validate_storage_path("backups/\0evil");
         assert!(result.is_err());
     }
 

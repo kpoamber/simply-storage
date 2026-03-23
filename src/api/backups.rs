@@ -79,6 +79,19 @@ async fn create_backup_config(
     pool: web::Data<PgPool>,
     body: web::Json<CreateBackupConfig>,
 ) -> Result<HttpResponse, AppError> {
+    // Validate field lengths against DB column limits
+    if body.name.len() > 255 {
+        return Err(AppError::BadRequest("name must be at most 255 characters".to_string()));
+    }
+    if body.schedule_cron.len() > 100 {
+        return Err(AppError::BadRequest("schedule_cron must be at most 100 characters".to_string()));
+    }
+    if let Some(ref path) = body.storage_path {
+        if path.len() > 1024 {
+            return Err(AppError::BadRequest("storage_path must be at most 1024 characters".to_string()));
+        }
+    }
+
     // Validate cron expression
     BackupService::validate_cron(&body.schedule_cron)?;
 
@@ -115,6 +128,23 @@ async fn update_backup_config(
     body: web::Json<UpdateBackupConfig>,
 ) -> Result<HttpResponse, AppError> {
     let config_id = path.into_inner();
+
+    // Validate field lengths against DB column limits
+    if let Some(ref name) = body.name {
+        if name.len() > 255 {
+            return Err(AppError::BadRequest("name must be at most 255 characters".to_string()));
+        }
+    }
+    if let Some(ref cron_expr) = body.schedule_cron {
+        if cron_expr.len() > 100 {
+            return Err(AppError::BadRequest("schedule_cron must be at most 100 characters".to_string()));
+        }
+    }
+    if let Some(ref path) = body.storage_path {
+        if path.len() > 1024 {
+            return Err(AppError::BadRequest("storage_path must be at most 1024 characters".to_string()));
+        }
+    }
 
     // Validate cron expression if provided
     if let Some(ref cron_expr) = body.schedule_cron {
