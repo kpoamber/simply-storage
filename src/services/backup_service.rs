@@ -179,6 +179,9 @@ impl BackupService {
         config_id: Uuid,
         retention_count: i32,
     ) -> AppResult<u32> {
+        if retention_count < 1 {
+            return Ok(0);
+        }
         let old_backups =
             BackupRecord::list_oldest_completed_by_config(&self.pool, config_id, retention_count)
                 .await?;

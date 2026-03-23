@@ -277,16 +277,20 @@ export default function Backups() {
             </div>
           )}
 
-          {editingId && configs && (
-            <EditConfigModal
-              config={configs.find(c => c.id === editingId)!}
-              storages={storages ?? []}
-              error={error}
-              isLoading={updateConfigMutation.isPending}
-              onSubmit={(data) => updateConfigMutation.mutate({ id: editingId, data })}
-              onCancel={() => { setEditingId(null); setError(''); }}
-            />
-          )}
+          {editingId && configs && (() => {
+            const editConfig = configs.find(c => c.id === editingId);
+            if (!editConfig) return null;
+            return (
+              <EditConfigModal
+                config={editConfig}
+                storages={storages ?? []}
+                error={error}
+                isLoading={updateConfigMutation.isPending}
+                onSubmit={(data) => updateConfigMutation.mutate({ id: editingId, data })}
+                onCancel={() => { setEditingId(null); setError(''); }}
+              />
+            );
+          })()}
         </div>
       )}
 

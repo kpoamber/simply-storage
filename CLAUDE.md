@@ -97,7 +97,6 @@ Auth-related:
 Backup-related:
 - `APP_BACKUP__ENABLED` - Enable backup worker (default: `true`)
 - `APP_BACKUP__CHECK_INTERVAL_SECS` - How often to check for due backups in seconds (default: 60)
-- `APP_BACKUP__TEMP_DIR` - Temporary directory for pg_dump output (default: `/tmp`)
 
 ## CI/CD & Deployment
 

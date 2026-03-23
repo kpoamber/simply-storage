@@ -98,11 +98,11 @@ async fn main() -> std::io::Result<()> {
         &config.auth.jwt_secret,
         config.storage.hmac_secret.clone(),
     );
-    let backup_service = BackupService::new(
+    let backup_service = Arc::new(BackupService::new(
         pool.clone(),
         registry.clone(),
         config.database.url.clone(),
-    );
+    ));
 
     // Set up cancellation token for graceful shutdown of background workers
     let cancel_token = CancellationToken::new();
@@ -135,9 +135,7 @@ async fn main() -> std::io::Result<()> {
     // Spawn background backup worker for scheduled database backups
     let backup_handle = if config.backup.enabled {
         let handle = BackupWorker::spawn(
-            pool.clone(),
-            registry.clone(),
-            config.database.url.clone(),
+            backup_service.clone(),
             cancel_token.clone(),
             config.backup.check_interval_secs,
         );
@@ -172,7 +170,7 @@ async fn main() -> std::io::Result<()> {
     let tier_service_data = web::Data::new(tier_service);
     let bulk_service_data = web::Data::new(bulk_service);
     let shared_link_service_data = web::Data::new(shared_link_service);
-    let backup_service_data = web::Data::new(backup_service);
+    let backup_service_data = web::Data::new(backup_service.clone());
 
     let server = HttpServer::new(move || {
         App::new()

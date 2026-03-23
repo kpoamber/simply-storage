@@ -2471,14 +2471,14 @@ impl BackupRecord {
     pub async fn list(pool: &PgPool, config_id: Option<Uuid>) -> AppResult<Vec<BackupRecord>> {
         let rows = if let Some(cid) = config_id {
             sqlx::query_as::<_, BackupRecord>(
-                "SELECT * FROM backup_history WHERE config_id = $1 ORDER BY created_at DESC",
+                "SELECT * FROM backup_history WHERE config_id = $1 ORDER BY created_at DESC LIMIT 500",
             )
             .bind(cid)
             .fetch_all(pool)
             .await?
         } else {
             sqlx::query_as::<_, BackupRecord>(
-                "SELECT * FROM backup_history ORDER BY created_at DESC",
+                "SELECT * FROM backup_history ORDER BY created_at DESC LIMIT 500",
             )
             .fetch_all(pool)
             .await?
