@@ -31,7 +31,7 @@ services:
       -c wal_level=replica
       -c archive_mode=on
       -c archive_command='test ! -f /backups/wal/%f && cp %p /backups/wal/%f'
-      -c archive_timeout=300
+      -c archive_timeout=1800
 
   nginx:
     deploy:
