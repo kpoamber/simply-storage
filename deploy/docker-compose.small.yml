@@ -32,6 +32,8 @@ services:
       -c archive_mode=on
       -c archive_command='test ! -f /backups/wal/%f && cp %p /backups/wal/%f'
       -c archive_timeout=1800
+      -c max_wal_size=256MB
+      -c min_wal_size=64MB
 
   nginx:
     deploy:
