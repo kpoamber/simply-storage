@@ -15,6 +15,7 @@ import ProjectSearch from './pages/ProjectSearch';
 import ProjectBulkDelete from './pages/ProjectBulkDelete';
 import SharedLinks from './pages/SharedLinks';
 import SharedLinkAccess from './pages/SharedLinkAccess';
+import Backups from './pages/Backups';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -69,6 +70,7 @@ function AppRoutes() {
         <Route path="nodes" element={<Nodes />} />
         <Route path="users" element={<AdminRoute><Users /></AdminRoute>} />
         <Route path="users/:id" element={<AdminRoute><UserDetail /></AdminRoute>} />
+        <Route path="backups" element={<AdminRoute><Backups /></AdminRoute>} />
         <Route
           path="*"
           element={

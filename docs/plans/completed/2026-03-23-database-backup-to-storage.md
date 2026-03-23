@@ -94,18 +94,18 @@
 - Create: `src/api/backups.rs`
 - Modify: `src/api/mod.rs`
 
-- [ ] Create backup config endpoints (all require AdminUser):
+- [x] Create backup config endpoints (all require AdminUser):
   - `GET /api/backup-configs` - list all backup configs (join with storage name for display)
   - `POST /api/backup-configs` - create config (validate cron expression, validate storage_id exists)
   - `PUT /api/backup-configs/{id}` - update config
   - `DELETE /api/backup-configs/{id}` - delete config (and optionally associated backups)
-- [ ] Create backup history endpoints (all require AdminUser):
+- [x] Create backup history endpoints (all require AdminUser):
   - `GET /api/backups` - list backup history (with optional config_id query filter, paginated)
   - `POST /api/backups/trigger` - trigger manual backup (accepts storage_id, storage_path in body; or config_id to use config settings)
   - `DELETE /api/backups/{id}` - delete specific backup (from storage and DB)
-- [ ] Register routes in api/mod.rs configure_api_routes
-- [ ] Write integration tests for API endpoints
-- [ ] Run `cargo test`
+- [x] Register routes in api/mod.rs configure_api_routes
+- [x] Write integration tests for API endpoints
+- [x] Run `cargo test`
 
 ### Task 6: Frontend - Backup management page
 
@@ -114,13 +114,13 @@
 - Modify: `frontend/src/App.tsx`
 - Modify: `frontend/src/components/Sidebar.tsx`
 
-- [ ] Create Backups.tsx page with two sections/tabs: Configuration and History
-- [ ] Configuration section: table of backup configs (name, storage, schedule, retention, enabled toggle), create/edit modal with form fields (name, storage selector dropdown, storage_path, cron expression input with presets like "daily at 2am", retention_count, enabled), delete button with confirmation
-- [ ] History section: table of backup records (date, config name, storage, file size, status with color coding, duration), manual backup trigger button, delete button for individual backups
-- [ ] Add "Backups" link to Sidebar.tsx (admin only, with database/archive icon)
-- [ ] Add route in App.tsx wrapped in AdminRoute
-- [ ] Use React Query for data fetching (useQuery/useMutation pattern matching existing pages)
-- [ ] Run `cd frontend && npm run lint && npm run build`
+- [x] Create Backups.tsx page with two sections/tabs: Configuration and History
+- [x] Configuration section: table of backup configs (name, storage, schedule, retention, enabled toggle), create/edit modal with form fields (name, storage selector dropdown, storage_path, cron expression input with presets like "daily at 2am", retention_count, enabled), delete button with confirmation
+- [x] History section: table of backup records (date, config name, storage, file size, status with color coding, duration), manual backup trigger button, delete button for individual backups
+- [x] Add "Backups" link to Sidebar.tsx (admin only, with database/archive icon)
+- [x] Add route in App.tsx wrapped in AdminRoute
+- [x] Use React Query for data fetching (useQuery/useMutation pattern matching existing pages)
+- [x] Run `cd frontend && npm run lint && npm run build`
 
 ### Task 7: Configuration and documentation
 
@@ -128,19 +128,19 @@
 - Modify: `src/config.rs`
 - Modify: `CLAUDE.md`
 
-- [ ] Add `BackupConfig` section to AppConfig with fields: enabled (bool, default true), check_interval_secs (u64, default 60), temp_dir (String, default "/tmp")
-- [ ] Add env var support: APP_BACKUP__ENABLED, APP_BACKUP__CHECK_INTERVAL_SECS, APP_BACKUP__TEMP_DIR
-- [ ] Update CLAUDE.md with new files, patterns, env vars, and table descriptions
-- [ ] Run `cargo test`
+- [x] Add `BackupConfig` section to AppConfig with fields: enabled (bool, default true), check_interval_secs (u64, default 60), temp_dir (String, default "/tmp")
+- [x] Add env var support: APP_BACKUP__ENABLED, APP_BACKUP__CHECK_INTERVAL_SECS, APP_BACKUP__TEMP_DIR
+- [x] Update CLAUDE.md with new files, patterns, env vars, and table descriptions
+- [x] Run `cargo test`
 
 ### Task 8: Verify acceptance criteria
 
-- [ ] Run full backend test suite: `cargo test`
-- [ ] Run clippy: `cargo clippy -- -D warnings`
-- [ ] Run frontend lint: `cd frontend && npm run lint`
-- [ ] Run frontend build: `cd frontend && npm run build`
+- [x] Run full backend test suite: `cargo test`
+- [x] Run clippy: `cargo clippy -- -D warnings`
+- [x] Run frontend lint: `cd frontend && npm run lint`
+- [x] Run frontend build: `cd frontend && npm run build`
 
 ### Task 9: Update documentation
 
-- [ ] Update CLAUDE.md with backup-related entries (files, tables, env vars, patterns)
-- [ ] Move this plan to `docs/plans/completed/`
+- [x] Update CLAUDE.md with backup-related entries (files, tables, env vars, patterns)
+- [x] Move this plan to `docs/plans/completed/`

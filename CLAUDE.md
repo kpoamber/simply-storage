@@ -31,13 +31,15 @@ docker-compose up --build --scale app=3  # Scale app instances
 - `src/api/auth.rs` - AuthenticatedUser extractor (JWT auth middleware via FromRequest)
 - `src/api/auth_routes.rs` - Auth API endpoints (login, refresh, me, logout, admin user CRUD, user detail with assignments)
 - `src/api/shared_links.rs` - Shared link management API + public proxy endpoints for file access via token
-- `src/db/models.rs` - Database models with sqlx FromRow, all CRUD functions; includes MetadataFilter DSL compiler, search_by_metadata/search_summary queries, bulk delete queries, SharedLink model and CRUD
-- `src/services/` - Business logic layer (FileService, BulkService, TierService, AuthService, SharedLinkService)
+- `src/api/backups.rs` - Backup config and history management API (admin-only CRUD, manual trigger, delete)
+- `src/db/models.rs` - Database models with sqlx FromRow, all CRUD functions; includes MetadataFilter DSL compiler, search_by_metadata/search_summary queries, bulk delete queries, SharedLink model and CRUD, BackupConfig and BackupRecord models
+- `src/services/` - Business logic layer (FileService, BulkService, TierService, AuthService, SharedLinkService, BackupService)
 - `src/services/auth_service.rs` - AuthService (JWT token generation/validation, argon2 password hashing)
 - `src/services/shared_link_service.rs` - SharedLinkService (proxy-based file sharing with optional password protection, expiration, download limits, view stats)
+- `src/services/backup_service.rs` - BackupService (pg_dump execution, gzip compression, upload to storage, retention cleanup)
 - `src/storage/` - StorageBackend trait implementations, one file per backend type
 - `src/storage/registry.rs` - Factory that instantiates backends from storage_type + JSON config
-- `src/workers/` - Background tokio tasks (SyncWorker, TierWorker, heartbeat)
+- `src/workers/` - Background tokio tasks (SyncWorker, TierWorker, BackupWorker, heartbeat)
 - `src/config.rs` - AppConfig loaded from config/default.toml + APP_ env vars
 - `src/error.rs` - AppError enum with thiserror, implements actix-web ResponseError
 - `src/lib.rs` - AppState struct, app configuration, health check endpoint
@@ -51,6 +53,7 @@ docker-compose up --build --scale app=3  # Scale app instances
 - `frontend/src/pages/ProjectBulkDelete.tsx` - Bulk deletion UI with filter form, preview, confirmation dialog, and result display
 - `frontend/src/pages/SharedLinks.tsx` - Project shared links management (create, list, copy URL, deactivate/delete)
 - `frontend/src/pages/SharedLinkAccess.tsx` - Public page for accessing shared links (file info, password form, download)
+- `frontend/src/pages/Backups.tsx` - Backup management page (config CRUD with cron presets, history table, manual trigger)
 - `migrations/` - SQL migrations (run automatically on startup)
 
 ## Code Patterns
@@ -69,10 +72,11 @@ docker-compose up --build --scale app=3  # Scale app instances
 - Authorization: `AuthenticatedUser` extractor from request, role-based (admin/user) with owner and membership checks
 - User-resource assignments: many-to-many via `user_projects` (with role: member/writer) and `user_storages` junction tables; members get read access, writers/owners/admins get write access
 - Shared links: proxy-based file sharing via unique tokens. Public endpoints at `/s/{token}` (info, verify password, download). Password-protected links use argon2 hashing and short-lived download tokens (JWT, 5-min TTL). Downloads are proxied through the server - clients never receive direct storage URLs. Supports optional expiration, max download limits, and view statistics
+- Database backups: scheduled pg_dump via BackupWorker (cron-based), compressed with gzip, uploaded to any StorageBackend. BackupConfig defines schedule/retention, BackupRecord tracks history. Admin-only API at `/api/backup-configs` and `/api/backups`
 
 ## Database
 
-- Tables: projects, storages, files, file_references, file_locations, sync_tasks, nodes, users, refresh_tokens, user_projects, user_storages, shared_links
+- Tables: projects, storages, files, file_references, file_locations, sync_tasks, nodes, users, refresh_tokens, user_projects, user_storages, shared_links, backup_configs, backup_history
 - file_references.metadata: JSONB column (default `{}`) with GIN index (jsonb_path_ops) for fast key/value search
 - Citus distribution: files and file_locations by file_id, file_references by project_id
 - UUIDs as primary keys (uuid v4)
@@ -89,6 +93,11 @@ Auth-related:
 - `APP_AUTH__REFRESH_TOKEN_TTL_SECS` - Refresh token TTL in seconds (default: 604800 = 7 days)
 - `APP_AUTH__DEFAULT_ADMIN_USERNAME` - Default admin username (default: `admin`)
 - `APP_AUTH__DEFAULT_ADMIN_PASSWORD` - Default admin password (default: `Innovare2026!`)
+
+Backup-related:
+- `APP_BACKUP__ENABLED` - Enable backup worker (default: `true`)
+- `APP_BACKUP__CHECK_INTERVAL_SECS` - How often to check for due backups in seconds (default: 60)
+- `APP_BACKUP__TEMP_DIR` - Temporary directory for pg_dump output (default: `/tmp`)
 
 ## CI/CD & Deployment
 

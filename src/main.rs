@@ -133,14 +133,23 @@ async fn main() -> std::io::Result<()> {
     );
 
     // Spawn background backup worker for scheduled database backups
-    let backup_handle = BackupWorker::spawn(
-        pool.clone(),
-        registry.clone(),
-        config.database.url.clone(),
-        cancel_token.clone(),
-        60, // check every 60 seconds
-    );
-    tracing::info!("Backup worker started (60s check interval)");
+    let backup_handle = if config.backup.enabled {
+        let handle = BackupWorker::spawn(
+            pool.clone(),
+            registry.clone(),
+            config.database.url.clone(),
+            cancel_token.clone(),
+            config.backup.check_interval_secs,
+        );
+        tracing::info!(
+            check_interval_secs = config.backup.check_interval_secs,
+            "Backup worker started"
+        );
+        Some(handle)
+    } else {
+        tracing::info!("Backup worker disabled by configuration");
+        None
+    };
 
     // Generate a unique node ID and register this instance
     let node_id = format!("node-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or("unknown"));
@@ -192,7 +201,9 @@ async fn main() -> std::io::Result<()> {
         let _ = handle.await;
     }
     let _ = tier_handle.await;
-    let _ = backup_handle.await;
+    if let Some(handle) = backup_handle {
+        let _ = handle.await;
+    }
     let _ = heartbeat_handle.await;
     tracing::info!("All background workers stopped");
 
