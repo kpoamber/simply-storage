@@ -97,6 +97,7 @@ Auth-related:
 Backup-related:
 - `APP_BACKUP__ENABLED` - Enable backup worker (default: `true`)
 - `APP_BACKUP__CHECK_INTERVAL_SECS` - How often to check for due backups in seconds (default: 60)
+- `APP_BACKUP__TEMP_DIR` - Directory for temporary backup files (default: OS temp dir)
 
 ## CI/CD & Deployment
 

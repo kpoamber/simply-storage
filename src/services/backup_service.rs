@@ -5,9 +5,10 @@ use flate2::Compression;
 use sqlx::PgPool;
 use std::io::Write;
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
-use crate::db::models::{BackupRecord, CreateBackupRecord};
+use crate::db::models::{BackupRecord, CreateBackupRecord, Storage};
 use crate::error::{AppError, AppResult};
 use crate::storage::StorageRegistry;
 
@@ -15,6 +16,7 @@ pub struct BackupService {
     pool: PgPool,
     registry: Arc<StorageRegistry>,
     database_url: String,
+    temp_dir: Option<String>,
 }
 
 impl BackupService {
@@ -22,11 +24,13 @@ impl BackupService {
         pool: PgPool,
         registry: Arc<StorageRegistry>,
         database_url: String,
+        temp_dir: Option<String>,
     ) -> Self {
         Self {
             pool,
             registry,
             database_url,
+            temp_dir,
         }
     }
 
@@ -34,16 +38,24 @@ impl BackupService {
         &self.pool
     }
 
-    /// Validate that a storage_path does not contain path traversal sequences.
+    /// Validate that a storage_path does not contain path traversal sequences
+    /// or absolute path components (Unix or Windows).
     pub fn validate_storage_path(path: &str) -> AppResult<()> {
         if path.contains("..") {
             return Err(AppError::BadRequest(
                 "storage_path must not contain '..'".to_string(),
             ));
         }
-        if path.starts_with('/') {
+        if path.starts_with('/') || path.starts_with('\\') {
             return Err(AppError::BadRequest(
                 "storage_path must be a relative path".to_string(),
+            ));
+        }
+        // Reject Windows drive-letter paths (e.g. C:\, D:/) which Path::join
+        // would treat as absolute, escaping the storage root.
+        if path.contains(':') {
+            return Err(AppError::BadRequest(
+                "storage_path must not contain ':'".to_string(),
             ));
         }
         Ok(())
@@ -58,18 +70,58 @@ impl BackupService {
         }
     }
 
-    /// Generate a backup filename with the current timestamp.
+    /// Generate a backup filename with timestamp and short UUID for uniqueness.
     pub fn generate_backup_filename() -> String {
-        format!("backup_{}.sql.gz", Utc::now().format("%Y%m%d_%H%M%S"))
+        let short_id = &Uuid::new_v4().to_string()[..8];
+        format!("backup_{}_{}.sql.gz", Utc::now().format("%Y%m%d_%H%M%S"), short_id)
+    }
+
+    /// Verify that a storage backend is registered and available for use.
+    /// Returns an error if the backend is not loaded (e.g. storage disabled or deleted).
+    pub async fn validate_storage_available(&self, storage_id: &Uuid) -> AppResult<()> {
+        self.registry.get(storage_id).await.map_err(|_| {
+            AppError::BadRequest(format!(
+                "Storage backend {} is not available. Ensure the storage exists and is enabled.",
+                storage_id
+            ))
+        })?;
+        Ok(())
     }
 
     /// Create a database backup, compress it, and upload to storage.
+    ///
+    /// Always creates a BackupRecord, even on early validation failures, so the
+    /// caller (e.g. BackupWorker) does not need separate sentinel-record logic.
     pub async fn create_backup(
         &self,
         config_id: Option<Uuid>,
+        config_name: Option<String>,
         storage_id: Uuid,
         storage_path: &str,
     ) -> AppResult<BackupRecord> {
+        // Validate storage backend is available before starting execution.
+        // On failure, create a "failed" record immediately (never a doomed
+        // "running" record) so that is_backup_due() advances its baseline.
+        if let Err(e) = self.validate_storage_available(&storage_id).await {
+            let record = BackupRecord::create(
+                &self.pool,
+                &CreateBackupRecord {
+                    config_id,
+                    config_name,
+                    storage_id,
+                    file_path: String::new(),
+                },
+            )
+            .await?;
+            let _ = BackupRecord::mark_failed(
+                &self.pool,
+                record.id,
+                &format!("Pre-execution failure: {}", e),
+            )
+            .await;
+            return Err(e);
+        }
+
         let filename = Self::generate_backup_filename();
         let full_path = Self::build_upload_path(storage_path, &filename);
 
@@ -78,6 +130,7 @@ impl BackupService {
             &self.pool,
             &CreateBackupRecord {
                 config_id,
+                config_name,
                 storage_id,
                 file_path: full_path.clone(),
             },
@@ -138,28 +191,95 @@ impl BackupService {
         }
     }
 
-    /// Run pg_dump, compress the output, and upload to storage.
+    /// Run pg_dump, compress the output via temp files, and upload to storage.
+    ///
+    /// Uses temp files to avoid buffering the entire raw dump and its compressed
+    /// copy in memory simultaneously. Only the final compressed file is read into
+    /// memory for upload.
     async fn execute_backup(&self, upload_path: &str, storage_id: Uuid) -> AppResult<i64> {
+        // Write pg_dump output to a temp file instead of buffering in memory.
+        // Use configured temp_dir if set, otherwise fall back to OS default.
+        let dump_file = if let Some(ref dir) = self.temp_dir {
+            let dir_path = std::path::Path::new(dir);
+            if !dir_path.exists() {
+                std::fs::create_dir_all(dir_path)
+                    .map_err(|e| AppError::Internal(format!("Failed to create temp dir {}: {}", dir, e)))?;
+            }
+            tempfile::NamedTempFile::new_in(dir)
+        } else {
+            tempfile::NamedTempFile::new()
+        }
+        .map_err(|e| AppError::Internal(format!("Failed to create temp file: {}", e)))?;
+        // Close the file handle immediately so pg_dump can write to the path
+        // on Windows, which enforces mandatory file locks. The TempPath still
+        // auto-deletes the file on drop.
+        let dump_temp = dump_file.into_temp_path();
+        let dump_path = dump_temp.to_path_buf();
+
         let output = tokio::process::Command::new("pg_dump")
             .arg("--no-owner")
             .arg("--no-acl")
+            .arg("--file")
+            .arg(&dump_path)
             .arg(&self.database_url)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .output()
             .await
             .map_err(|e| AppError::Internal(format!("Failed to execute pg_dump: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::error!(stderr = %stderr, "pg_dump failed");
-            return Err(AppError::Internal(
-                "pg_dump failed, see server logs for details".to_string(),
-            ));
+            tracing::error!(
+                status = %output.status,
+                stderr = %stderr,
+                "pg_dump failed"
+            );
+            return Err(AppError::Internal(format!(
+                "pg_dump failed (exit {}): {}",
+                output.status,
+                stderr.chars().take(500).collect::<String>(),
+            )));
         }
 
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&output.stdout)?;
-        let compressed = encoder.finish()?;
-        let file_size = compressed.len() as i64;
+        // Compress the dump file - read in chunks to limit memory usage.
+        // Only the compressed result needs to be in memory for upload.
+        let compressed_file = if let Some(ref dir) = self.temp_dir {
+            tempfile::NamedTempFile::new_in(dir)
+        } else {
+            tempfile::NamedTempFile::new()
+        }
+        .map_err(|e| AppError::Internal(format!("Failed to create temp file: {}", e)))?;
+        // Close the handle for Windows compatibility before creating a new
+        // writer at the same path.
+        let compressed_temp = compressed_file.into_temp_path();
+        let compressed_path = compressed_temp.to_path_buf();
+
+        // Read raw dump and compress into the compressed temp file
+        {
+            let mut reader: tokio::fs::File = tokio::fs::File::open(&dump_path).await?;
+            let compressed_std = std::fs::File::create(&compressed_path)
+                .map_err(|e| AppError::Internal(format!("Failed to create compressed file: {}", e)))?;
+            let mut encoder = GzEncoder::new(compressed_std, Compression::default());
+            let mut buf = vec![0u8; 64 * 1024]; // 64 KB chunks
+            loop {
+                let n = reader.read(&mut buf).await?;
+                if n == 0 {
+                    break;
+                }
+                encoder.write_all(&buf[..n])?;
+            }
+            encoder.finish()?;
+        }
+        // Drop the raw dump temp file early to free disk space
+        drop(dump_temp);
+
+        // Read compressed file into memory for upload
+        let mut compressed_reader: tokio::fs::File = tokio::fs::File::open(&compressed_path).await?;
+        let file_size = tokio::fs::metadata(&compressed_path).await?.len() as i64;
+        let mut compressed = Vec::with_capacity(file_size as usize);
+        compressed_reader.read_to_end(&mut compressed).await?;
+        drop(compressed_temp);
 
         let backend = self.registry.get(&storage_id).await?;
         backend.upload(upload_path, Bytes::from(compressed)).await?;
@@ -192,8 +312,11 @@ impl BackupService {
                 tracing::warn!(
                     backup_id = %backup.id,
                     error = %e,
-                    "Failed to delete backup file from storage during cleanup"
+                    "Failed to delete backup file from storage during cleanup, skipping DB record deletion"
                 );
+                // Skip DB record deletion to avoid orphaning the file.
+                // The record will be retried on the next cleanup cycle.
+                continue;
             }
             BackupRecord::delete(&self.pool, backup.id).await?;
             deleted += 1;
@@ -211,19 +334,82 @@ impl BackupService {
     }
 
     /// Delete a single backup from storage and database.
+    ///
+    /// Deletes the file from storage first, then removes the DB record.
+    /// If the storage is disabled, returns an error so the admin can re-enable
+    /// it to properly clean up the file. If the storage has been completely
+    /// deleted from the system, proceeds with DB-only cleanup since the file
+    /// is already unreachable.
     pub async fn delete_backup(&self, backup_id: Uuid) -> AppResult<()> {
         let record = BackupRecord::find_by_id(&self.pool, backup_id).await?;
 
-        if let Err(e) = self.delete_from_storage(&record).await {
-            tracing::warn!(
-                backup_id = %backup_id,
-                error = %e,
-                "Failed to delete backup file from storage"
-            );
+        // Sentinel rows (pre-execution failures) have empty file_path and never
+        // uploaded a file, so skip storage deletion entirely for them.
+        if !record.file_path.is_empty() {
+            match self.registry.get(&record.storage_id).await {
+                Ok(backend) => {
+                    backend.delete(&record.file_path).await?;
+                }
+                Err(_) => {
+                    // Backend not loaded. Check if the storage still exists in DB.
+                    // Distinguish NotFound (storage deleted) from transient DB errors
+                    // to avoid orphaning backup files on temporary failures.
+                    match Storage::find_by_id(&self.pool, record.storage_id).await {
+                        Ok(storage) => {
+                            // Storage exists but is disabled/unregistered. Require
+                            // the admin to re-enable it to avoid orphaning the file.
+                            return Err(AppError::BadRequest(format!(
+                                "Storage '{}' is disabled. Re-enable it before deleting backups to avoid orphaning files.",
+                                storage.name
+                            )));
+                        }
+                        Err(AppError::NotFound(_)) => {
+                            // Storage has been completely removed. The file is
+                            // already unreachable; proceed with DB cleanup.
+                            tracing::warn!(
+                                backup_id = %backup_id,
+                                storage_id = %record.storage_id,
+                                file_path = %record.file_path,
+                                "Storage no longer exists, deleting DB record only. Backup file may be orphaned."
+                            );
+                        }
+                        Err(e) => {
+                            // Transient DB error (connection issue, etc.). Do NOT
+                            // proceed with DB-only cleanup as we can't confirm the
+                            // storage was actually deleted.
+                            return Err(e);
+                        }
+                    }
+                }
+            }
         }
 
         BackupRecord::delete(&self.pool, backup_id).await?;
         Ok(())
+    }
+
+    /// Delete all backup files and records for a config.
+    /// Used when deleting a config with delete_backups=true.
+    /// Best-effort: logs warnings for storage deletion failures but still
+    /// removes DB records so they don't become orphaned.
+    pub async fn delete_all_backups_for_config(&self, config_id: Uuid) -> AppResult<u64> {
+        let records = BackupRecord::list_all_by_config(&self.pool, config_id).await?;
+
+        for record in &records {
+            if record.file_path.is_empty() {
+                continue;
+            }
+            if let Err(e) = self.delete_from_storage(record).await {
+                tracing::warn!(
+                    backup_id = %record.id,
+                    file_path = %record.file_path,
+                    error = %e,
+                    "Failed to delete backup file from storage during config cleanup"
+                );
+            }
+        }
+
+        BackupRecord::delete_all_by_config(&self.pool, config_id).await
     }
 
     async fn delete_from_storage(&self, record: &BackupRecord) -> AppResult<()> {
@@ -362,5 +548,13 @@ mod tests {
     fn test_validate_storage_path_absolute() {
         let result = BackupService::validate_storage_path("/absolute/path");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_storage_path_windows_absolute() {
+        assert!(BackupService::validate_storage_path("C:\\temp\\backup.sql.gz").is_err());
+        assert!(BackupService::validate_storage_path("C:/temp/backup.sql.gz").is_err());
+        assert!(BackupService::validate_storage_path("D:\\backup").is_err());
+        assert!(BackupService::validate_storage_path("\\\\server\\share").is_err());
     }
 }

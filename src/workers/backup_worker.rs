@@ -101,7 +101,7 @@ impl BackupWorker {
     async fn process_config(&self, config: &BackupConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let pool = self.backup_service.pool();
 
-        if !is_backup_due(&config.schedule_cron, config.id, pool).await? {
+        if !is_backup_due(&config.schedule_cron, config.id, config.created_at, pool).await? {
             return Ok(());
         }
 
@@ -129,6 +129,22 @@ impl BackupWorker {
             return Ok(());
         }
 
+        // Re-check after acquiring the lock to prevent duplicates.
+        // Another replica may have completed the backup and released the lock
+        // between our is_backup_due() check and lock acquisition.
+        if !is_backup_due(&config.schedule_cron, config.id, config.created_at, pool).await? {
+            tracing::debug!(
+                config_id = %config.id,
+                "Backup no longer due after acquiring lock (completed by another replica), skipping"
+            );
+            let _ = sqlx::query("SELECT pg_advisory_unlock($1, $2)")
+                .bind(key1)
+                .bind(key2)
+                .execute(&mut *conn)
+                .await;
+            return Ok(());
+        }
+
         tracing::info!(
             config_id = %config.id,
             config_name = %config.name,
@@ -137,7 +153,7 @@ impl BackupWorker {
 
         let result = self
             .backup_service
-            .create_backup(Some(config.id), config.storage_id, &config.storage_path)
+            .create_backup(Some(config.id), Some(config.name.clone()), config.storage_id, &config.storage_path)
             .await;
 
         // Always release the advisory lock on the same connection that acquired it.
@@ -170,6 +186,10 @@ impl BackupWorker {
                 }
             }
             Err(e) => {
+                // create_backup() always creates a failed record (even for
+                // pre-execution errors like unavailable storage), so
+                // is_backup_due() will advance its baseline automatically.
+                // No sentinel record needed here.
                 tracing::error!(
                     config_id = %config.id,
                     config_name = %config.name,
@@ -189,19 +209,25 @@ const STALE_RUNNING_THRESHOLD_SECS: i64 = 3600; // 1 hour
 /// Determine if a backup is due based on the cron schedule and last backup time.
 ///
 /// Returns true if the cron expression's most recent scheduled time is after
-/// the last successful/running backup's started_at (or if no backup has been run yet).
-/// Failed backups are ignored so that retries happen on the next check cycle.
+/// the last backup's started_at (regardless of status). For new configs with no
+/// prior backups, uses the config's created_at as baseline so the first backup
+/// waits for the first matching cron slot after creation.
+/// Failed backups advance the baseline so retries wait for the next cron slot,
+/// preventing retry storms on persistent failures.
 /// Running backups older than STALE_RUNNING_THRESHOLD_SECS are marked as failed
 /// and ignored, preventing orphaned records from blocking future backups.
 pub async fn is_backup_due(
     cron_expr: &str,
     config_id: uuid::Uuid,
+    config_created_at: chrono::DateTime<Utc>,
     pool: &PgPool,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let schedule = Schedule::from_str(cron_expr)?;
 
-    // Find the last completed or running backup for this config (LIMIT 1)
-    let last_backup = BackupRecord::find_latest_successful_by_config(pool, config_id).await?;
+    // Find the last backup (any status) for this config.
+    // Including failed records prevents retry storms: after a failure the
+    // baseline advances so the next attempt waits for the next cron slot.
+    let last_backup = BackupRecord::find_latest_by_config(pool, config_id).await?;
 
     // Check for stale "running" records and mark them as failed
     if let Some(ref record) = last_backup {
@@ -229,21 +255,30 @@ pub async fn is_backup_due(
         }
     }
 
-    let last_run_at = last_backup.as_ref().and_then(|r| r.started_at);
+    // If a non-stale backup is still running, skip this cycle to prevent
+    // overlapping pg_dump processes (e.g. manual trigger shortly before cron slot).
+    if let Some(ref record) = last_backup {
+        if record.status == "running" {
+            tracing::debug!(
+                config_id = %config_id,
+                backup_id = %record.id,
+                "Backup is still running, skipping this cycle"
+            );
+            return Ok(false);
+        }
+    }
 
-    match last_run_at {
-        Some(last_run) => {
-            // Check if there's a scheduled time between last_run and now
-            let next_after_last = schedule.after(&last_run).next();
-            match next_after_last {
-                Some(next_time) if next_time <= Utc::now() => Ok(true),
-                _ => Ok(false),
-            }
-        }
-        None => {
-            // No previous successful backup: it's due if the cron is valid
-            Ok(true)
-        }
+    // Use last backup's started_at, or fall back to config's created_at
+    // so new configs wait for the first cron slot after creation.
+    let baseline = last_backup
+        .as_ref()
+        .and_then(|r| r.started_at)
+        .unwrap_or(config_created_at);
+
+    let next_after_baseline = schedule.after(&baseline).next();
+    match next_after_baseline {
+        Some(next_time) if next_time <= Utc::now() => Ok(true),
+        _ => Ok(false),
     }
 }
 
@@ -264,7 +299,7 @@ mod tests {
         let registry = Arc::new(crate::storage::StorageRegistry::new());
         let cancel_token = CancellationToken::new();
 
-        let service = Arc::new(BackupService::new(pool, registry, url));
+        let service = Arc::new(BackupService::new(pool, registry, url, None));
         let handle = BackupWorker::spawn(
             service,
             cancel_token.clone(),
@@ -307,11 +342,22 @@ mod tests {
         .await
         .unwrap();
 
-        // No previous backup - should be due
-        let due = is_backup_due(&config.schedule_cron, config.id, &pool)
+        // No previous backup - with "every minute" schedule and config just created,
+        // it should be due after at least one minute has passed from creation.
+        // Since the config was just created, the first cron slot hasn't arrived yet,
+        // so we use a created_at in the past to simulate an old config.
+        let past_created = Utc::now() - chrono::Duration::minutes(2);
+        let due = is_backup_due(&config.schedule_cron, config.id, past_created, &pool)
             .await
             .unwrap();
-        assert!(due, "Should be due when no previous backup exists");
+        assert!(due, "Should be due when no previous backup exists and cron slot has passed");
+
+        // A just-created config should NOT be immediately due if the cron slot hasn't arrived
+        // Test with a cron far in the future to ensure it's never due for a new config
+        let due_never = is_backup_due("0 0 0 1 1 * 2099", config.id, Utc::now(), &pool)
+            .await
+            .unwrap();
+        assert!(!due_never, "Should not be due when next cron slot is in 2099");
 
         // Cleanup
         sqlx::query("DELETE FROM backup_configs WHERE id = $1")

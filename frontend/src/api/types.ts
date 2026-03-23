@@ -320,6 +320,7 @@ export interface UpdateBackupConfigRequest {
 export interface BackupRecord {
   id: string;
   config_id: string | null;
+  config_name: string | null;
   storage_id: string;
   file_path: string;
   file_size_bytes: number;
@@ -328,6 +329,14 @@ export interface BackupRecord {
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+}
+
+export interface BackupHistoryResponse {
+  records: BackupRecord[];
+  page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
 }
 
 export interface TriggerBackupRequest {

@@ -1,14 +1,15 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, Pencil, X, Play } from 'lucide-react';
 import apiClient from '../api/client';
 import {
   BackupConfig,
-  BackupRecord,
+  BackupHistoryResponse,
   CreateBackupConfigRequest,
   UpdateBackupConfigRequest,
   TriggerBackupRequest,
   StorageBackend,
+  BackupRecord,
   formatBytes,
 } from '../api/types';
 
@@ -54,6 +55,7 @@ export default function Backups() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showTriggerForm, setShowTriggerForm] = useState(false);
   const [error, setError] = useState('');
+  const [historyPage, setHistoryPage] = useState(1);
 
   // Queries
   const { data: configs, isLoading: configsLoading } = useQuery<BackupConfig[]>({
@@ -61,10 +63,22 @@ export default function Backups() {
     queryFn: () => apiClient.get('/backup-configs').then(r => r.data),
   });
 
-  const { data: backups, isLoading: backupsLoading } = useQuery<BackupRecord[]>({
-    queryKey: ['backups'],
-    queryFn: () => apiClient.get('/backups').then(r => r.data),
+  const { data: backupsResponse, isLoading: backupsLoading } = useQuery<BackupHistoryResponse>({
+    queryKey: ['backups', historyPage],
+    queryFn: () => apiClient.get('/backups', { params: { page: historyPage, per_page: 50 } }).then(r => r.data),
+    refetchInterval: (query) => {
+      const records = query.state.data?.records;
+      return records?.some((r: BackupRecord) => r.status === 'running' || r.status === 'pending') ? 3000 : false;
+    },
   });
+  const backups = backupsResponse?.records;
+
+  // Clamp page when records are deleted and current page becomes empty
+  useEffect(() => {
+    if (backupsResponse && backupsResponse.total_pages > 0 && historyPage > backupsResponse.total_pages) {
+      setHistoryPage(backupsResponse.total_pages);
+    }
+  }, [backupsResponse, historyPage]);
 
   const { data: storages } = useQuery<StorageBackend[]>({
     queryKey: ['storages'],
@@ -101,9 +115,11 @@ export default function Backups() {
   });
 
   const deleteConfigMutation = useMutation({
-    mutationFn: (id: string) => apiClient.delete(`/backup-configs/${id}`),
+    mutationFn: ({ id, deleteBackups }: { id: string; deleteBackups: boolean }) =>
+      apiClient.delete(`/backup-configs/${id}`, { params: { delete_backups: deleteBackups } }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['backup-configs'] });
+      queryClient.invalidateQueries({ queryKey: ['backups'] });
     },
   });
 
@@ -260,8 +276,14 @@ export default function Backups() {
                           </button>
                           <button
                             onClick={() => {
-                              if (window.confirm(`Delete backup config "${config.name}"?`))
-                                deleteConfigMutation.mutate(config.id);
+                              const deleteBackups = window.confirm(
+                                `Delete backup config "${config.name}" and all associated backup files?\n\nOK = delete config + backup files\nCancel = keep everything`
+                              );
+                              if (deleteBackups) {
+                                deleteConfigMutation.mutate({ id: config.id, deleteBackups: true });
+                              } else if (window.confirm(`Delete only the config "${config.name}"? Existing backup files will be kept but no longer managed by retention.`)) {
+                                deleteConfigMutation.mutate({ id: config.id, deleteBackups: false });
+                              }
                             }}
                             className="text-red-400 hover:text-red-600"
                             title="Delete"
@@ -322,12 +344,14 @@ export default function Backups() {
           ) : !backups?.length ? (
             <p className="text-gray-400">No backups yet.</p>
           ) : (
+            <>
             <div className="overflow-hidden rounded-lg border border-gray-200">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Date</th>
                     <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Config</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Storage</th>
                     <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">File Path</th>
                     <th className="px-4 py-2 text-right text-xs font-medium uppercase text-gray-500">Size</th>
                     <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Status</th>
@@ -338,13 +362,17 @@ export default function Backups() {
                 <tbody className="divide-y divide-gray-200 bg-white">
                   {backups.map(backup => {
                     const configName = configs?.find(c => c.id === backup.config_id)?.name;
+                    const storageName = storages?.find(s => s.id === backup.storage_id)?.name;
                     return (
                       <tr key={backup.id}>
                         <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-500">
                           {new Date(backup.created_at).toLocaleString()}
                         </td>
                         <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-500">
-                          {configName || (backup.config_id ? 'Deleted config' : 'Manual')}
+                          {configName || backup.config_name || (backup.config_id ? 'Deleted config' : 'Manual')}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-500">
+                          {storageName || backup.storage_id.slice(0, 8)}
                         </td>
                         <td className="px-4 py-2 text-sm text-gray-500 max-w-xs truncate" title={backup.file_path}>
                           {backup.file_path || '-'}
@@ -381,6 +409,30 @@ export default function Backups() {
                 </tbody>
               </table>
             </div>
+            {backupsResponse && backupsResponse.total_pages > 1 && (
+              <div className="mt-3 flex items-center justify-between text-sm text-gray-600">
+                <span>
+                  Page {backupsResponse.page} of {backupsResponse.total_pages} ({backupsResponse.total} total)
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setHistoryPage(p => Math.max(1, p - 1))}
+                    disabled={historyPage <= 1}
+                    className="rounded border border-gray-300 px-3 py-1 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setHistoryPage(p => Math.min(backupsResponse.total_pages, p + 1))}
+                    disabled={historyPage >= backupsResponse.total_pages}
+                    className="rounded border border-gray-300 px-3 py-1 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+            </>
           )}
         </div>
       )}

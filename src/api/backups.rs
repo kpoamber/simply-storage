@@ -2,6 +2,7 @@ use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::sync::Arc;
+use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
 use super::auth::AdminUser;
@@ -29,9 +30,25 @@ pub struct TriggerBackupRequest {
     pub storage_path: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct BackupHistoryResponse {
+    pub records: Vec<BackupRecord>,
+    pub page: i64,
+    pub per_page: i64,
+    pub total: i64,
+    pub total_pages: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteConfigQuery {
+    pub delete_backups: Option<bool>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BackupHistoryFilter {
     pub config_id: Option<Uuid>,
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
 }
 
 // ─── Backup config handlers ─────────────────────────────────────────────────────
@@ -79,8 +96,13 @@ async fn create_backup_config(
         }
     }
 
-    // Validate storage exists
-    Storage::find_by_id(pool.get_ref(), body.storage_id).await?;
+    // Validate storage exists and is enabled
+    let storage = Storage::find_by_id(pool.get_ref(), body.storage_id).await?;
+    if !storage.enabled {
+        return Err(AppError::BadRequest(
+            "Storage is disabled. Enable it before assigning to a backup config.".to_string(),
+        ));
+    }
 
     let config = BackupConfig::create(pool.get_ref(), &body).await?;
     Ok(HttpResponse::Created().json(config))
@@ -113,9 +135,14 @@ async fn update_backup_config(
         }
     }
 
-    // Validate storage exists if provided
+    // Validate storage exists and is enabled if provided
     if let Some(storage_id) = body.storage_id {
-        Storage::find_by_id(pool.get_ref(), storage_id).await?;
+        let storage = Storage::find_by_id(pool.get_ref(), storage_id).await?;
+        if !storage.enabled {
+            return Err(AppError::BadRequest(
+                "Storage is disabled. Enable it before assigning to a backup config.".to_string(),
+            ));
+        }
     }
 
     let config = BackupConfig::update(pool.get_ref(), config_id, &body).await?;
@@ -126,8 +153,27 @@ async fn delete_backup_config(
     _admin: AdminUser,
     pool: web::Data<PgPool>,
     path: web::Path<Uuid>,
+    query: web::Query<DeleteConfigQuery>,
+    service: web::Data<Arc<BackupService>>,
 ) -> Result<HttpResponse, AppError> {
     let config_id = path.into_inner();
+
+    // Verify config exists before attempting cleanup
+    BackupConfig::find_by_id(pool.get_ref(), config_id).await?;
+
+    // If delete_backups is true, remove associated backup files and records
+    // before deleting the config (while config_id FK is still intact).
+    if query.delete_backups.unwrap_or(false) {
+        let deleted = service.delete_all_backups_for_config(config_id).await?;
+        if deleted > 0 {
+            tracing::info!(
+                config_id = %config_id,
+                deleted_count = deleted,
+                "Deleted associated backups before config removal"
+            );
+        }
+    }
+
     BackupConfig::delete(pool.get_ref(), config_id).await?;
     Ok(HttpResponse::NoContent().finish())
 }
@@ -139,25 +185,37 @@ async fn list_backups(
     pool: web::Data<PgPool>,
     query: web::Query<BackupHistoryFilter>,
 ) -> Result<HttpResponse, AppError> {
-    let records = BackupRecord::list(pool.get_ref(), query.config_id).await?;
-    Ok(HttpResponse::Ok().json(records))
+    let limit = query.per_page.unwrap_or(50).clamp(1, 500);
+    let page = query.page.unwrap_or(1).max(1);
+    let offset = page.saturating_sub(1).saturating_mul(limit);
+    let total = BackupRecord::count(pool.get_ref(), query.config_id).await?;
+    let records = BackupRecord::list(pool.get_ref(), query.config_id, limit, offset).await?;
+    let total_pages = (total + limit - 1) / limit;
+    Ok(HttpResponse::Ok().json(BackupHistoryResponse {
+        records,
+        page,
+        per_page: limit,
+        total,
+        total_pages,
+    }))
 }
 
 async fn trigger_backup(
     _admin: AdminUser,
     pool: web::Data<PgPool>,
     service: web::Data<Arc<BackupService>>,
+    tracker: web::Data<TaskTracker>,
     body: web::Json<TriggerBackupRequest>,
 ) -> Result<HttpResponse, AppError> {
-    let (config_id, storage_id, storage_path) = if let Some(cfg_id) = body.config_id {
+    let (config_id, config_name, storage_id, storage_path) = if let Some(cfg_id) = body.config_id {
         // Use config settings
         let config = BackupConfig::find_by_id(pool.get_ref(), cfg_id).await?;
-        (Some(cfg_id), config.storage_id, config.storage_path)
+        (Some(cfg_id), Some(config.name), config.storage_id, config.storage_path)
     } else if let Some(sid) = body.storage_id {
         // Manual backup with explicit storage
         Storage::find_by_id(pool.get_ref(), sid).await?;
         let path = body.storage_path.clone().unwrap_or_default();
-        (None, sid, path)
+        (None, None, sid, path)
     } else {
         return Err(AppError::BadRequest(
             "Either config_id or storage_id must be provided".to_string(),
@@ -167,6 +225,29 @@ async fn trigger_backup(
     // Validate storage_path
     BackupService::validate_storage_path(&storage_path)?;
 
+    // Validate storage backend is registered and available before creating
+    // the DB record, so we return a synchronous error instead of creating
+    // a doomed "running" record that fails asynchronously.
+    service.validate_storage_available(&storage_id).await?;
+
+    // Clean up stale "running" records (older than 1 hour) so they don't
+    // permanently block manual retriggers after a crash.
+    if let Some(cfg_id) = config_id {
+        let cleaned = BackupRecord::mark_stale_running_as_failed(pool.get_ref(), cfg_id, 3600).await?;
+        if cleaned > 0 {
+            tracing::warn!(config_id = %cfg_id, cleaned, "Cleaned up stale running backup records");
+        }
+    }
+
+    // Prevent overlapping backups for the same config
+    if let Some(cfg_id) = config_id {
+        if BackupRecord::has_running_by_config(pool.get_ref(), cfg_id).await? {
+            return Err(AppError::BadRequest(
+                "A backup is already running for this config".to_string(),
+            ));
+        }
+    }
+
     // Create the record immediately in "running" status
     let filename = BackupService::generate_backup_filename();
     let full_path = BackupService::build_upload_path(&storage_path, &filename);
@@ -175,16 +256,74 @@ async fn trigger_backup(
         pool.get_ref(),
         &CreateBackupRecord {
             config_id,
+            config_name,
             storage_id,
             file_path: full_path.clone(),
         },
     )
     .await?;
 
-    // Spawn the actual backup work in background so the HTTP request returns immediately
+    // Spawn the actual backup work in background so the HTTP request returns immediately.
+    // Use the TaskTracker so graceful shutdown waits for in-flight backups.
     let service = service.get_ref().clone();
     let record_id = record.id;
-    tokio::spawn(async move {
+    tracker.spawn(async move {
+        // For config-based triggers, acquire the same advisory lock the scheduler
+        // uses. This prevents a race where the scheduler has acquired the lock
+        // but hasn't yet inserted its "running" record, allowing a duplicate
+        // pg_dump to start.
+        let lock_conn = if let Some(cfg_id) = config_id {
+            let id_bytes = cfg_id.as_bytes();
+            let key1 = i32::from_le_bytes([id_bytes[0], id_bytes[1], id_bytes[2], id_bytes[3]]);
+            let key2 = i32::from_le_bytes([id_bytes[4], id_bytes[5], id_bytes[6], id_bytes[7]]);
+
+            match service.pool().acquire().await {
+                Ok(mut conn) => {
+                    let locked: Result<(bool,), _> =
+                        sqlx::query_as("SELECT pg_try_advisory_lock($1, $2)")
+                            .bind(key1)
+                            .bind(key2)
+                            .fetch_one(&mut *conn)
+                            .await;
+                    match locked {
+                        Ok((true,)) => Some((conn, key1, key2)),
+                        Ok((false,)) => {
+                            let _ = BackupRecord::mark_failed(
+                                service.pool(),
+                                record_id,
+                                "Skipped: another backup for this config is already in progress",
+                            )
+                            .await;
+                            tracing::warn!(backup_id = %record_id, config_id = %cfg_id, "Manual backup skipped: advisory lock held by scheduler");
+                            return;
+                        }
+                        Err(e) => {
+                            let _ = BackupRecord::mark_failed(
+                                service.pool(),
+                                record_id,
+                                &format!("Failed to acquire advisory lock: {}", e),
+                            )
+                            .await;
+                            tracing::error!(backup_id = %record_id, error = %e, "Failed to acquire advisory lock, aborting backup");
+                            return;
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = BackupRecord::mark_failed(
+                        service.pool(),
+                        record_id,
+                        &format!("Failed to acquire connection for advisory lock: {}", e),
+                    )
+                    .await;
+                    tracing::error!(backup_id = %record_id, error = %e, "Failed to acquire connection for advisory lock, aborting backup");
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
         match service.execute_backup_and_update(record_id, &full_path, storage_id).await {
             Ok(_) => {
                 tracing::info!(backup_id = %record_id, "Manual backup completed");
@@ -200,6 +339,15 @@ async fn trigger_backup(
             Err(e) => {
                 tracing::error!(backup_id = %record_id, error = %e, "Manual backup failed");
             }
+        }
+
+        // Release advisory lock on the same connection that acquired it
+        if let Some((mut conn, key1, key2)) = lock_conn {
+            let _ = sqlx::query("SELECT pg_advisory_unlock($1, $2)")
+                .bind(key1)
+                .bind(key2)
+                .execute(&mut *conn)
+                .await;
         }
     });
 

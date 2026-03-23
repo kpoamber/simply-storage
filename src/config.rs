@@ -72,6 +72,8 @@ pub struct BackupWorkerConfig {
     pub enabled: bool,
     #[serde(default = "default_backup_check_interval_secs")]
     pub check_interval_secs: u64,
+    #[serde(default = "default_backup_temp_dir")]
+    pub temp_dir: String,
 }
 
 fn default_server() -> ServerConfig {
@@ -118,6 +120,7 @@ fn default_backup() -> BackupWorkerConfig {
     BackupWorkerConfig {
         enabled: default_backup_enabled(),
         check_interval_secs: default_backup_check_interval_secs(),
+        temp_dir: default_backup_temp_dir(),
     }
 }
 
@@ -127,6 +130,10 @@ fn default_backup_enabled() -> bool {
 
 fn default_backup_check_interval_secs() -> u64 {
     60
+}
+
+fn default_backup_temp_dir() -> String {
+    String::new()
 }
 
 fn default_jwt_secret() -> String {

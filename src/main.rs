@@ -7,6 +7,7 @@ use innovare_storage::workers::{BackupWorker, SyncWorker, TierWorker};
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -102,6 +103,7 @@ async fn main() -> std::io::Result<()> {
         pool.clone(),
         registry.clone(),
         config.database.url.clone(),
+        if config.backup.temp_dir.is_empty() { None } else { Some(config.backup.temp_dir.clone()) },
     ));
 
     // Set up cancellation token for graceful shutdown of background workers
@@ -161,6 +163,10 @@ async fn main() -> std::io::Result<()> {
     let heartbeat_handle = spawn_heartbeat(pool.clone(), node_id.clone(), cancel_token.clone());
     tracing::info!(node_id = %node_id, "Heartbeat worker started (30s interval)");
 
+    // Tracker for ad-hoc background tasks (e.g. manual backup triggers)
+    // so we can await them during graceful shutdown.
+    let task_tracker = TaskTracker::new();
+
     let bind_addr = format!("{}:{}", config.server.host, config.server.port);
     let config_data = web::Data::new(config);
     let pool_data = web::Data::new(pool);
@@ -171,6 +177,7 @@ async fn main() -> std::io::Result<()> {
     let bulk_service_data = web::Data::new(bulk_service);
     let shared_link_service_data = web::Data::new(shared_link_service);
     let backup_service_data = web::Data::new(backup_service.clone());
+    let task_tracker_data = web::Data::new(task_tracker.clone());
 
     let server = HttpServer::new(move || {
         App::new()
@@ -183,6 +190,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(bulk_service_data.clone())
             .app_data(shared_link_service_data.clone())
             .app_data(backup_service_data.clone())
+            .app_data(task_tracker_data.clone())
             .configure(innovare_storage::configure_app)
     })
     .bind(&bind_addr)?
@@ -203,6 +211,10 @@ async fn main() -> std::io::Result<()> {
         let _ = handle.await;
     }
     let _ = heartbeat_handle.await;
+
+    // Wait for any in-flight ad-hoc tasks (e.g. manual backups)
+    task_tracker.close();
+    task_tracker.wait().await;
     tracing::info!("All background workers stopped");
 
     result

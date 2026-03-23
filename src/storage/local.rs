@@ -29,23 +29,33 @@ impl LocalDiskBackend {
         }
     }
 
-    /// Convert a logical storage path into the on-disk path with hash-based directory structure.
-    ///
-    /// Returns an error if the path contains traversal sequences or non-hex characters,
-    /// since all valid storage paths are SHA-256 hex strings.
-    fn resolve_path(&self, path: &str) -> AppResult<PathBuf> {
+    /// Validate that a path is safe (no traversal, no absolute paths, no null bytes).
+    fn validate_path(path: &str) -> AppResult<()> {
         if path.is_empty()
             || path.contains("..")
             || path.starts_with('/')
             || path.starts_with('\\')
-            || !path.bytes().all(|b| b.is_ascii_hexdigit())
+            || path.contains('\0')
+            || path.contains(':')
         {
             return Err(AppError::BadRequest(format!(
                 "Invalid storage path: {}",
                 path
             )));
         }
-        if path.len() >= 4 {
+        Ok(())
+    }
+
+    /// Convert a logical storage path into the on-disk path.
+    ///
+    /// For hex-only paths (content-addressable SHA-256 hashes), uses a hash-based
+    /// directory structure: `ab/cd/abcdef0123...`.
+    /// For other paths (e.g. backups), stores under the base path directly.
+    fn resolve_path(&self, path: &str) -> AppResult<PathBuf> {
+        Self::validate_path(path)?;
+
+        let is_hex = path.bytes().all(|b| b.is_ascii_hexdigit());
+        if is_hex && path.len() >= 4 {
             let dir1 = &path[..2];
             let dir2 = &path[2..4];
             Ok(self.base_path.join(dir1).join(dir2).join(path))
@@ -406,6 +416,28 @@ mod tests {
         assert!(backend.resolve_path("../../etc/passwd").is_err());
         assert!(backend.resolve_path("/etc/passwd").is_err());
         assert!(backend.resolve_path("").is_err());
-        assert!(backend.resolve_path("abc/def").is_err());
+    }
+
+    #[test]
+    fn test_resolve_path_non_hex_paths() {
+        let backend = LocalDiskBackend::new("/data/storage", "secret");
+        // Non-hex paths (e.g. backup paths) should resolve under base_path directly
+        let resolved = backend.resolve_path("backups/daily/backup_20260323.sql.gz").unwrap();
+        assert_eq!(
+            resolved,
+            PathBuf::from("/data/storage/backups/daily/backup_20260323.sql.gz")
+        );
+
+        // Simple relative path
+        let resolved = backend.resolve_path("abc/def").unwrap();
+        assert_eq!(resolved, PathBuf::from("/data/storage/abc/def"));
+    }
+
+    #[test]
+    fn test_resolve_path_rejects_windows_absolute() {
+        let backend = LocalDiskBackend::new("/data/storage", "secret");
+        assert!(backend.resolve_path("C:\\temp\\backup.sql.gz").is_err());
+        assert!(backend.resolve_path("C:/temp/backup.sql.gz").is_err());
+        assert!(backend.resolve_path("D:\\backup").is_err());
     }
 }
