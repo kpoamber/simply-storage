@@ -1,11 +1,12 @@
 use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use super::auth::AdminUser;
 use crate::db::models::{
-    BackupConfig, BackupRecord, CreateBackupConfig, Storage, UpdateBackupConfig,
+    BackupConfig, BackupRecord, CreateBackupConfig, CreateBackupRecord, Storage, UpdateBackupConfig,
 };
 use crate::error::AppError;
 use crate::services::BackupService;
@@ -64,6 +65,20 @@ async fn create_backup_config(
     // Validate cron expression
     BackupService::validate_cron(&body.schedule_cron)?;
 
+    // Validate storage_path if provided
+    if let Some(ref path) = body.storage_path {
+        BackupService::validate_storage_path(path)?;
+    }
+
+    // Validate retention_count if provided
+    if let Some(count) = body.retention_count {
+        if count < 1 {
+            return Err(AppError::BadRequest(
+                "retention_count must be at least 1".to_string(),
+            ));
+        }
+    }
+
     // Validate storage exists
     Storage::find_by_id(pool.get_ref(), body.storage_id).await?;
 
@@ -82,6 +97,20 @@ async fn update_backup_config(
     // Validate cron expression if provided
     if let Some(ref cron_expr) = body.schedule_cron {
         BackupService::validate_cron(cron_expr)?;
+    }
+
+    // Validate storage_path if provided
+    if let Some(ref path) = body.storage_path {
+        BackupService::validate_storage_path(path)?;
+    }
+
+    // Validate retention_count if provided
+    if let Some(count) = body.retention_count {
+        if count < 1 {
+            return Err(AppError::BadRequest(
+                "retention_count must be at least 1".to_string(),
+            ));
+        }
     }
 
     // Validate storage exists if provided
@@ -117,7 +146,7 @@ async fn list_backups(
 async fn trigger_backup(
     _admin: AdminUser,
     pool: web::Data<PgPool>,
-    service: web::Data<BackupService>,
+    service: web::Data<Arc<BackupService>>,
     body: web::Json<TriggerBackupRequest>,
 ) -> Result<HttpResponse, AppError> {
     let (config_id, storage_id, storage_path) = if let Some(cfg_id) = body.config_id {
@@ -135,16 +164,52 @@ async fn trigger_backup(
         ));
     };
 
-    let record = service
-        .create_backup(config_id, storage_id, &storage_path)
-        .await?;
+    // Validate storage_path
+    BackupService::validate_storage_path(&storage_path)?;
+
+    // Create the record immediately in "running" status
+    let filename = BackupService::generate_backup_filename();
+    let full_path = BackupService::build_upload_path(&storage_path, &filename);
+
+    let record = BackupRecord::create(
+        pool.get_ref(),
+        &CreateBackupRecord {
+            config_id,
+            storage_id,
+            file_path: full_path.clone(),
+        },
+    )
+    .await?;
+
+    // Spawn the actual backup work in background so the HTTP request returns immediately
+    let service = service.get_ref().clone();
+    let record_id = record.id;
+    tokio::spawn(async move {
+        match service.execute_backup_and_update(record_id, &full_path, storage_id).await {
+            Ok(_) => {
+                tracing::info!(backup_id = %record_id, "Manual backup completed");
+                // Run retention cleanup if triggered from a config
+                if let Some(cfg_id) = config_id {
+                    if let Ok(config) = BackupConfig::find_by_id(service.pool(), cfg_id).await {
+                        if let Err(e) = service.cleanup_old_backups(cfg_id, config.retention_count).await {
+                            tracing::error!(config_id = %cfg_id, error = %e, "Failed retention cleanup after manual backup");
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!(backup_id = %record_id, error = %e, "Manual backup failed");
+            }
+        }
+    });
+
     Ok(HttpResponse::Created().json(record))
 }
 
 async fn delete_backup(
     _admin: AdminUser,
     path: web::Path<Uuid>,
-    service: web::Data<BackupService>,
+    service: web::Data<Arc<BackupService>>,
 ) -> Result<HttpResponse, AppError> {
     let backup_id = path.into_inner();
     service.delete_backup(backup_id).await?;

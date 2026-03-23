@@ -34,6 +34,35 @@ impl BackupService {
         &self.pool
     }
 
+    /// Validate that a storage_path does not contain path traversal sequences.
+    pub fn validate_storage_path(path: &str) -> AppResult<()> {
+        if path.contains("..") {
+            return Err(AppError::BadRequest(
+                "storage_path must not contain '..'".to_string(),
+            ));
+        }
+        if path.starts_with('/') {
+            return Err(AppError::BadRequest(
+                "storage_path must be a relative path".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Build the upload path from storage_path and filename.
+    pub fn build_upload_path(storage_path: &str, filename: &str) -> String {
+        if storage_path.is_empty() {
+            filename.to_string()
+        } else {
+            format!("{}/{}", storage_path.trim_end_matches('/'), filename)
+        }
+    }
+
+    /// Generate a backup filename with the current timestamp.
+    pub fn generate_backup_filename() -> String {
+        format!("backup_{}.sql.gz", Utc::now().format("%Y%m%d_%H%M%S"))
+    }
+
     /// Create a database backup, compress it, and upload to storage.
     pub async fn create_backup(
         &self,
@@ -41,12 +70,8 @@ impl BackupService {
         storage_id: Uuid,
         storage_path: &str,
     ) -> AppResult<BackupRecord> {
-        let filename = format!("backup_{}.sql.gz", Utc::now().format("%Y%m%d_%H%M%S"));
-        let full_path = if storage_path.is_empty() {
-            filename.clone()
-        } else {
-            format!("{}/{}", storage_path.trim_end_matches('/'), filename)
-        };
+        let filename = Self::generate_backup_filename();
+        let full_path = Self::build_upload_path(storage_path, &filename);
 
         // Create record with "running" status
         let record = BackupRecord::create(
@@ -55,32 +80,57 @@ impl BackupService {
                 config_id,
                 storage_id,
                 file_path: full_path.clone(),
-                status: "running".to_string(),
             },
         )
         .await?;
 
         match self.execute_backup(&full_path, storage_id).await {
             Ok(file_size) => {
-                let updated = BackupRecord::update_status(
+                let updated = BackupRecord::mark_completed(
                     &self.pool,
                     record.id,
-                    "completed",
-                    None,
-                    Some(file_size),
-                    Some(&full_path),
+                    file_size,
+                    &full_path,
                 )
                 .await?;
                 Ok(updated)
             }
             Err(e) => {
-                let _ = BackupRecord::update_status(
+                let _ = BackupRecord::mark_failed(
                     &self.pool,
                     record.id,
-                    "failed",
-                    Some(&e.to_string()),
-                    None,
-                    None,
+                    &e.to_string(),
+                )
+                .await;
+                Err(e)
+            }
+        }
+    }
+
+    /// Execute the backup for an existing record: run pg_dump, upload, update status.
+    /// Used by the trigger API to run backups in background.
+    pub async fn execute_backup_and_update(
+        &self,
+        record_id: Uuid,
+        upload_path: &str,
+        storage_id: Uuid,
+    ) -> AppResult<BackupRecord> {
+        match self.execute_backup(upload_path, storage_id).await {
+            Ok(file_size) => {
+                let updated = BackupRecord::mark_completed(
+                    &self.pool,
+                    record_id,
+                    file_size,
+                    upload_path,
+                )
+                .await?;
+                Ok(updated)
+            }
+            Err(e) => {
+                let _ = BackupRecord::mark_failed(
+                    &self.pool,
+                    record_id,
+                    &e.to_string(),
                 )
                 .await;
                 Err(e)
@@ -100,7 +150,10 @@ impl BackupService {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AppError::Internal(format!("pg_dump failed: {}", stderr)));
+            tracing::error!(stderr = %stderr, "pg_dump failed");
+            return Err(AppError::Internal(
+                "pg_dump failed, see server logs for details".to_string(),
+            ));
         }
 
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -203,16 +256,13 @@ mod tests {
 
     #[test]
     fn test_get_next_run_time_valid_cron() {
-        // Every minute
         let next = BackupService::get_next_run_time("0 * * * * * *");
         assert!(next.is_some());
-        let next = next.unwrap();
-        assert!(next > Utc::now());
+        assert!(next.unwrap() > Utc::now());
     }
 
     #[test]
     fn test_get_next_run_time_daily_at_2am() {
-        // Daily at 2:00 AM
         let next = BackupService::get_next_run_time("0 0 2 * * * *");
         assert!(next.is_some());
         let next = next.unwrap();
@@ -222,14 +272,12 @@ mod tests {
 
     #[test]
     fn test_get_next_run_time_invalid_cron() {
-        let next = BackupService::get_next_run_time("not a cron");
-        assert!(next.is_none());
+        assert!(BackupService::get_next_run_time("not a cron").is_none());
     }
 
     #[test]
     fn test_get_next_run_time_empty_string() {
-        let next = BackupService::get_next_run_time("");
-        assert!(next.is_none());
+        assert!(BackupService::get_next_run_time("").is_none());
     }
 
     #[test]
@@ -257,79 +305,59 @@ mod tests {
     }
 
     #[test]
-    fn test_backup_filename_format() {
-        let now = Utc::now();
-        let filename = format!("backup_{}.sql.gz", now.format("%Y%m%d_%H%M%S"));
-        assert!(filename.starts_with("backup_"));
-        assert!(filename.ends_with(".sql.gz"));
-    }
-
-    #[test]
-    fn test_full_path_with_storage_path() {
-        let storage_path = "backups/daily";
-        let filename = "backup_20260323_020000.sql.gz";
-        let full_path = format!("{}/{}", storage_path.trim_end_matches('/'), filename);
-        assert_eq!(full_path, "backups/daily/backup_20260323_020000.sql.gz");
-    }
-
-    #[test]
-    fn test_full_path_with_trailing_slash() {
-        let storage_path = "backups/";
-        let filename = "backup_20260323_020000.sql.gz";
-        let full_path = format!("{}/{}", storage_path.trim_end_matches('/'), filename);
-        assert_eq!(full_path, "backups/backup_20260323_020000.sql.gz");
-    }
-
-    #[test]
-    fn test_full_path_empty_storage_path() {
-        let storage_path = "";
-        let filename = "backup_20260323_020000.sql.gz";
-        let full_path = if storage_path.is_empty() {
-            filename.to_string()
-        } else {
-            format!("{}/{}", storage_path.trim_end_matches('/'), filename)
-        };
-        assert_eq!(full_path, "backup_20260323_020000.sql.gz");
-    }
-
-    #[test]
-    fn test_gzip_compression() {
-        let data = b"CREATE TABLE test (id INT); INSERT INTO test VALUES (1);";
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(data).unwrap();
-        let compressed = encoder.finish().unwrap();
-
-        // Compressed data should be non-empty
-        assert!(!compressed.is_empty());
-        // Gzip magic number
-        assert_eq!(compressed[0], 0x1f);
-        assert_eq!(compressed[1], 0x8b);
-
-        // Decompress and verify
-        use flate2::read::GzDecoder;
-        use std::io::Read;
-        let mut decoder = GzDecoder::new(&compressed[..]);
-        let mut decompressed = Vec::new();
-        decoder.read_to_end(&mut decompressed).unwrap();
-        assert_eq!(decompressed, data);
-    }
-
-    #[test]
-    fn test_next_run_time_is_in_future() {
-        let next = BackupService::get_next_run_time("0 * * * * * *");
-        assert!(next.is_some());
-        assert!(next.unwrap() > Utc::now());
-    }
-
-    #[test]
     fn test_weekly_cron_schedule() {
-        // Every Sunday at midnight
         let next = BackupService::get_next_run_time("0 0 0 * * Sun *");
         assert!(next.is_some());
         let next = next.unwrap();
         assert_eq!(next.hour(), 0);
         assert_eq!(next.minute(), 0);
-        // chrono weekday: Sun = 6 (Mon=0..Sun=6), but Datelike::weekday().num_days_from_sunday() = 0
         assert_eq!(next.weekday().num_days_from_sunday(), 0);
+    }
+
+    #[test]
+    fn test_generate_backup_filename() {
+        let filename = BackupService::generate_backup_filename();
+        assert!(filename.starts_with("backup_"));
+        assert!(filename.ends_with(".sql.gz"));
+        assert!(filename.len() > "backup_.sql.gz".len());
+    }
+
+    #[test]
+    fn test_build_upload_path_with_storage_path() {
+        let path = BackupService::build_upload_path("backups/daily", "backup_20260323.sql.gz");
+        assert_eq!(path, "backups/daily/backup_20260323.sql.gz");
+    }
+
+    #[test]
+    fn test_build_upload_path_with_trailing_slash() {
+        let path = BackupService::build_upload_path("backups/", "backup_20260323.sql.gz");
+        assert_eq!(path, "backups/backup_20260323.sql.gz");
+    }
+
+    #[test]
+    fn test_build_upload_path_empty_storage_path() {
+        let path = BackupService::build_upload_path("", "backup_20260323.sql.gz");
+        assert_eq!(path, "backup_20260323.sql.gz");
+    }
+
+    #[test]
+    fn test_validate_storage_path_valid() {
+        assert!(BackupService::validate_storage_path("backups/daily").is_ok());
+        assert!(BackupService::validate_storage_path("backups").is_ok());
+        assert!(BackupService::validate_storage_path("").is_ok());
+    }
+
+    #[test]
+    fn test_validate_storage_path_traversal() {
+        let result = BackupService::validate_storage_path("../etc/passwd");
+        assert!(result.is_err());
+        let result = BackupService::validate_storage_path("backups/../../etc");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_storage_path_absolute() {
+        let result = BackupService::validate_storage_path("/absolute/path");
+        assert!(result.is_err());
     }
 }

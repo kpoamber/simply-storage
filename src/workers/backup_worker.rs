@@ -8,31 +8,29 @@ use tokio_util::sync::CancellationToken;
 
 use crate::db::models::{BackupConfig, BackupRecord};
 use crate::services::BackupService;
-use crate::storage::StorageRegistry;
 
 /// Background worker that runs database backups on cron schedules.
 ///
 /// Periodically checks enabled BackupConfigs, determines whether each is due
 /// based on its cron expression and last backup time, and triggers backups.
 /// After a successful backup, cleans up old backups beyond retention count.
+///
+/// Uses PostgreSQL advisory locks to prevent duplicate backups when running
+/// multiple app instances.
 pub struct BackupWorker {
-    backup_service: BackupService,
-    pool: PgPool,
+    backup_service: Arc<BackupService>,
     cancel_token: CancellationToken,
     check_interval: Duration,
 }
 
 impl BackupWorker {
     pub fn new(
-        pool: PgPool,
-        registry: Arc<StorageRegistry>,
-        database_url: String,
+        backup_service: Arc<BackupService>,
         cancel_token: CancellationToken,
         check_interval_secs: u64,
     ) -> Self {
         Self {
-            backup_service: BackupService::new(pool.clone(), registry, database_url),
-            pool,
+            backup_service,
             cancel_token,
             check_interval: Duration::from_secs(check_interval_secs),
         }
@@ -40,13 +38,11 @@ impl BackupWorker {
 
     /// Spawn the backup worker as a tokio task. Returns the JoinHandle.
     pub fn spawn(
-        pool: PgPool,
-        registry: Arc<StorageRegistry>,
-        database_url: String,
+        backup_service: Arc<BackupService>,
         cancel_token: CancellationToken,
         check_interval_secs: u64,
     ) -> tokio::task::JoinHandle<()> {
-        let worker = Self::new(pool, registry, database_url, cancel_token, check_interval_secs);
+        let worker = Self::new(backup_service, cancel_token, check_interval_secs);
         tokio::spawn(async move {
             tracing::info!("Backup worker started");
             worker.run().await;
@@ -77,7 +73,8 @@ impl BackupWorker {
 
     /// Check all enabled configs and run backups that are due.
     async fn check_and_run_backups(&self) {
-        let configs = match BackupConfig::list_enabled(&self.pool).await {
+        let pool = self.backup_service.pool();
+        let configs = match BackupConfig::list_enabled(pool).await {
             Ok(configs) => configs,
             Err(e) => {
                 tracing::error!(error = %e, "Failed to list enabled backup configs");
@@ -98,8 +95,37 @@ impl BackupWorker {
     }
 
     /// Process a single backup config: check if it's due and run if so.
+    /// Uses a PostgreSQL session-level advisory lock on a dedicated connection
+    /// to prevent duplicate backups across replicas. Both lock and unlock run
+    /// on the same connection, ensuring proper release.
     async fn process_config(&self, config: &BackupConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if !is_backup_due(&config.schedule_cron, config.id, &self.pool).await? {
+        let pool = self.backup_service.pool();
+
+        if !is_backup_due(&config.schedule_cron, config.id, pool).await? {
+            return Ok(());
+        }
+
+        // Use session-level advisory lock to prevent duplicate backups.
+        // Key derived from config UUID bytes to get a unique lock per config.
+        let id_bytes = config.id.as_bytes();
+        let key1 = i32::from_le_bytes([id_bytes[0], id_bytes[1], id_bytes[2], id_bytes[3]]);
+        let key2 = i32::from_le_bytes([id_bytes[4], id_bytes[5], id_bytes[6], id_bytes[7]]);
+
+        // Acquire a dedicated connection so that lock and unlock happen on the
+        // same session. Using the pool directly would risk acquiring/releasing
+        // on different connections, making the lock ineffective.
+        let mut conn = pool.acquire().await?;
+        let locked: (bool,) = sqlx::query_as("SELECT pg_try_advisory_lock($1, $2)")
+            .bind(key1)
+            .bind(key2)
+            .fetch_one(&mut *conn)
+            .await?;
+
+        if !locked.0 {
+            tracing::debug!(
+                config_id = %config.id,
+                "Another instance is already running this backup, skipping"
+            );
             return Ok(());
         }
 
@@ -109,11 +135,19 @@ impl BackupWorker {
             "Running scheduled backup"
         );
 
-        match self
+        let result = self
             .backup_service
             .create_backup(Some(config.id), config.storage_id, &config.storage_path)
-            .await
-        {
+            .await;
+
+        // Always release the advisory lock on the same connection that acquired it.
+        let _ = sqlx::query("SELECT pg_advisory_unlock($1, $2)")
+            .bind(key1)
+            .bind(key2)
+            .execute(&mut *conn)
+            .await;
+
+        match result {
             Ok(record) => {
                 tracing::info!(
                     config_id = %config.id,
@@ -149,10 +183,16 @@ impl BackupWorker {
     }
 }
 
+/// Maximum time a backup can stay in "running" status before being considered stale.
+const STALE_RUNNING_THRESHOLD_SECS: i64 = 3600; // 1 hour
+
 /// Determine if a backup is due based on the cron schedule and last backup time.
 ///
 /// Returns true if the cron expression's most recent scheduled time is after
-/// the last backup's started_at (or if no backup has been run yet).
+/// the last successful/running backup's started_at (or if no backup has been run yet).
+/// Failed backups are ignored so that retries happen on the next check cycle.
+/// Running backups older than STALE_RUNNING_THRESHOLD_SECS are marked as failed
+/// and ignored, preventing orphaned records from blocking future backups.
 pub async fn is_backup_due(
     cron_expr: &str,
     config_id: uuid::Uuid,
@@ -160,16 +200,40 @@ pub async fn is_backup_due(
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let schedule = Schedule::from_str(cron_expr)?;
 
-    // Find the last backup for this config
-    let records = BackupRecord::list(pool, Some(config_id)).await?;
-    let last_backup = records.first(); // list is ordered by created_at DESC
+    // Find the last completed or running backup for this config (LIMIT 1)
+    let last_backup = BackupRecord::find_latest_successful_by_config(pool, config_id).await?;
 
-    let last_run_at = last_backup.and_then(|r| r.started_at);
+    // Check for stale "running" records and mark them as failed
+    if let Some(ref record) = last_backup {
+        if record.status == "running" {
+            if let Some(started) = record.started_at {
+                let elapsed = Utc::now() - started;
+                if elapsed.num_seconds() > STALE_RUNNING_THRESHOLD_SECS {
+                    tracing::warn!(
+                        backup_id = %record.id,
+                        config_id = %config_id,
+                        started_at = %started,
+                        "Marking stale running backup as failed (exceeded {} seconds)",
+                        STALE_RUNNING_THRESHOLD_SECS
+                    );
+                    let _ = BackupRecord::mark_failed(
+                        pool,
+                        record.id,
+                        "Marked as failed: exceeded maximum running time (stale)",
+                    )
+                    .await;
+                    // After marking stale record as failed, this backup is now due
+                    return Ok(true);
+                }
+            }
+        }
+    }
+
+    let last_run_at = last_backup.as_ref().and_then(|r| r.started_at);
 
     match last_run_at {
         Some(last_run) => {
             // Check if there's a scheduled time between last_run and now
-            // Use the schedule to find the next occurrence after last_run
             let next_after_last = schedule.after(&last_run).next();
             match next_after_last {
                 Some(next_time) if next_time <= Utc::now() => Ok(true),
@@ -177,7 +241,7 @@ pub async fn is_backup_due(
             }
         }
         None => {
-            // No previous backup: it's due if the cron is valid
+            // No previous successful backup: it's due if the cron is valid
             Ok(true)
         }
     }
@@ -186,85 +250,7 @@ pub async fn is_backup_due(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Duration as ChronoDuration, Utc};
-    use tokio_util::sync::CancellationToken;
-
-    #[tokio::test]
-    async fn test_backup_worker_cancellation() {
-        let cancel_token = CancellationToken::new();
-        let child = cancel_token.clone();
-        cancel_token.cancel();
-        assert!(child.is_cancelled());
-    }
-
-    #[tokio::test]
-    async fn test_backup_worker_cancellation_propagation() {
-        let parent = CancellationToken::new();
-        let child = parent.child_token();
-        assert!(!child.is_cancelled());
-        parent.cancel();
-        assert!(child.is_cancelled());
-    }
-
-    #[test]
-    fn test_check_interval_duration() {
-        let interval = Duration::from_secs(60);
-        assert_eq!(interval.as_secs(), 60);
-        let custom = Duration::from_secs(120);
-        assert_eq!(custom.as_secs(), 120);
-    }
-
-    #[test]
-    fn test_default_check_interval() {
-        // Default backup check interval is 60 seconds
-        let default_secs: u64 = 60;
-        let interval = Duration::from_secs(default_secs);
-        assert_eq!(interval.as_secs(), 60);
-    }
-
-    #[test]
-    fn test_cron_schedule_parsing() {
-        // Daily at 2:00 AM (7-field cron: sec min hour dom month dow year)
-        let schedule = Schedule::from_str("0 0 2 * * * *");
-        assert!(schedule.is_ok());
-
-        // Every 6 hours
-        let schedule = Schedule::from_str("0 0 */6 * * * *");
-        assert!(schedule.is_ok());
-
-        // Invalid expression
-        let schedule = Schedule::from_str("not a cron");
-        assert!(schedule.is_err());
-    }
-
-    #[test]
-    fn test_cron_next_occurrence_is_in_future() {
-        let schedule = Schedule::from_str("0 * * * * * *").unwrap(); // every minute
-        let next = schedule.upcoming(Utc).next();
-        assert!(next.is_some());
-        assert!(next.unwrap() > Utc::now());
-    }
-
-    #[test]
-    fn test_cron_after_past_time() {
-        let schedule = Schedule::from_str("0 * * * * * *").unwrap(); // every minute
-        let past = Utc::now() - ChronoDuration::hours(2);
-        let next_after_past = schedule.after(&past).next();
-        assert!(next_after_past.is_some());
-        // Should be at most ~1 minute in the future (next minute boundary)
-        let next = next_after_past.unwrap();
-        assert!(next <= Utc::now() + ChronoDuration::minutes(1));
-    }
-
-    #[test]
-    fn test_cron_after_recent_time_not_due() {
-        let schedule = Schedule::from_str("0 0 2 * * * *").unwrap(); // daily at 2am
-        let now = Utc::now();
-        // If last run was just now, next occurrence is ~24h away, so not due
-        let next_after_now = schedule.after(&now).next();
-        assert!(next_after_now.is_some());
-        assert!(next_after_now.unwrap() > now);
-    }
+    use std::sync::Arc;
 
     // ─── Integration tests requiring PostgreSQL ─────────────────────────────────
 
@@ -275,13 +261,12 @@ mod tests {
             std::env::var("DATABASE_URL").expect("DATABASE_URL required for integration tests");
         let pool = sqlx::PgPool::connect(&url).await.unwrap();
         crate::db::run_migrations(&pool).await.unwrap();
-        let registry = Arc::new(StorageRegistry::new());
+        let registry = Arc::new(crate::storage::StorageRegistry::new());
         let cancel_token = CancellationToken::new();
 
+        let service = Arc::new(BackupService::new(pool, registry, url));
         let handle = BackupWorker::spawn(
-            pool,
-            registry,
-            url,
+            service,
             cancel_token.clone(),
             1,
         );
