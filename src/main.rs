@@ -1,9 +1,9 @@
 use actix_web::{App, HttpServer, web};
 use innovare_storage::config::AppConfig;
 use innovare_storage::db::models::{CreateUser, Node, RefreshToken, User};
-use innovare_storage::services::{AuthService, BulkService, FileService, SharedLinkService, TierService};
+use innovare_storage::services::{AuthService, BackupService, BulkService, FileService, SharedLinkService, TierService};
 use innovare_storage::storage::StorageRegistry;
-use innovare_storage::workers::{SyncWorker, TierWorker};
+use innovare_storage::workers::{BackupWorker, SyncWorker, TierWorker};
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -98,6 +98,11 @@ async fn main() -> std::io::Result<()> {
         &config.auth.jwt_secret,
         config.storage.hmac_secret.clone(),
     );
+    let backup_service = BackupService::new(
+        pool.clone(),
+        registry.clone(),
+        config.database.url.clone(),
+    );
 
     // Set up cancellation token for graceful shutdown of background workers
     let cancel_token = CancellationToken::new();
@@ -127,6 +132,16 @@ async fn main() -> std::io::Result<()> {
         "Tier worker started"
     );
 
+    // Spawn background backup worker for scheduled database backups
+    let backup_handle = BackupWorker::spawn(
+        pool.clone(),
+        registry.clone(),
+        config.database.url.clone(),
+        cancel_token.clone(),
+        60, // check every 60 seconds
+    );
+    tracing::info!("Backup worker started (60s check interval)");
+
     // Generate a unique node ID and register this instance
     let node_id = format!("node-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or("unknown"));
     let node_address = format!("{}:{}", config.server.host, config.server.port);
@@ -148,6 +163,7 @@ async fn main() -> std::io::Result<()> {
     let tier_service_data = web::Data::new(tier_service);
     let bulk_service_data = web::Data::new(bulk_service);
     let shared_link_service_data = web::Data::new(shared_link_service);
+    let backup_service_data = web::Data::new(backup_service);
 
     let server = HttpServer::new(move || {
         App::new()
@@ -159,6 +175,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(tier_service_data.clone())
             .app_data(bulk_service_data.clone())
             .app_data(shared_link_service_data.clone())
+            .app_data(backup_service_data.clone())
             .configure(innovare_storage::configure_app)
     })
     .bind(&bind_addr)?
@@ -175,6 +192,7 @@ async fn main() -> std::io::Result<()> {
         let _ = handle.await;
     }
     let _ = tier_handle.await;
+    let _ = backup_handle.await;
     let _ = heartbeat_handle.await;
     tracing::info!("All background workers stopped");
 

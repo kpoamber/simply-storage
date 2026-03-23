@@ -52,8 +52,8 @@
 - Create: `src/services/backup_service.rs`
 - Modify: `src/services/mod.rs`
 
-- [ ] Create `BackupService` struct with pool (PgPool), registry (Arc<StorageRegistry>), database_url (String)
-- [ ] Implement `create_backup(config_id: Option<Uuid>, storage_id: Uuid, storage_path: &str)` method:
+- [x] Create `BackupService` struct with pool (PgPool), registry (Arc<StorageRegistry>), database_url (String)
+- [x] Implement `create_backup(config_id: Option<Uuid>, storage_id: Uuid, storage_path: &str)` method:
   - Create BackupRecord with status "running"
   - Execute pg_dump via `tokio::process::Command` using database URL from config, output to temp file
   - Compress with gzip (via `flate2` or shell command)
@@ -61,15 +61,15 @@
   - Upload to storage backend via registry using `storage_path/filename`
   - Update BackupRecord with completed status, file_size, file_path
   - On failure: update BackupRecord with failed status and error_message
-- [ ] Implement `cleanup_old_backups(config_id: Uuid, retention_count: i32)` method:
+- [x] Implement `cleanup_old_backups(config_id: Uuid, retention_count: i32)` method:
   - Query backups beyond retention count
   - Delete from storage backend
   - Delete BackupRecord entries
-- [ ] Implement `delete_backup(backup_id: Uuid)` method: delete file from storage, then delete record
-- [ ] Implement `get_next_run_time(cron_expr: &str) -> Option<DateTime>` helper using cron crate
-- [ ] Add BackupService to services module
-- [ ] Write tests for service logic (mock storage operations)
-- [ ] Run `cargo test`
+- [x] Implement `delete_backup(backup_id: Uuid)` method: delete file from storage, then delete record
+- [x] Implement `get_next_run_time(cron_expr: &str) -> Option<DateTime>` helper using cron crate
+- [x] Add BackupService to services module
+- [x] Write tests for service logic (mock storage operations)
+- [x] Run `cargo test`
 
 ### Task 4: BackupWorker - scheduled background worker
 
@@ -78,15 +78,15 @@
 - Modify: `src/workers/mod.rs`
 - Modify: `src/main.rs`
 
-- [ ] Create `BackupWorker` struct with backup_service (BackupService), pool (PgPool), cancel_token (CancellationToken), check_interval (Duration, default 60s)
-- [ ] Implement `spawn()` method following TierWorker pattern
-- [ ] Implement `run()` loop: every check_interval, query enabled BackupConfigs, check if each config's cron schedule indicates it's time to run (compare with last backup's started_at), trigger backup if due
-- [ ] After each successful backup, call cleanup_old_backups for retention
-- [ ] Add BackupWorker to workers module
-- [ ] Spawn BackupWorker in main.rs with cancel_token, add handle to shutdown sequence
-- [ ] Register BackupService in AppState (web::Data) for API access
-- [ ] Write tests for schedule checking logic
-- [ ] Run `cargo test`
+- [x] Create `BackupWorker` struct with backup_service (BackupService), pool (PgPool), cancel_token (CancellationToken), check_interval (Duration, default 60s)
+- [x] Implement `spawn()` method following TierWorker pattern
+- [x] Implement `run()` loop: every check_interval, query enabled BackupConfigs, check if each config's cron schedule indicates it's time to run (compare with last backup's started_at), trigger backup if due
+- [x] After each successful backup, call cleanup_old_backups for retention
+- [x] Add BackupWorker to workers module
+- [x] Spawn BackupWorker in main.rs with cancel_token, add handle to shutdown sequence
+- [x] Register BackupService in AppState (web::Data) for API access
+- [x] Write tests for schedule checking logic
+- [x] Run `cargo test`
 
 ### Task 5: API routes for backup management
 
