@@ -25,26 +25,26 @@
 **Files:**
 - Create: `migrations/016_backup_config.sql`
 
-- [ ] Create `backup_configs` table: id (UUID PK), name (VARCHAR), storage_id (UUID FK -> storages), storage_path (VARCHAR, prefix path in storage), schedule_cron (VARCHAR, cron expression), retention_count (INT, how many backups to keep), enabled (BOOLEAN), created_at/updated_at (TIMESTAMPTZ)
-- [ ] Create `backup_history` table: id (UUID PK), config_id (UUID FK -> backup_configs, nullable for manual backups), storage_id (UUID FK -> storages), file_path (VARCHAR, path in storage), file_size_bytes (BIGINT), status (VARCHAR: pending/running/completed/failed), error_message (TEXT nullable), started_at/completed_at (TIMESTAMPTZ nullable), created_at (TIMESTAMPTZ)
-- [ ] Add indexes: backup_configs(storage_id), backup_configs(enabled), backup_history(config_id), backup_history(status), backup_history(created_at DESC)
-- [ ] Verify migration runs successfully with `cargo build`
+- [x] Create `backup_configs` table: id (UUID PK), name (VARCHAR), storage_id (UUID FK -> storages), storage_path (VARCHAR, prefix path in storage), schedule_cron (VARCHAR, cron expression), retention_count (INT, how many backups to keep), enabled (BOOLEAN), created_at/updated_at (TIMESTAMPTZ)
+- [x] Create `backup_history` table: id (UUID PK), config_id (UUID FK -> backup_configs, nullable for manual backups), storage_id (UUID FK -> storages), file_path (VARCHAR, path in storage), file_size_bytes (BIGINT), status (VARCHAR: pending/running/completed/failed), error_message (TEXT nullable), started_at/completed_at (TIMESTAMPTZ nullable), created_at (TIMESTAMPTZ)
+- [x] Add indexes: backup_configs(storage_id), backup_configs(enabled), backup_history(config_id), backup_history(status), backup_history(created_at DESC)
+- [x] Verify migration runs successfully with `cargo build`
 
 ### Task 2: Database models and CRUD
 
 **Files:**
 - Modify: `src/db/models.rs`
 
-- [ ] Add `BackupConfig` struct with FromRow, Serialize, Deserialize: id, name, storage_id, storage_path, schedule_cron, retention_count, enabled, created_at, updated_at
-- [ ] Add `CreateBackupConfig` and `UpdateBackupConfig` input structs
-- [ ] Implement CRUD methods: create, find_by_id, list, update, delete
-- [ ] Add `list_enabled` method returning only enabled configs
-- [ ] Add `BackupRecord` struct with FromRow: id, config_id, storage_id, file_path, file_size_bytes, status, error_message, started_at, completed_at, created_at
-- [ ] Add `CreateBackupRecord` input struct
-- [ ] Implement BackupRecord methods: create, find_by_id, list (with optional config_id filter, ordered by created_at DESC), update_status (status + error_message + completed_at), delete, count_by_config_id
-- [ ] Add `list_oldest_completed_by_config` method for retention cleanup (returns completed backups beyond retention_count)
-- [ ] Write unit tests for model validation logic
-- [ ] Run `cargo test`
+- [x] Add `BackupConfig` struct with FromRow, Serialize, Deserialize: id, name, storage_id, storage_path, schedule_cron, retention_count, enabled, created_at, updated_at
+- [x] Add `CreateBackupConfig` and `UpdateBackupConfig` input structs
+- [x] Implement CRUD methods: create, find_by_id, list, update, delete
+- [x] Add `list_enabled` method returning only enabled configs
+- [x] Add `BackupRecord` struct with FromRow: id, config_id, storage_id, file_path, file_size_bytes, status, error_message, started_at, completed_at, created_at
+- [x] Add `CreateBackupRecord` input struct
+- [x] Implement BackupRecord methods: create, find_by_id, list (with optional config_id filter, ordered by created_at DESC), update_status (status + error_message + completed_at), delete, count_by_config_id
+- [x] Add `list_oldest_completed_by_config` method for retention cleanup (returns completed backups beyond retention_count)
+- [x] Write unit tests for model validation logic
+- [x] Run `cargo test`
 
 ### Task 3: BackupService - business logic
 
