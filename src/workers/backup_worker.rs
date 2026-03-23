@@ -248,8 +248,15 @@ pub async fn is_backup_due(
                         "Marked as failed: exceeded maximum running time (stale)",
                     )
                     .await;
-                    // After marking stale record as failed, this backup is now due
-                    return Ok(true);
+                    // After marking stale record as failed, check the cron schedule
+                    // using the stale record's started_at as baseline instead of
+                    // returning true unconditionally (which could trigger a backup
+                    // outside the configured cron schedule).
+                    let next_after_baseline = schedule.after(&started).next();
+                    return match next_after_baseline {
+                        Some(next_time) if next_time <= Utc::now() => Ok(true),
+                        _ => Ok(false),
+                    };
                 }
             }
         }
