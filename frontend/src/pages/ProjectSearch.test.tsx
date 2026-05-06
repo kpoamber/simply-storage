@@ -6,6 +6,9 @@ import ProjectSearch from './ProjectSearch';
 
 const mockSearchFiles = vi.fn();
 const mockSearchSummary = vi.fn();
+const mockGetMetadataKeys = vi.fn();
+const mockDownloadFileBlob = vi.fn();
+const mockBulkDownload = vi.fn();
 
 vi.mock('../api/client', () => ({
   default: {
@@ -16,6 +19,9 @@ vi.mock('../api/client', () => ({
   },
   searchFiles: (...args: unknown[]) => mockSearchFiles(...args),
   searchSummary: (...args: unknown[]) => mockSearchSummary(...args),
+  getMetadataKeys: (...args: unknown[]) => mockGetMetadataKeys(...args),
+  downloadFileBlob: (...args: unknown[]) => mockDownloadFileBlob(...args),
+  bulkDownload: (...args: unknown[]) => mockBulkDownload(...args),
 }));
 
 vi.mock('../contexts/AuthContext', () => ({
@@ -93,12 +99,13 @@ const mockSummaryResult = {
 describe('ProjectSearch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetMetadataKeys.mockResolvedValue({ data: [] });
   });
 
   it('renders query builder with initial filter row', () => {
     renderSearch();
     expect(screen.getByText('Search Files')).toBeInTheDocument();
-    expect(screen.getByText('Filters')).toBeInTheDocument();
+    expect(screen.getByText('Metadata filters')).toBeInTheDocument();
     expect(screen.getAllByTestId('filter-row')).toHaveLength(1);
     expect(screen.getByTestId('search-button')).toBeInTheDocument();
   });
