@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod auth_routes;
+pub mod backups;
 pub mod bulk;
 pub mod files;
 pub mod projects;
@@ -137,6 +138,7 @@ pub fn configure_api_routes(cfg: &mut web::ServiceConfig) {
             .configure(bulk::configure)
             .configure(auth_routes::configure)
             .configure(shared_links::configure)
+            .configure(backups::configure)
             .route("/system/stats", web::get().to(system_stats))
             .route("/sync-tasks", web::get().to(list_sync_tasks))
             .route("/system/config-export", web::get().to(config_export))

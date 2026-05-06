@@ -38,31 +38,6 @@ write_files:
       PasswordAuthentication no
       PermitRootLogin no
 
-  - path: /opt/innovare-storage/backup-cron.sh
-    permissions: "0755"
-    owner: deploy:deploy
-    content: |
-      #!/usr/bin/env bash
-      set -euo pipefail
-      # Source deployment env vars for PROFILE and credentials
-      if [ -f /opt/innovare-storage/.env ]; then
-        set -a; source /opt/innovare-storage/.env; set +a
-      fi
-      export PROFILE="$${DEPLOY_PROFILE:-small}"
-      export BACKUP_DIR="/backups"
-      export COMPOSE_PROJECT="innovare-storage"
-      RETENTION_DAYS="$${BACKUP_RETENTION_DAYS:-30}"
-      LOG_FILE="/var/log/innovare-backup.log"
-      echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting backup (profile: $PROFILE)..." >> "$LOG_FILE"
-      if [ -f /opt/innovare-storage/scripts/backup.sh ]; then
-        /opt/innovare-storage/scripts/backup.sh --profile "$PROFILE" >> "$LOG_FILE" 2>&1
-      else
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] backup.sh not found, skipping" >> "$LOG_FILE"
-      fi
-      # Rotate old backups
-      find "$BACKUP_DIR" -name "backup_*.tar.gz" -mtime +"$RETENTION_DAYS" -delete 2>/dev/null || true
-      echo "[$(date '+%Y-%m-%d %H:%M:%S')] Backup complete" >> "$LOG_FILE"
-
 runcmd:
   # Enable and start Docker
   - systemctl enable docker
@@ -99,11 +74,7 @@ runcmd:
   - mkdir -p /opt/innovare-storage/deploy
   - chown -R deploy:deploy /opt/innovare-storage
 
-  # Set up backup cron (daily at 2:00 AM)
-  - |
-    CRON_SCHEDULE="${lookup(app_env_vars, "BACKUP_SCHEDULE", "0 2 * * *")}"
-    echo "$CRON_SCHEDULE deploy /opt/innovare-storage/backup-cron.sh" > /etc/cron.d/innovare-backup
-    chmod 0644 /etc/cron.d/innovare-backup
+  # Backups are run via GitHub Actions (.github/workflows/backup.yml), not local cron.
 
   # Restart SSH to pick up hardening config from write_files
   - systemctl restart sshd

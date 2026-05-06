@@ -285,6 +285,66 @@ export interface CreateSharedLinkRequest {
   max_downloads?: number;
 }
 
+// Backup types
+export interface BackupConfig {
+  id: string;
+  name: string;
+  storage_id: string;
+  storage_path: string;
+  schedule_cron: string;
+  retention_count: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  storage_name: string | null;
+}
+
+export interface CreateBackupConfigRequest {
+  name: string;
+  storage_id: string;
+  storage_path: string;
+  schedule_cron: string;
+  retention_count: number;
+  enabled: boolean;
+}
+
+export interface UpdateBackupConfigRequest {
+  name?: string;
+  storage_id?: string;
+  storage_path?: string;
+  schedule_cron?: string;
+  retention_count?: number;
+  enabled?: boolean;
+}
+
+export interface BackupRecord {
+  id: string;
+  config_id: string | null;
+  config_name: string | null;
+  storage_id: string;
+  file_path: string;
+  file_size_bytes: number;
+  status: string;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface BackupHistoryResponse {
+  records: BackupRecord[];
+  page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
+}
+
+export interface TriggerBackupRequest {
+  config_id?: string;
+  storage_id?: string;
+  storage_path?: string;
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes <= 0) return '0 B';
   const k = 1024;

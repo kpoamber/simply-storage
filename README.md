@@ -19,6 +19,7 @@ Distributed multi-storage file management system with content-addressable dedupl
                 │   Background workers:    │
                 │   • 4x SyncWorker        │
                 │   • 1x TierWorker        │
+                │   • 1x BackupWorker      │
                 │   • 1x Heartbeat         │
                 └───────────┬──────────────┘
                             ▼
@@ -33,7 +34,7 @@ Distributed multi-storage file management system with content-addressable dedupl
 ```
 API (Actix routes, JWT extractors)
     ↓
-Services (FileService, TierService, BulkService, SharedLinkService, AuthService)
+Services (FileService, TierService, BulkService, SharedLinkService, AuthService, BackupService)
     ↓
 Backend Resolver (container-per-project: slug-suffix)
     ↓
@@ -58,6 +59,7 @@ Multiple stateless app instances run behind nginx and share state through distri
 - **Metadata search** - Search files within a project using recursive AND/OR/NOT filter DSL on metadata key/value pairs, with summary statistics and timeline charts
 - **Bulk deletion** - Delete files matching metadata filters, date ranges, and size ranges with preview mode and automatic orphan cleanup
 - **Proxy-based shared links** - Share files via unique token URLs with optional password protection, expiration, and download limits. Downloads are proxied through the server (clients never see storage URLs). Tracks view/download statistics
+- **Scheduled database backups** - Cron-based automatic pg_dump backups compressed with gzip and uploaded to any storage backend. Configurable schedule, retention count, and manual trigger via admin UI. Distributed locking prevents duplicate backups across replicas
 - **Sync details UI** - Per-file sync status with storage-level details (path, sync time), force-sync and copy-public-link buttons
 - **Sensitive field protection** - Storage credentials preserved during edits; never exposed to frontend
 - **Admin dashboard** - React frontend for managing projects, storages, files, and monitoring sync tasks
@@ -198,6 +200,10 @@ access_token_ttl_secs = 900        # Access token lifetime (15 minutes)
 refresh_token_ttl_secs = 604800    # Refresh token lifetime (7 days)
 default_admin_username = "admin"            # Default admin user created on first startup
 default_admin_password = "Innovare2026!"    # Default admin password (MUST change in production)
+
+[backup]
+enabled = true                 # Enable/disable the backup worker
+check_interval_secs = 60       # How often to check for due backups (seconds)
 ```
 
 ### Environment Variable Examples
@@ -213,6 +219,8 @@ APP_AUTH__ACCESS_TOKEN_TTL_SECS=900
 APP_AUTH__REFRESH_TOKEN_TTL_SECS=604800
 APP_AUTH__DEFAULT_ADMIN_USERNAME=admin
 APP_AUTH__DEFAULT_ADMIN_PASSWORD=Innovare2026!
+APP_BACKUP__ENABLED=true
+APP_BACKUP__CHECK_INTERVAL_SECS=60
 RUST_LOG=info  # Log level: trace, debug, info, warn, error
 ```
 
@@ -316,6 +324,18 @@ All API endpoints require authentication via a JWT access token passed in the `A
 | GET | `/api/system/config-export` | Export config for node bootstrapping |
 | GET | `/api/sync-tasks` | List sync tasks (filterable by status, storage_id) |
 
+### Backups (Admin-only)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/backup-configs` | List all backup configurations |
+| POST | `/api/backup-configs` | Create backup configuration (validates cron expression and storage) |
+| PUT | `/api/backup-configs/{id}` | Update backup configuration |
+| DELETE | `/api/backup-configs/{id}` | Delete backup configuration |
+| GET | `/api/backups` | List backup history (optional `?config_id=` filter) |
+| POST | `/api/backups/trigger` | Trigger manual backup (by config_id or storage_id + storage_path) |
+| DELETE | `/api/backups/{id}` | Delete backup record and file from storage |
+
 ### Storage Backends
 
 | Backend | Protocol | Direct Links | Auto-create Container | Config Fields |
@@ -346,6 +366,8 @@ Bucket/container fields are **not configured at storage level** — they are der
 | `sync_tasks` | local | Sync queue with project_id for container resolution |
 | `users` | local | Authentication (argon2 hashed passwords) |
 | `shared_links` | local | Public file sharing tokens with limits |
+| `backup_configs` | local | Scheduled backup configuration (cron, retention, storage target) |
+| `backup_history` | local | Backup execution records (status, file path, size, timing) |
 | `nodes` | local | Active app instances (heartbeat) |
 
 ## Deployment & Scaling
@@ -359,7 +381,7 @@ Everything runs on one server via `docker-compose up`. Suitable for up to ~100 u
 │                                                           │
 │  Nginx :80 → App(1) + App(2) → PostgreSQL + Citus        │
 │               ↓                                           │
-│         4x SyncWorker + 1x TierWorker + 1x Heartbeat     │
+│    4x SyncWorker + 1x TierWorker + 1x BackupWorker + 1x Heartbeat │
 │                                                           │
 │  Volumes: postgres_data, app_data                         │
 └───────────────────────────────────────────────────────────┘
@@ -585,6 +607,7 @@ src/
 │   ├── projects.rs # Project CRUD, storage assignments, members
 │   ├── storages.rs # Storage CRUD, container management
 │   ├── shared_links.rs  # Shared link management + public proxy endpoints
+│   ├── backups.rs  # Backup config and history management API (admin-only)
 │   └── mod.rs      # Route registration, system endpoints, pagination
 ├── db/
 │   ├── mod.rs      # Connection pool, migrations, Citus setup
@@ -595,15 +618,17 @@ src/
 │   ├── bulk_service.rs      # Bulk operations, sync-all
 │   ├── tier_service.rs      # Hot/cold tiering
 │   ├── auth_service.rs      # JWT generation/validation, argon2 hashing
-│   └── shared_link_service.rs  # Proxy-based file sharing
+│   ├── shared_link_service.rs  # Proxy-based file sharing
+│   └── backup_service.rs      # pg_dump, gzip compression, upload to storage
 ├── storage/        # StorageBackend trait + implementations
 │   ├── traits.rs   # Trait definition (upload, download, delete, temp_url, containers)
 │   ├── registry.rs # Backend factory + runtime registry
 │   ├── s3.rs, azure.rs, gcs.rs, local.rs, hetzner.rs, ftp.rs, sftp.rs
 │   └── samba.rs    # Optional (--features samba)
 ├── workers/
-│   ├── sync_worker.rs  # Background sync with project-aware container resolution
-│   └── tier_worker.rs  # Automatic hot→cold archiving
+│   ├── sync_worker.rs   # Background sync with project-aware container resolution
+│   ├── tier_worker.rs   # Automatic hot→cold archiving
+│   └── backup_worker.rs # Scheduled database backups (cron-based, advisory-locked)
 ├── config.rs       # Configuration loading (TOML + env vars)
 ├── error.rs        # AppError type with HTTP status mapping
 ├── lib.rs          # AppState, health check, Actix-Web configuration
@@ -616,9 +641,9 @@ frontend/src/
 └── pages/          # Dashboard, Projects, ProjectDetail (sync details dialog),
                     # ProjectSearch, ProjectBulkDelete, SharedLinks,
                     # SharedLinkAccess, Storages, StorageDetail,
-                    # Users, UserDetail, Nodes, SyncTasks, Login
+                    # Users, UserDetail, Nodes, SyncTasks, Backups, Login
 
-migrations/         # SQL schema migrations (015 files)
+migrations/         # SQL schema migrations (016 files)
 docker/             # nginx.conf
 deploy/             # Production deployment files
 ├── docker-compose.prod.yml   # Base production compose (GHCR image)

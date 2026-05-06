@@ -2306,6 +2306,360 @@ impl SharedLink {
     }
 }
 
+// ─── BackupConfig ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct BackupConfig {
+    pub id: Uuid,
+    pub name: String,
+    pub storage_id: Uuid,
+    pub storage_path: String,
+    pub schedule_cron: String,
+    pub retention_count: i32,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateBackupConfig {
+    pub name: String,
+    pub storage_id: Uuid,
+    pub storage_path: Option<String>,
+    pub schedule_cron: String,
+    pub retention_count: Option<i32>,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateBackupConfig {
+    pub name: Option<String>,
+    pub storage_id: Option<Uuid>,
+    pub storage_path: Option<String>,
+    pub schedule_cron: Option<String>,
+    pub retention_count: Option<i32>,
+    pub enabled: Option<bool>,
+}
+
+impl BackupConfig {
+    pub async fn create(pool: &PgPool, input: &CreateBackupConfig) -> AppResult<BackupConfig> {
+        let row = sqlx::query_as::<_, BackupConfig>(
+            r#"INSERT INTO backup_configs (name, storage_id, storage_path, schedule_cron, retention_count, enabled)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               RETURNING *"#,
+        )
+        .bind(&input.name)
+        .bind(input.storage_id)
+        .bind(input.storage_path.as_deref().unwrap_or("backups"))
+        .bind(&input.schedule_cron)
+        .bind(input.retention_count.unwrap_or(7))
+        .bind(input.enabled.unwrap_or(true))
+        .fetch_one(pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    pub async fn find_by_id(pool: &PgPool, id: Uuid) -> AppResult<BackupConfig> {
+        sqlx::query_as::<_, BackupConfig>("SELECT * FROM backup_configs WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Backup config {} not found", id)))
+    }
+
+    pub async fn list(pool: &PgPool) -> AppResult<Vec<BackupConfig>> {
+        let rows = sqlx::query_as::<_, BackupConfig>(
+            "SELECT * FROM backup_configs ORDER BY created_at DESC",
+        )
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn list_enabled(pool: &PgPool) -> AppResult<Vec<BackupConfig>> {
+        let rows = sqlx::query_as::<_, BackupConfig>(
+            "SELECT * FROM backup_configs WHERE enabled = TRUE ORDER BY created_at DESC",
+        )
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn update(pool: &PgPool, id: Uuid, input: &UpdateBackupConfig) -> AppResult<BackupConfig> {
+        let current = Self::find_by_id(pool, id).await?;
+
+        let row = sqlx::query_as::<_, BackupConfig>(
+            r#"UPDATE backup_configs
+               SET name = $1, storage_id = $2, storage_path = $3, schedule_cron = $4,
+                   retention_count = $5, enabled = $6, updated_at = NOW()
+               WHERE id = $7
+               RETURNING *"#,
+        )
+        .bind(input.name.as_deref().unwrap_or(&current.name))
+        .bind(input.storage_id.unwrap_or(current.storage_id))
+        .bind(input.storage_path.as_deref().unwrap_or(&current.storage_path))
+        .bind(input.schedule_cron.as_deref().unwrap_or(&current.schedule_cron))
+        .bind(input.retention_count.unwrap_or(current.retention_count))
+        .bind(input.enabled.unwrap_or(current.enabled))
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    pub async fn delete(pool: &PgPool, id: Uuid) -> AppResult<()> {
+        let result = sqlx::query("DELETE FROM backup_configs WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!("Backup config {} not found", id)));
+        }
+        Ok(())
+    }
+}
+
+// ─── BackupRecord ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct BackupRecord {
+    pub id: Uuid,
+    pub config_id: Option<Uuid>,
+    pub config_name: Option<String>,
+    pub storage_id: Uuid,
+    pub file_path: String,
+    pub file_size_bytes: i64,
+    pub status: String,
+    pub error_message: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+pub struct CreateBackupRecord {
+    pub config_id: Option<Uuid>,
+    pub config_name: Option<String>,
+    pub storage_id: Uuid,
+    pub file_path: String,
+}
+
+impl BackupRecord {
+    pub async fn create(pool: &PgPool, input: &CreateBackupRecord) -> AppResult<BackupRecord> {
+        let row = sqlx::query_as::<_, BackupRecord>(
+            r#"INSERT INTO backup_history (config_id, config_name, storage_id, file_path, status, started_at)
+               VALUES ($1, $2, $3, $4, 'running', NOW())
+               RETURNING *"#,
+        )
+        .bind(input.config_id)
+        .bind(&input.config_name)
+        .bind(input.storage_id)
+        .bind(&input.file_path)
+        .fetch_one(pool)
+        .await?;
+
+        Ok(row)
+    }
+
+    pub async fn find_by_id(pool: &PgPool, id: Uuid) -> AppResult<BackupRecord> {
+        sqlx::query_as::<_, BackupRecord>("SELECT * FROM backup_history WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Backup record {} not found", id)))
+    }
+
+    pub async fn list(pool: &PgPool, config_id: Option<Uuid>, limit: i64, offset: i64) -> AppResult<Vec<BackupRecord>> {
+        let rows = if let Some(cid) = config_id {
+            sqlx::query_as::<_, BackupRecord>(
+                "SELECT * FROM backup_history WHERE config_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+            )
+            .bind(cid)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, BackupRecord>(
+                "SELECT * FROM backup_history ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+            )
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?
+        };
+        Ok(rows)
+    }
+
+    pub async fn count(pool: &PgPool, config_id: Option<Uuid>) -> AppResult<i64> {
+        let (count,): (i64,) = if let Some(cid) = config_id {
+            sqlx::query_as("SELECT COUNT(*) FROM backup_history WHERE config_id = $1")
+                .bind(cid)
+                .fetch_one(pool)
+                .await?
+        } else {
+            sqlx::query_as("SELECT COUNT(*) FROM backup_history")
+                .fetch_one(pool)
+                .await?
+        };
+        Ok(count)
+    }
+
+    pub async fn mark_completed(
+        pool: &PgPool,
+        id: Uuid,
+        file_size_bytes: i64,
+        file_path: &str,
+    ) -> AppResult<BackupRecord> {
+        let row = sqlx::query_as::<_, BackupRecord>(
+            r#"UPDATE backup_history
+               SET status = 'completed', completed_at = NOW(),
+                   file_size_bytes = $1, file_path = $2
+               WHERE id = $3
+               RETURNING *"#,
+        )
+        .bind(file_size_bytes)
+        .bind(file_path)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Backup record {} not found", id)))?;
+
+        Ok(row)
+    }
+
+    pub async fn mark_failed(
+        pool: &PgPool,
+        id: Uuid,
+        error_message: &str,
+    ) -> AppResult<BackupRecord> {
+        let row = sqlx::query_as::<_, BackupRecord>(
+            r#"UPDATE backup_history
+               SET status = 'failed', error_message = $1, completed_at = NOW()
+               WHERE id = $2
+               RETURNING *"#,
+        )
+        .bind(error_message)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Backup record {} not found", id)))?;
+
+        Ok(row)
+    }
+
+    pub async fn delete(pool: &PgPool, id: Uuid) -> AppResult<()> {
+        let result = sqlx::query("DELETE FROM backup_history WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!("Backup record {} not found", id)));
+        }
+        Ok(())
+    }
+
+    /// Find the most recent backup (any status) for a config.
+    /// Used by the scheduler to determine if a backup is due.
+    /// Includes failed records so the baseline advances on failure,
+    /// preventing retry storms (failed backups wait for the next cron slot).
+    pub async fn find_latest_by_config(
+        pool: &PgPool,
+        config_id: Uuid,
+    ) -> AppResult<Option<BackupRecord>> {
+        let row = sqlx::query_as::<_, BackupRecord>(
+            r#"SELECT * FROM backup_history
+               WHERE config_id = $1 AND status IN ('completed', 'running', 'failed')
+               ORDER BY created_at DESC
+               LIMIT 1"#,
+        )
+        .bind(config_id)
+        .fetch_optional(pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Check if there is a running backup for the given config.
+    /// Mark stale "running" backups as failed for a given config.
+    /// Records whose started_at is older than `threshold_secs` seconds are
+    /// considered stale (e.g. the process crashed mid-backup).
+    pub async fn mark_stale_running_as_failed(
+        pool: &PgPool,
+        config_id: Uuid,
+        threshold_secs: i64,
+    ) -> AppResult<u64> {
+        let result = sqlx::query(
+            r#"UPDATE backup_history
+               SET status = 'failed',
+                   error_message = 'Marked as failed: exceeded maximum running time (stale)',
+                   completed_at = NOW()
+               WHERE config_id = $1 AND status = 'running'
+                 AND started_at IS NOT NULL
+                 AND started_at < NOW() - make_interval(secs => $2)"#,
+        )
+        .bind(config_id)
+        .bind(threshold_secs as f64)
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn has_running_by_config(pool: &PgPool, config_id: Uuid) -> AppResult<bool> {
+        let row: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM backup_history WHERE config_id = $1 AND status = 'running'",
+        )
+        .bind(config_id)
+        .fetch_one(pool)
+        .await?;
+        Ok(row.0 > 0)
+    }
+
+    /// Returns all backup records for a config (for cleanup on config deletion).
+    pub async fn list_all_by_config(
+        pool: &PgPool,
+        config_id: Uuid,
+    ) -> AppResult<Vec<BackupRecord>> {
+        let rows = sqlx::query_as::<_, BackupRecord>(
+            "SELECT * FROM backup_history WHERE config_id = $1",
+        )
+        .bind(config_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Delete all backup records for a config (after files have been cleaned up).
+    pub async fn delete_all_by_config(pool: &PgPool, config_id: Uuid) -> AppResult<u64> {
+        let result = sqlx::query("DELETE FROM backup_history WHERE config_id = $1")
+            .bind(config_id)
+            .execute(pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Returns completed backups for a config beyond the retention count,
+    /// ordered oldest first (candidates for deletion).
+    pub async fn list_oldest_completed_by_config(
+        pool: &PgPool,
+        config_id: Uuid,
+        retention_count: i32,
+    ) -> AppResult<Vec<BackupRecord>> {
+        let rows = sqlx::query_as::<_, BackupRecord>(
+            r#"SELECT * FROM backup_history
+               WHERE config_id = $1 AND status = 'completed'
+               ORDER BY created_at DESC
+               OFFSET $2"#,
+        )
+        .bind(config_id)
+        .bind(retention_count as i64)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 pub fn is_unique_violation(e: &sqlx::Error) -> bool {
@@ -4085,5 +4439,279 @@ mod tests {
 
         // Cleanup
         SharedLink::delete(&pool, link.id).await.unwrap();
+    }
+
+    // ─── BackupConfig tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_backup_config_serialization() {
+        let now = Utc::now();
+        let config = BackupConfig {
+            id: Uuid::new_v4(),
+            name: "Nightly Backup".to_string(),
+            storage_id: Uuid::new_v4(),
+            storage_path: "backups".to_string(),
+            schedule_cron: "0 2 * * *".to_string(),
+            retention_count: 7,
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["name"], "Nightly Backup");
+        assert_eq!(json["storage_path"], "backups");
+        assert_eq!(json["schedule_cron"], "0 2 * * *");
+        assert_eq!(json["retention_count"], 7);
+        assert_eq!(json["enabled"], true);
+    }
+
+    // ─── BackupRecord tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_backup_record_serialization() {
+        let now = Utc::now();
+        let record = BackupRecord {
+            id: Uuid::new_v4(),
+            config_id: Some(Uuid::new_v4()),
+            config_name: Some("Daily Backup".to_string()),
+            storage_id: Uuid::new_v4(),
+            file_path: "backups/backup_20260323_020000.sql.gz".to_string(),
+            file_size_bytes: 1024 * 1024 * 50,
+            status: "completed".to_string(),
+            error_message: None,
+            started_at: Some(now),
+            completed_at: Some(now),
+            created_at: now,
+        };
+
+        let json = serde_json::to_value(&record).unwrap();
+        assert_eq!(json["status"], "completed");
+        assert_eq!(json["file_size_bytes"], 1024 * 1024 * 50);
+        assert!(json["error_message"].is_null());
+    }
+
+    #[test]
+    fn test_backup_record_failed_serialization() {
+        let now = Utc::now();
+        let record = BackupRecord {
+            id: Uuid::new_v4(),
+            config_id: Some(Uuid::new_v4()),
+            config_name: Some("Daily Backup".to_string()),
+            storage_id: Uuid::new_v4(),
+            file_path: "".to_string(),
+            file_size_bytes: 0,
+            status: "failed".to_string(),
+            error_message: Some("pg_dump failed: connection refused".to_string()),
+            started_at: Some(now),
+            completed_at: Some(now),
+            created_at: now,
+        };
+
+        let json = serde_json::to_value(&record).unwrap();
+        assert_eq!(json["status"], "failed");
+        assert_eq!(json["error_message"], "pg_dump failed: connection refused");
+        assert_eq!(json["file_size_bytes"], 0);
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_backup_config_crud() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        // Need a storage to reference
+        let storage = Storage::create(
+            &pool,
+            &CreateStorage {
+                name: format!("backup-test-storage-{}", Uuid::new_v4()),
+                storage_type: "local".to_string(),
+                config: serde_json::json!({"root_path": "/tmp/backup-test"}),
+                is_hot: Some(true),
+                project_id: None,
+                enabled: None,
+                supports_direct_links: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Create
+        let input = CreateBackupConfig {
+            name: "Test Backup Config".to_string(),
+            storage_id: storage.id,
+            storage_path: Some("test-backups".to_string()),
+            schedule_cron: "0 2 * * *".to_string(),
+            retention_count: Some(5),
+            enabled: Some(true),
+        };
+        let config = BackupConfig::create(&pool, &input).await.unwrap();
+        assert_eq!(config.name, "Test Backup Config");
+        assert_eq!(config.storage_path, "test-backups");
+        assert_eq!(config.retention_count, 5);
+        assert!(config.enabled);
+
+        // Find by id
+        let found = BackupConfig::find_by_id(&pool, config.id).await.unwrap();
+        assert_eq!(found.id, config.id);
+
+        // List
+        let all = BackupConfig::list(&pool).await.unwrap();
+        assert!(all.iter().any(|c| c.id == config.id));
+
+        // List enabled
+        let enabled = BackupConfig::list_enabled(&pool).await.unwrap();
+        assert!(enabled.iter().any(|c| c.id == config.id));
+
+        // Update
+        let update_input = UpdateBackupConfig {
+            name: Some("Updated Config".to_string()),
+            storage_id: None,
+            storage_path: None,
+            schedule_cron: None,
+            retention_count: Some(10),
+            enabled: Some(false),
+        };
+        let updated = BackupConfig::update(&pool, config.id, &update_input).await.unwrap();
+        assert_eq!(updated.name, "Updated Config");
+        assert_eq!(updated.retention_count, 10);
+        assert!(!updated.enabled);
+
+        // Should no longer appear in list_enabled
+        let enabled = BackupConfig::list_enabled(&pool).await.unwrap();
+        assert!(!enabled.iter().any(|c| c.id == config.id));
+
+        // Cleanup
+        BackupConfig::delete(&pool, config.id).await.unwrap();
+        let result = BackupConfig::find_by_id(&pool, config.id).await;
+        assert!(result.is_err());
+
+        sqlx::query("DELETE FROM storages WHERE id = $1")
+            .bind(storage.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_backup_record_crud() {
+        let url = std::env::var("DATABASE_URL").expect("DATABASE_URL required for DB tests");
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        crate::db::run_migrations(&pool).await.unwrap();
+
+        // Need a storage
+        let storage = Storage::create(
+            &pool,
+            &CreateStorage {
+                name: format!("backup-rec-test-{}", Uuid::new_v4()),
+                storage_type: "local".to_string(),
+                config: serde_json::json!({"root_path": "/tmp/backup-rec-test"}),
+                is_hot: Some(true),
+                project_id: None,
+                enabled: None,
+                supports_direct_links: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Create a config for FK
+        let config = BackupConfig::create(
+            &pool,
+            &CreateBackupConfig {
+                name: "Record Test Config".to_string(),
+                storage_id: storage.id,
+                storage_path: None,
+                schedule_cron: "0 3 * * *".to_string(),
+                retention_count: Some(3),
+                enabled: Some(true),
+            },
+        )
+        .await
+        .unwrap();
+
+        // Create record
+        let rec_input = CreateBackupRecord {
+            config_id: Some(config.id),
+            config_name: Some("test-backup-record-crud".to_string()),
+            storage_id: storage.id,
+            file_path: "backups/backup_20260323_030000.sql.gz".to_string(),
+        };
+        let record = BackupRecord::create(&pool, &rec_input).await.unwrap();
+        assert_eq!(record.status, "running");
+        assert!(record.started_at.is_some());
+        assert!(record.completed_at.is_none());
+
+        // Find by id
+        let found = BackupRecord::find_by_id(&pool, record.id).await.unwrap();
+        assert_eq!(found.id, record.id);
+
+        // List all
+        let all = BackupRecord::list(&pool, None, 50, 0).await.unwrap();
+        assert!(all.iter().any(|r| r.id == record.id));
+
+        // List by config_id
+        let by_config = BackupRecord::list(&pool, Some(config.id), 50, 0).await.unwrap();
+        assert!(by_config.iter().any(|r| r.id == record.id));
+
+        // Mark as completed
+        let updated = BackupRecord::mark_completed(
+            &pool,
+            record.id,
+            1024 * 1024,
+            "backups/backup_20260323_030000.sql.gz",
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.status, "completed");
+        assert!(updated.completed_at.is_some());
+        assert_eq!(updated.file_size_bytes, 1024 * 1024);
+
+        // Find latest by config
+        let latest = BackupRecord::find_latest_by_config(&pool, config.id).await.unwrap();
+        assert!(latest.is_some());
+        assert_eq!(latest.unwrap().id, record.id);
+
+        // Test list_oldest_completed_by_config with retention
+        let oldest = BackupRecord::list_oldest_completed_by_config(&pool, config.id, 0)
+            .await
+            .unwrap();
+        assert_eq!(oldest.len(), 1);
+
+        let oldest_within = BackupRecord::list_oldest_completed_by_config(&pool, config.id, 5)
+            .await
+            .unwrap();
+        assert!(oldest_within.is_empty());
+
+        // Test mark_failed
+        let rec2_input = CreateBackupRecord {
+            config_id: Some(config.id),
+            config_name: Some("test-backup-record-crud".to_string()),
+            storage_id: storage.id,
+            file_path: "".to_string(),
+        };
+        let rec2 = BackupRecord::create(&pool, &rec2_input).await.unwrap();
+        let failed = BackupRecord::mark_failed(
+            &pool,
+            rec2.id,
+            "pg_dump error",
+        )
+        .await
+        .unwrap();
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.error_message.as_deref(), Some("pg_dump error"));
+        assert!(failed.completed_at.is_none()); // completed_at should NOT be set for failures
+
+        // Cleanup
+        BackupRecord::delete(&pool, record.id).await.unwrap();
+        BackupRecord::delete(&pool, rec2.id).await.unwrap();
+        BackupConfig::delete(&pool, config.id).await.unwrap();
+        sqlx::query("DELETE FROM storages WHERE id = $1")
+            .bind(storage.id)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

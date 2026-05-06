@@ -12,6 +12,8 @@ pub struct AppConfig {
     pub sync: SyncConfig,
     #[serde(default = "default_auth")]
     pub auth: AuthConfig,
+    #[serde(default = "default_backup")]
+    pub backup: BackupWorkerConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -64,6 +66,16 @@ pub struct SyncConfig {
     pub tier_scan_interval_secs: u64,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BackupWorkerConfig {
+    #[serde(default = "default_backup_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_backup_check_interval_secs")]
+    pub check_interval_secs: u64,
+    #[serde(default = "default_backup_temp_dir")]
+    pub temp_dir: String,
+}
+
 fn default_server() -> ServerConfig {
     ServerConfig {
         host: default_host(),
@@ -102,6 +114,26 @@ fn default_auth() -> AuthConfig {
         default_admin_username: default_admin_username(),
         default_admin_password: default_admin_password(),
     }
+}
+
+fn default_backup() -> BackupWorkerConfig {
+    BackupWorkerConfig {
+        enabled: default_backup_enabled(),
+        check_interval_secs: default_backup_check_interval_secs(),
+        temp_dir: default_backup_temp_dir(),
+    }
+}
+
+fn default_backup_enabled() -> bool {
+    true
+}
+
+fn default_backup_check_interval_secs() -> u64 {
+    60
+}
+
+fn default_backup_temp_dir() -> String {
+    String::new()
 }
 
 fn default_jwt_secret() -> String {
@@ -216,6 +248,8 @@ mod tests {
         assert_eq!(cfg.sync.poll_interval_secs, 5);
         assert_eq!(cfg.sync.tier_scan_interval_secs, 300);
         assert_eq!(cfg.storage.local_temp_path, "./data/temp");
+        assert!(cfg.backup.enabled);
+        assert_eq!(cfg.backup.check_interval_secs, 60);
     }
 
     #[test]
@@ -269,5 +303,41 @@ num_workers = 8
         // Clean up
         std::env::remove_var("APP_SERVER__PORT");
         std::env::remove_var("APP_SERVER__HOST");
+    }
+
+    #[test]
+    fn test_backup_config_env_overrides() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        std::env::set_var("APP_BACKUP__ENABLED", "false");
+        std::env::set_var("APP_BACKUP__CHECK_INTERVAL_SECS", "120");
+
+        let cfg = AppConfig::load_from("nonexistent_path").unwrap();
+        assert!(!cfg.backup.enabled);
+        assert_eq!(cfg.backup.check_interval_secs, 120);
+
+        // Clean up
+        std::env::remove_var("APP_BACKUP__ENABLED");
+        std::env::remove_var("APP_BACKUP__CHECK_INTERVAL_SECS");
+    }
+
+    #[test]
+    fn test_backup_config_from_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("backup_config.toml");
+        let mut f = std::fs::File::create(&config_path).unwrap();
+        writeln!(
+            f,
+            r#"
+[backup]
+enabled = false
+check_interval_secs = 300
+"#
+        )
+        .unwrap();
+
+        let path_no_ext = config_path.to_str().unwrap().trim_end_matches(".toml");
+        let cfg = AppConfig::load_from(path_no_ext).unwrap();
+        assert!(!cfg.backup.enabled);
+        assert_eq!(cfg.backup.check_interval_secs, 300);
     }
 }

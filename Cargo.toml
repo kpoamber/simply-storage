@@ -35,12 +35,15 @@ suppaftp = { version = "8", features = ["tokio"] }
 russh = "0.57"
 russh-sftp = "2"
 pavao = { version = "0.2", optional = true }
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["rt"] }
 flate2 = "1"
 tar = "0.4"
 jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
 argon2 = "0.5"
 rand = "0.8"
+cron = "0.12"
+tempfile = "3"
+url = "2"
 
 [features]
 default = []
