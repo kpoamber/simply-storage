@@ -69,8 +69,8 @@ if [[ ${BASEBACKUP_COUNT} -gt 2 ]]; then
         done
 fi
 
-# Delete WAL files older than 7 days
-find "${WAL_DIR}" -maxdepth 1 -type f -name "0000*" -mtime +7 -delete 2>/dev/null || true
+# Delete WAL files older than 1 day
+find "${WAL_DIR}" -maxdepth 1 -type f -name "0000*" -mtime +1 -delete 2>/dev/null || true
 WAL_COUNT="$(find "${WAL_DIR}" -maxdepth 1 -type f -name "0000*" 2>/dev/null | wc -l)"
 echo "  WAL files remaining: ${WAL_COUNT}"
 
