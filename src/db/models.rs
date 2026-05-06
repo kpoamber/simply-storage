@@ -688,12 +688,67 @@ pub struct SearchResult {
     pub per_page: i64,
 }
 
+/// Non-metadata search filters (file name substring + upload date range).
+/// Applied as conjunctive constraints alongside the metadata filter tree.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct SearchExtras {
+    pub name_contains: Option<String>,
+    pub created_after: Option<DateTime<Utc>>,
+    pub created_before: Option<DateTime<Utc>>,
+}
+
+impl SearchExtras {
+    /// Build a SQL fragment of the form ` AND col1 ... AND col2 ...` (leading space + AND),
+    /// or an empty string when no extras are set. Bind order matches param order:
+    /// name_contains (as `%x%`), then created_after, then created_before.
+    fn clause(&self, start_param: usize) -> (String, usize) {
+        let mut clauses = Vec::new();
+        let mut idx = start_param;
+        if self.name_contains.is_some() {
+            clauses.push(format!("fr.original_name ILIKE ${}", idx));
+            idx += 1;
+        }
+        if self.created_after.is_some() {
+            clauses.push(format!("fr.created_at >= ${}", idx));
+            idx += 1;
+        }
+        if self.created_before.is_some() {
+            clauses.push(format!("fr.created_at <= ${}", idx));
+            idx += 1;
+        }
+        let sql = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!(" AND {}", clauses.join(" AND "))
+        };
+        (sql, idx)
+    }
+
+    fn bind(&self, args: &mut sqlx::postgres::PgArguments) -> AppResult<()> {
+        use sqlx::Arguments;
+        if let Some(name) = &self.name_contains {
+            args.add(format!("%{}%", name))
+                .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        }
+        if let Some(after) = self.created_after {
+            args.add(after)
+                .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        }
+        if let Some(before) = self.created_before {
+            args.add(before)
+                .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        }
+        Ok(())
+    }
+}
+
 impl FileReference {
     /// Search file references by metadata filters with pagination, scoped to a project.
     pub async fn search_by_metadata(
         pool: &PgPool,
         project_id: Uuid,
         filters: Option<&MetadataFilter>,
+        extras: &SearchExtras,
         page: i64,
         per_page: i64,
     ) -> AppResult<SearchResult> {
@@ -709,17 +764,19 @@ impl FileReference {
         };
 
         let jsonb_params = compiler.into_params();
-        let limit_idx = jsonb_params.len() + 2;
+        let extras_start = jsonb_params.len() + 2;
+        let (extras_clause, after_extras_idx) = extras.clause(extras_start);
+        let limit_idx = after_extras_idx;
         let offset_idx = limit_idx + 1;
 
         let count_sql = format!(
-            "SELECT COUNT(*)::bigint FROM file_references WHERE project_id = $1 AND {}",
-            filter_clause
+            "SELECT COUNT(*)::bigint FROM file_references fr WHERE fr.project_id = $1 AND {}{}",
+            filter_clause, extras_clause
         );
 
         let data_sql = format!(
-            "SELECT * FROM file_references WHERE project_id = $1 AND {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
-            filter_clause, limit_idx, offset_idx
+            "SELECT fr.* FROM file_references fr WHERE fr.project_id = $1 AND {}{} ORDER BY fr.created_at DESC LIMIT ${} OFFSET ${}",
+            filter_clause, extras_clause, limit_idx, offset_idx
         );
 
         // Build count query args
@@ -729,6 +786,7 @@ impl FileReference {
         for param in &jsonb_params {
             count_args.add(param).map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
         }
+        extras.bind(&mut count_args)?;
 
         let count_row: (i64,) = sqlx::query_as_with(&count_sql, count_args)
             .fetch_one(pool)
@@ -740,6 +798,7 @@ impl FileReference {
         for param in &jsonb_params {
             data_args.add(param).map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
         }
+        extras.bind(&mut data_args)?;
         data_args.add(limit).map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
         data_args.add(offset).map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
 
@@ -755,12 +814,83 @@ impl FileReference {
         })
     }
 
+    /// Return ALL file references matching the filter (no pagination), with total size.
+    /// Used for bulk operations (download archive, etc) that need a complete result set.
+    /// Caller MUST enforce row/byte limits before fetching files.
+    pub async fn search_all_for_filter(
+        pool: &PgPool,
+        project_id: Uuid,
+        filters: Option<&MetadataFilter>,
+        extras: &SearchExtras,
+    ) -> AppResult<(Vec<FileReference>, i64)> {
+        let mut compiler = MetadataFilterCompiler::new(2);
+        let filter_clause = match filters {
+            Some(f) => compiler.compile(f)?,
+            None => "TRUE".to_string(),
+        };
+        let jsonb_params = compiler.into_params();
+        let (extras_clause, _) = extras.clause(jsonb_params.len() + 2);
+
+        let data_sql = format!(
+            "SELECT fr.* FROM file_references fr WHERE fr.project_id = $1 AND {}{} ORDER BY fr.created_at DESC",
+            filter_clause, extras_clause
+        );
+        let size_sql = format!(
+            "SELECT COALESCE(SUM(f.size), 0)::bigint
+               FROM file_references fr JOIN files f ON f.id = fr.file_id
+              WHERE fr.project_id = $1 AND {}{}",
+            filter_clause, extras_clause
+        );
+
+        use sqlx::Arguments;
+        let mut data_args = sqlx::postgres::PgArguments::default();
+        data_args.add(project_id).map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        for param in &jsonb_params {
+            data_args.add(param).map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        }
+        extras.bind(&mut data_args)?;
+        let rows: Vec<FileReference> = sqlx::query_as_with(&data_sql, data_args)
+            .fetch_all(pool)
+            .await?;
+
+        let mut size_args = sqlx::postgres::PgArguments::default();
+        size_args.add(project_id).map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        for param in &jsonb_params {
+            size_args.add(param).map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
+        }
+        extras.bind(&mut size_args)?;
+        let size_row: (i64,) = sqlx::query_as_with(&size_sql, size_args)
+            .fetch_one(pool)
+            .await?;
+
+        Ok((rows, size_row.0))
+    }
+
+    /// Distinct top-level metadata keys appearing in any file reference within the project.
+    /// Used to populate filter-key autocomplete on the frontend.
+    pub async fn distinct_metadata_keys(
+        pool: &PgPool,
+        project_id: Uuid,
+    ) -> AppResult<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            r#"SELECT DISTINCT k
+               FROM file_references, jsonb_object_keys(metadata) AS k
+               WHERE project_id = $1
+               ORDER BY k ASC"#,
+        )
+        .bind(project_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
     /// Aggregate summary for file references matching metadata filters, scoped to a project.
     /// Joins with files table to get size data, groups by date for timeline.
     pub async fn search_summary(
         pool: &PgPool,
         project_id: Uuid,
         filters: Option<&MetadataFilter>,
+        extras: &SearchExtras,
     ) -> AppResult<SearchSummary> {
         // $1 = project_id
         let mut compiler = MetadataFilterCompiler::new(2);
@@ -771,6 +901,7 @@ impl FileReference {
         };
 
         let jsonb_params = compiler.into_params();
+        let (extras_clause, _) = extras.clause(jsonb_params.len() + 2);
 
         // Summary query: total files, total size, earliest and latest upload
         let summary_sql = format!(
@@ -781,8 +912,8 @@ impl FileReference {
                 MAX(fr.created_at) AS latest_upload
             FROM file_references fr
             JOIN files f ON f.id = fr.file_id
-            WHERE fr.project_id = $1 AND {}"#,
-            filter_clause
+            WHERE fr.project_id = $1 AND {}{}"#,
+            filter_clause, extras_clause
         );
 
         use sqlx::Arguments;
@@ -795,6 +926,7 @@ impl FileReference {
                 .add(param)
                 .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
         }
+        extras.bind(&mut summary_args)?;
 
         let summary_row: (i64, i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>) =
             sqlx::query_as_with(&summary_sql, summary_args)
@@ -809,10 +941,10 @@ impl FileReference {
                 COALESCE(SUM(f.size), 0)::bigint AS size
             FROM file_references fr
             JOIN files f ON f.id = fr.file_id
-            WHERE fr.project_id = $1 AND {}
+            WHERE fr.project_id = $1 AND {}{}
             GROUP BY DATE(fr.created_at)
             ORDER BY DATE(fr.created_at) ASC"#,
-            filter_clause
+            filter_clause, extras_clause
         );
 
         let mut timeline_args = sqlx::postgres::PgArguments::default();
@@ -824,6 +956,7 @@ impl FileReference {
                 .add(param)
                 .map_err(|e| AppError::Internal(format!("bind error: {}", e)))?;
         }
+        extras.bind(&mut timeline_args)?;
 
         let timeline_rows: Vec<TimelineEntry> =
             sqlx::query_as_with(&timeline_sql, timeline_args)

@@ -210,6 +210,9 @@ export interface SearchRequest {
   filters?: MetadataFilterNode;
   page?: number;
   per_page?: number;
+  name_contains?: string;
+  created_after?: string;
+  created_before?: string;
 }
 
 export interface SearchResult {

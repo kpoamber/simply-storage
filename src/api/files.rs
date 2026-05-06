@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::config::AppConfig;
 use crate::db::models::{
     BulkDeleteFilters, CreateSyncTask, File, FileLocation, FileReference, MetadataFilter, Project,
-    Storage, SyncTask, UserProject,
+    SearchExtras, Storage, SyncTask, UserProject,
 };
 use crate::error::AppError;
 use crate::services::{FileService, TierService};
@@ -53,6 +53,82 @@ pub struct FileReferenceWithSync {
     pub synced_storages: i64,
     pub total_storages: i64,
     pub sync_details: Vec<StorageSyncDetail>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EnrichedSearchResult {
+    pub results: Vec<FileReferenceWithSync>,
+    pub total: i64,
+    pub page: i64,
+    pub per_page: i64,
+}
+
+/// Enrich a list of FileReferences with file size and per-storage sync details
+/// scoped to the project's storages. Performs N+1 queries — acceptable for paginated
+/// results (≤100 per page) but not for unbounded lists.
+async fn enrich_file_references(
+    pool: &PgPool,
+    project_id: Uuid,
+    refs: Vec<FileReference>,
+) -> Result<Vec<FileReferenceWithSync>, AppError> {
+    let project_storages = Storage::list_for_project(pool, project_id).await?;
+    let total_storages = project_storages.len() as i64;
+
+    let mut result = Vec::with_capacity(refs.len());
+    for file_ref in refs {
+        let file_size = File::find_by_id(pool, file_ref.file_id)
+            .await
+            .map(|f| f.size)
+            .unwrap_or(0);
+
+        let all_locations = FileLocation::find_all_for_file(pool, file_ref.file_id)
+            .await
+            .unwrap_or_default();
+
+        let mut sync_details = Vec::new();
+        let mut synced_count = 0i64;
+        for ps in &project_storages {
+            let loc = all_locations.iter().find(|l| l.storage_id == ps.id);
+            let (status, synced_at, storage_path) = match loc {
+                Some(l) => {
+                    if l.status == "synced" {
+                        synced_count += 1;
+                    }
+                    (l.status.clone(), l.synced_at, Some(l.storage_path.clone()))
+                }
+                None => ("not_synced".to_string(), None, None),
+            };
+            sync_details.push(StorageSyncDetail {
+                storage_id: ps.id,
+                storage_name: ps.name.clone(),
+                storage_type: ps.storage_type.clone(),
+                status,
+                storage_path,
+                supports_direct_links: ps.supports_direct_links,
+                synced_at,
+            });
+        }
+
+        let sync_status = if total_storages == 0 {
+            "no_storage".to_string()
+        } else if synced_count >= total_storages {
+            "synced".to_string()
+        } else if synced_count > 0 {
+            "partial".to_string()
+        } else {
+            "pending".to_string()
+        };
+
+        result.push(FileReferenceWithSync {
+            file_ref,
+            file_size,
+            sync_status,
+            synced_storages: synced_count,
+            total_storages,
+            sync_details,
+        });
+    }
+    Ok(result)
 }
 
 #[derive(Debug, Deserialize)]
@@ -291,68 +367,7 @@ async fn list_project_files(
         FileReference::list_for_project(pool.get_ref(), project_id, query.limit(), query.offset())
             .await?;
 
-    // Get project storages for sync detail enrichment
-    let project_storages = Storage::list_for_project(pool.get_ref(), project_id).await?;
-    let total_storages = project_storages.len() as i64;
-
-    // Enrich each file reference with sync status and per-storage details
-    let mut result = Vec::with_capacity(refs.len());
-    for file_ref in refs {
-        // Get file size
-        let file_size = File::find_by_id(pool.get_ref(), file_ref.file_id)
-            .await
-            .map(|f| f.size)
-            .unwrap_or(0);
-
-        // Get sync details per project storage
-        let all_locations = FileLocation::find_all_for_file(pool.get_ref(), file_ref.file_id)
-            .await
-            .unwrap_or_default();
-
-        let mut sync_details = Vec::new();
-        let mut synced_count = 0i64;
-        for ps in &project_storages {
-            let loc = all_locations.iter().find(|l| l.storage_id == ps.id);
-            let (status, synced_at, storage_path) = match loc {
-                Some(l) => {
-                    if l.status == "synced" {
-                        synced_count += 1;
-                    }
-                    (l.status.clone(), l.synced_at, Some(l.storage_path.clone()))
-                }
-                None => ("not_synced".to_string(), None, None),
-            };
-            sync_details.push(StorageSyncDetail {
-                storage_id: ps.id,
-                storage_name: ps.name.clone(),
-                storage_type: ps.storage_type.clone(),
-                status,
-                storage_path,
-                supports_direct_links: ps.supports_direct_links,
-                synced_at,
-            });
-        }
-
-        let sync_status = if total_storages == 0 {
-            "no_storage".to_string()
-        } else if synced_count >= total_storages {
-            "synced".to_string()
-        } else if synced_count > 0 {
-            "partial".to_string()
-        } else {
-            "pending".to_string()
-        };
-
-        result.push(FileReferenceWithSync {
-            file_ref,
-            file_size,
-            sync_status,
-            synced_storages: synced_count,
-            total_storages,
-            sync_details,
-        });
-    }
-
+    let result = enrich_file_references(pool.get_ref(), project_id, refs).await?;
     Ok(HttpResponse::Ok().json(result))
 }
 
@@ -507,6 +522,27 @@ pub struct MetadataSearchRequest {
     pub filters: Option<MetadataFilter>,
     pub page: Option<i64>,
     pub per_page: Option<i64>,
+    /// Optional substring match against the file's original name (case-insensitive).
+    pub name_contains: Option<String>,
+    /// Inclusive lower bound on FileReference.created_at.
+    pub created_after: Option<chrono::DateTime<chrono::Utc>>,
+    /// Inclusive upper bound on FileReference.created_at. Frontend converts a
+    /// "to" date picker value to end-of-day (23:59:59.999Z) before sending.
+    pub created_before: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl MetadataSearchRequest {
+    fn extras(&self) -> SearchExtras {
+        SearchExtras {
+            name_contains: self
+                .name_contains
+                .as_ref()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            created_after: self.created_after,
+            created_before: self.created_before,
+        }
+    }
 }
 
 async fn search_files(
@@ -529,16 +565,24 @@ async fn search_files(
     let page = body.page.unwrap_or(1);
     let per_page = body.per_page.unwrap_or(50);
 
-    let result = FileReference::search_by_metadata(
+    let raw = FileReference::search_by_metadata(
         pool.get_ref(),
         project_id,
         body.filters.as_ref(),
+        &body.extras(),
         page,
         per_page,
     )
     .await?;
 
-    Ok(HttpResponse::Ok().json(result))
+    let enriched = enrich_file_references(pool.get_ref(), project_id, raw.results).await?;
+
+    Ok(HttpResponse::Ok().json(EnrichedSearchResult {
+        results: enriched,
+        total: raw.total,
+        page: raw.page,
+        per_page: raw.per_page,
+    }))
 }
 
 // ─── Search summary ──────────────────────────────────────────────────────────
@@ -564,10 +608,156 @@ async fn search_summary(
         pool.get_ref(),
         project_id,
         body.filters.as_ref(),
+        &body.extras(),
     )
     .await?;
 
     Ok(HttpResponse::Ok().json(summary))
+}
+
+// ─── Metadata keys ─────────────────────────────────────────────────────────
+
+async fn list_metadata_keys(
+    user: AuthenticatedUser,
+    pool: web::Data<PgPool>,
+    path: web::Path<Uuid>,
+) -> Result<HttpResponse, AppError> {
+    let project_id = path.into_inner();
+
+    let project = Project::find_by_id(pool.get_ref(), project_id).await?;
+    if !user.is_admin() && !user.is_owner(project.owner_id) {
+        let is_member = UserProject::is_member(pool.get_ref(), user.user_id, project_id).await?;
+        if !is_member {
+            return Err(AppError::Forbidden("Access denied: not a member".to_string()));
+        }
+    }
+
+    let keys = FileReference::distinct_metadata_keys(pool.get_ref(), project_id).await?;
+    Ok(HttpResponse::Ok().json(keys))
+}
+
+// ─── Bulk download ──────────────────────────────────────────────────────────
+
+/// Hard limits for bulk archive download. Keep modest — the archive is built
+/// in-memory before streaming to the client.
+const BULK_DOWNLOAD_MAX_FILES: usize = 500;
+const BULK_DOWNLOAD_MAX_BYTES: i64 = 500 * 1024 * 1024;
+
+async fn bulk_download(
+    user: AuthenticatedUser,
+    pool: web::Data<PgPool>,
+    file_service: web::Data<FileService>,
+    path: web::Path<Uuid>,
+    body: web::Json<MetadataSearchRequest>,
+) -> Result<HttpResponse, AppError> {
+    let project_id = path.into_inner();
+
+    let project = Project::find_by_id(pool.get_ref(), project_id).await?;
+    if !user.is_admin() && !user.is_owner(project.owner_id) {
+        let is_member = UserProject::is_member(pool.get_ref(), user.user_id, project_id).await?;
+        if !is_member {
+            return Err(AppError::Forbidden("Access denied: not a member".to_string()));
+        }
+    }
+
+    let (refs, total_size) = FileReference::search_all_for_filter(
+        pool.get_ref(),
+        project_id,
+        body.filters.as_ref(),
+        &body.extras(),
+    )
+    .await?;
+
+    if refs.is_empty() {
+        return Err(AppError::BadRequest(
+            "No files match the provided filters".to_string(),
+        ));
+    }
+    if refs.len() > BULK_DOWNLOAD_MAX_FILES {
+        return Err(AppError::BadRequest(format!(
+            "Too many files in result set: {} (max {}). Refine your filters.",
+            refs.len(),
+            BULK_DOWNLOAD_MAX_FILES
+        )));
+    }
+    if total_size > BULK_DOWNLOAD_MAX_BYTES {
+        return Err(AppError::BadRequest(format!(
+            "Total size {} bytes exceeds limit {} bytes. Refine your filters.",
+            total_size, BULK_DOWNLOAD_MAX_BYTES
+        )));
+    }
+
+    // Build tar.gz archive in memory.
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    let buffer: Vec<u8> = Vec::with_capacity(total_size.max(0) as usize);
+    let gz = GzEncoder::new(buffer, Compression::default());
+    let mut tar_builder = tar::Builder::new(gz);
+
+    let mut name_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    for fref in &refs {
+        let download = match file_service.download_file(fref.file_id).await {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!(file_id = %fref.file_id, error = %e, "Skipping file in bulk download");
+                continue;
+            }
+        };
+
+        // De-duplicate names within the archive: foo.txt, foo (1).txt, ...
+        let entry_name = {
+            let base = fref.original_name.clone();
+            let count = name_counts.entry(base.clone()).or_insert(0);
+            *count += 1;
+            if *count == 1 {
+                base
+            } else {
+                let n = *count - 1;
+                match base.rsplit_once('.') {
+                    Some((stem, ext)) => format!("{} ({}).{}", stem, n, ext),
+                    None => format!("{} ({})", base, n),
+                }
+            }
+        };
+
+        let mut header = tar::Header::new_gnu();
+        header.set_size(download.data.len() as u64);
+        header.set_mode(0o644);
+        header.set_mtime(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        );
+        header.set_cksum();
+
+        tar_builder
+            .append_data(&mut header, &entry_name, download.data.as_ref())
+            .map_err(|e| AppError::Internal(format!("Archive write error: {}", e)))?;
+    }
+
+    let gz = tar_builder
+        .into_inner()
+        .map_err(|e| AppError::Internal(format!("Archive finalize error: {}", e)))?;
+    let mut archive_bytes = gz
+        .finish()
+        .map_err(|e| AppError::Internal(format!("Archive gzip error: {}", e)))?;
+    let _ = archive_bytes.flush();
+
+    let filename = format!(
+        "search-results-{}.tar.gz",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+
+    Ok(HttpResponse::Ok()
+        .content_type("application/gzip")
+        .insert_header((
+            actix_web::http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{}\"", filename),
+        ))
+        .body(archive_bytes))
 }
 
 // ─── Bulk delete ──────────────────────────────────────────────────────────────
@@ -704,6 +894,14 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     .service(
         web::resource("/projects/{project_id}/files/search/summary")
             .route(web::post().to(search_summary)),
+    )
+    .service(
+        web::resource("/projects/{project_id}/files/metadata-keys")
+            .route(web::get().to(list_metadata_keys)),
+    )
+    .service(
+        web::resource("/projects/{project_id}/files/bulk-download")
+            .route(web::post().to(bulk_download)),
     )
     .service(
         web::resource("/projects/{project_id}/files/bulk-delete/preview")
