@@ -121,10 +121,26 @@ export async function searchFiles(projectId: string, request: import('./types').
   );
 }
 
-export async function searchSummary(projectId: string, filters?: import('./types').MetadataFilterNode) {
+export async function searchSummary(projectId: string, request: import('./types').SearchRequest) {
   return apiClient.post<import('./types').SearchSummary>(
     `/projects/${projectId}/files/search/summary`,
-    filters ? { filters } : {},
+    request,
+  );
+}
+
+export async function getMetadataKeys(projectId: string) {
+  return apiClient.get<string[]>(`/projects/${projectId}/files/metadata-keys`);
+}
+
+export async function downloadFileBlob(fileId: string) {
+  return apiClient.get<Blob>(`/files/${fileId}/download`, { responseType: 'blob' });
+}
+
+export async function bulkDownload(projectId: string, request: import('./types').SearchRequest) {
+  return apiClient.post<Blob>(
+    `/projects/${projectId}/files/bulk-download`,
+    request,
+    { responseType: 'blob' },
   );
 }
 
