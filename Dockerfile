@@ -29,11 +29,17 @@ RUN cargo build --release
 # ─── Stage 3: Minimal runtime image ───────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
 
+# Install postgresql-client-16 from the PGDG apt repo. The default Debian
+# bookworm package is v15, which refuses to dump a v16 server (Citus 12.1).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    libssl3 \
-    postgresql-client \
+        ca-certificates curl gnupg libssl3 \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+        | gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+        > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update && apt-get install -y --no-install-recommends postgresql-client-16 \
+    && apt-get purge -y --auto-remove gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
