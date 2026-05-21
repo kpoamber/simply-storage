@@ -105,6 +105,25 @@ impl StorageBackend for LocalDiskBackend {
         Ok(())
     }
 
+    /// Move the assembled temp file into place without loading it into memory.
+    /// Tries an atomic rename first; falls back to a streaming copy when the temp
+    /// file lives on a different filesystem (EXDEV).
+    async fn upload_from_file(&self, path: &str, src: &Path, _size: u64) -> AppResult<()> {
+        let file_path = self.resolve_path(path)?;
+        if let Some(parent) = file_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        if tokio::fs::rename(src, &file_path).await.is_ok() {
+            return Ok(());
+        }
+        // Cross-device or other rename failure: copy then remove the source.
+        tokio::fs::copy(src, &file_path)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to copy temp file into storage: {}", e)))?;
+        let _ = tokio::fs::remove_file(src).await;
+        Ok(())
+    }
+
     async fn download(&self, path: &str) -> AppResult<Bytes> {
         let file_path = self.resolve_path(path)?;
         if !file_path.exists() {

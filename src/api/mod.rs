@@ -6,6 +6,7 @@ pub mod files;
 pub mod projects;
 pub mod shared_links;
 pub mod storages;
+pub mod uploads;
 
 use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
@@ -139,6 +140,7 @@ pub fn configure_api_routes(cfg: &mut web::ServiceConfig) {
             .configure(auth_routes::configure)
             .configure(shared_links::configure)
             .configure(backups::configure)
+            .configure(uploads::configure)
             .route("/system/stats", web::get().to(system_stats))
             .route("/sync-tasks", web::get().to(list_sync_tasks))
             .route("/system/config-export", web::get().to(config_export))

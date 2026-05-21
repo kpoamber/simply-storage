@@ -18,6 +18,11 @@ export function setAuthInterceptors(
   onRefreshToken = refresher;
 }
 
+/// Read the current access token (used by non-axios uploaders like tus).
+export function getCurrentAccessToken(): string | null {
+  return getAccessToken?.() ?? null;
+}
+
 // Request interceptor: add Authorization header
 apiClient.interceptors.request.use((config) => {
   const token = getAccessToken?.();

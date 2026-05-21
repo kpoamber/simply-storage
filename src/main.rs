@@ -3,7 +3,7 @@ use innovare_storage::config::AppConfig;
 use innovare_storage::db::models::{CreateUser, Node, RefreshToken, User};
 use innovare_storage::services::{AuthService, BackupService, BulkService, FileService, SharedLinkService, TierService};
 use innovare_storage::storage::StorageRegistry;
-use innovare_storage::workers::{BackupWorker, SyncWorker, TierWorker};
+use innovare_storage::workers::{BackupWorker, SyncWorker, TierWorker, UploadCleanupWorker};
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -151,6 +151,19 @@ async fn main() -> std::io::Result<()> {
         None
     };
 
+    // Spawn background worker that cleans up abandoned resumable upload sessions
+    let upload_cleanup_handle = UploadCleanupWorker::spawn(
+        pool.clone(),
+        &config.storage.local_temp_path,
+        cancel_token.clone(),
+        config.upload.cleanup_interval_secs,
+        config.upload.session_ttl_secs,
+    );
+    tracing::info!(
+        cleanup_interval_secs = config.upload.cleanup_interval_secs,
+        "Upload cleanup worker started"
+    );
+
     // Generate a unique node ID and register this instance
     let node_id = format!("node-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or("unknown"));
     let node_address = format!("{}:{}", config.server.host, config.server.port);
@@ -210,6 +223,7 @@ async fn main() -> std::io::Result<()> {
     if let Some(handle) = backup_handle {
         let _ = handle.await;
     }
+    let _ = upload_cleanup_handle.await;
     let _ = heartbeat_handle.await;
 
     // Wait for any in-flight ad-hoc tasks (e.g. manual backups)

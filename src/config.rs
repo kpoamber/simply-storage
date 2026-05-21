@@ -14,6 +14,8 @@ pub struct AppConfig {
     pub auth: AuthConfig,
     #[serde(default = "default_backup")]
     pub backup: BackupWorkerConfig,
+    #[serde(default = "default_upload")]
+    pub upload: UploadConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -76,6 +78,23 @@ pub struct BackupWorkerConfig {
     pub temp_dir: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UploadConfig {
+    /// Suggested chunk size for resumable uploads (bytes). Kept under the
+    /// Cloudflare 100 MB request-body limit with headroom.
+    #[serde(default = "default_upload_chunk_size")]
+    pub chunk_size: u64,
+    /// How long an in-progress upload session lives before cleanup (seconds).
+    #[serde(default = "default_upload_session_ttl_secs")]
+    pub session_ttl_secs: u64,
+    /// Maximum total size of a single resumable upload (bytes). 0 = unlimited.
+    #[serde(default = "default_upload_max_file_size")]
+    pub max_file_size: u64,
+    /// How often the cleanup worker sweeps expired sessions (seconds).
+    #[serde(default = "default_upload_cleanup_interval_secs")]
+    pub cleanup_interval_secs: u64,
+}
+
 fn default_server() -> ServerConfig {
     ServerConfig {
         host: default_host(),
@@ -122,6 +141,31 @@ fn default_backup() -> BackupWorkerConfig {
         check_interval_secs: default_backup_check_interval_secs(),
         temp_dir: default_backup_temp_dir(),
     }
+}
+
+fn default_upload() -> UploadConfig {
+    UploadConfig {
+        chunk_size: default_upload_chunk_size(),
+        session_ttl_secs: default_upload_session_ttl_secs(),
+        max_file_size: default_upload_max_file_size(),
+        cleanup_interval_secs: default_upload_cleanup_interval_secs(),
+    }
+}
+
+fn default_upload_chunk_size() -> u64 {
+    48 * 1024 * 1024 // 48 MB
+}
+
+fn default_upload_session_ttl_secs() -> u64 {
+    86_400 // 24h
+}
+
+fn default_upload_max_file_size() -> u64 {
+    0 // unlimited
+}
+
+fn default_upload_cleanup_interval_secs() -> u64 {
+    3_600 // hourly
 }
 
 fn default_backup_enabled() -> bool {

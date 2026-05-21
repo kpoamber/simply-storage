@@ -179,6 +179,101 @@ impl S3StorageBackend {
 
         Ok(())
     }
+
+    /// Multipart upload reading each part directly from a local file, so the
+    /// whole payload never needs to be resident in memory.
+    async fn multipart_upload_from_file(
+        &self,
+        key: &str,
+        src: &std::path::Path,
+        size: u64,
+    ) -> AppResult<()> {
+        let create_resp = self
+            .client
+            .create_multipart_upload()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("S3 create multipart upload failed: {}", e)))?;
+
+        let upload_id = create_resp
+            .upload_id()
+            .ok_or_else(|| AppError::Internal("S3 multipart upload: no upload_id returned".into()))?
+            .to_string();
+
+        let mut completed_parts = Vec::new();
+        let mut offset = 0u64;
+        let mut part_number = 1i32;
+
+        while offset < size {
+            let len = std::cmp::min(self.part_size, size - offset);
+            let stream = ByteStream::read_from()
+                .path(src)
+                .offset(offset)
+                .length(aws_sdk_s3::primitives::Length::Exact(len))
+                .build()
+                .await
+                .map_err(|e| AppError::Internal(format!("S3 read part from file failed: {}", e)))?;
+
+            let upload_result = self
+                .client
+                .upload_part()
+                .bucket(&self.bucket)
+                .key(key)
+                .upload_id(&upload_id)
+                .part_number(part_number)
+                .body(stream)
+                .content_length(i64::try_from(len).expect("S3 part size exceeds i64::MAX"))
+                .send()
+                .await;
+
+            match upload_result {
+                Ok(resp) => {
+                    let etag = resp.e_tag().unwrap_or_default().to_string();
+                    completed_parts.push(
+                        aws_sdk_s3::types::CompletedPart::builder()
+                            .part_number(part_number)
+                            .e_tag(etag)
+                            .build(),
+                    );
+                }
+                Err(e) => {
+                    let _ = self
+                        .client
+                        .abort_multipart_upload()
+                        .bucket(&self.bucket)
+                        .key(key)
+                        .upload_id(&upload_id)
+                        .send()
+                        .await;
+                    return Err(AppError::Internal(format!(
+                        "S3 upload part {} failed ({}B of {}B): {}",
+                        part_number, offset, size, e
+                    )));
+                }
+            }
+
+            offset += len;
+            part_number += 1;
+        }
+
+        let completed_upload = aws_sdk_s3::types::CompletedMultipartUpload::builder()
+            .set_parts(Some(completed_parts))
+            .build();
+
+        self.client
+            .complete_multipart_upload()
+            .bucket(&self.bucket)
+            .key(key)
+            .upload_id(&upload_id)
+            .multipart_upload(completed_upload)
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("S3 complete multipart upload failed: {}", e)))?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -224,6 +319,55 @@ impl StorageBackend for S3StorageBackend {
                         "S3 upload failed: {} (details: {:?})",
                         e, e
                     )))
+                }
+            }
+        }
+    }
+
+    /// Stream-upload from a local file. Avoids holding the payload in memory:
+    /// small objects stream via put_object(ByteStream::from_path), large objects
+    /// use multipart reading parts from disk.
+    async fn upload_from_file(&self, path: &str, src: &std::path::Path, size: u64) -> AppResult<()> {
+        let key = self.object_key(path);
+
+        if size >= self.multipart_threshold {
+            return self.multipart_upload_from_file(&key, src, size).await;
+        }
+
+        let stream = ByteStream::from_path(src)
+            .await
+            .map_err(|e| AppError::Internal(format!("S3 read file for upload failed: {}", e)))?;
+
+        let result = self
+            .client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .body(stream)
+            .send()
+            .await;
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let err_display = format!("{}", e);
+                let err_debug = format!("{:?}", e);
+                if err_display.contains("NoSuchBucket") || err_debug.contains("NoSuchBucket") {
+                    self.create_container(&self.bucket.clone()).await?;
+                    let stream = ByteStream::from_path(src).await.map_err(|e| {
+                        AppError::Internal(format!("S3 read file for upload failed: {}", e))
+                    })?;
+                    self.client
+                        .put_object()
+                        .bucket(&self.bucket)
+                        .key(&key)
+                        .body(stream)
+                        .send()
+                        .await
+                        .map_err(|e| AppError::Internal(format!("S3 upload failed: {}", e)))?;
+                    Ok(())
+                } else {
+                    Err(AppError::Internal(format!("S3 upload from file failed: {}", e)))
                 }
             }
         }

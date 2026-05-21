@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use bytes::Bytes;
+use std::path::Path;
 use std::time::Duration;
 
 use crate::error::{AppError, AppResult};
@@ -12,6 +13,20 @@ use crate::error::{AppError, AppResult};
 pub trait StorageBackend: Send + Sync {
     /// Upload data to the given path within this storage.
     async fn upload(&self, path: &str, data: Bytes) -> AppResult<()>;
+
+    /// Upload the contents of a local file to the given path within this storage.
+    ///
+    /// Used by resumable/chunked uploads, where the assembled payload lives in a
+    /// temp file and may be too large to hold in memory. The default reads the
+    /// whole file into memory and delegates to [`upload`] — backends where memory
+    /// matters (local disk rename, S3 multipart) override this with a streaming
+    /// implementation. `_size` is the known file length, a hint for multipart sizing.
+    async fn upload_from_file(&self, path: &str, src: &Path, _size: u64) -> AppResult<()> {
+        let data = tokio::fs::read(src)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to read temp file: {}", e)))?;
+        self.upload(path, Bytes::from(data)).await
+    }
 
     /// Download data from the given path within this storage.
     async fn download(&self, path: &str) -> AppResult<Bytes>;

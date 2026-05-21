@@ -49,6 +49,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuthInterceptors(() => accessToken, refreshToken);
   }, [accessToken, refreshToken]);
 
+  // Proactively refresh the access token well before its TTL (default 15 min).
+  // Without this, only the axios 401 interceptor refreshes — but long-running
+  // tus uploads bypass axios and would 401 mid-upload once the token expires.
+  useEffect(() => {
+    if (!accessToken) return;
+    const interval = setInterval(() => {
+      refreshToken();
+    }, 10 * 60 * 1000); // every 10 min
+    return () => clearInterval(interval);
+  }, [accessToken, refreshToken]);
+
   // Try to restore session on mount
   useEffect(() => {
     const restore = async () => {
