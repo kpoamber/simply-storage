@@ -7,6 +7,7 @@ import {
   ChevronLeft, ChevronRight, Search, Plus, X, Pencil, ChevronDown, ChevronUp, AlertTriangle, Check, Copy,
 } from 'lucide-react';
 import apiClient, { uploadFile } from '../api/client';
+import { uploadViaTus, LARGE_FILE_THRESHOLD } from '../utils/tusUpload';
 import { ProjectWithStats, FileReference, TempLinkResponse, TempLinkEntry, StorageBackend, ProjectStorageAssignment, AuthUser, MemberInfo, CreateSharedLinkRequest, SharedLink, formatBytes } from '../api/types';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -918,7 +919,17 @@ function FileUploadZone({ projectId }: { projectId: string }) {
     let successCount = 0;
     for (const file of Array.from(fileList)) {
       try {
-        await uploadFile(projectId, file, metadata);
+        if (file.size > LARGE_FILE_THRESHOLD) {
+          // Large files bypass the Cloudflare body limit via resumable chunks.
+          await uploadViaTus({
+            projectId,
+            file,
+            metadata,
+            onProgress: pct => setUploadStatus(`Uploading ${file.name}… ${pct}%`),
+          });
+        } else {
+          await uploadFile(projectId, file, metadata);
+        }
         successCount++;
       } catch {
         setUploadStatus(`Failed to upload ${file.name}`);

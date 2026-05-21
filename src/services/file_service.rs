@@ -105,24 +105,111 @@ impl FileService {
         if is_new {
             let backend = self.get_project_backend(&primary_storage, project_id).await?;
             backend.upload(&storage_path, data).await?;
-
-            // Create file_location for the primary storage
-            // Handle unique constraint gracefully for concurrent duplicate uploads
-            let create_location = CreateFileLocation {
-                file_id: file.id,
-                storage_id: primary_storage.id,
-                storage_path: storage_path.clone(),
-                status: "synced".to_string(),
-            };
-            match FileLocation::create(&self.pool, &create_location).await {
-                Ok(_) => {}
-                Err(AppError::Database(ref e)) if is_unique_violation(e) => {
-                    // Another concurrent upload already created this location - that's fine
-                }
-                Err(e) => return Err(e),
-            }
+            self.create_primary_location(file.id, primary_storage.id, &storage_path).await?;
         }
 
+        // 4 & 5. Link to project and schedule sync to remaining storages.
+        self.record_references_and_sync(
+            project_id,
+            &file,
+            is_new,
+            &primary_storage,
+            original_name,
+            metadata,
+            &storages,
+        )
+        .await
+    }
+
+    /// Finalize a resumable (chunked) upload from an assembled temp file.
+    ///
+    /// Mirrors [`upload_file`] but hashes and stores the payload by streaming the
+    /// temp file, never loading it fully into memory. The caller is responsible
+    /// for deleting the temp file afterwards.
+    pub async fn finalize_upload(
+        &self,
+        project_id: Uuid,
+        original_name: &str,
+        content_type: &str,
+        temp_path: &std::path::Path,
+        metadata: serde_json::Value,
+    ) -> AppResult<UploadResult> {
+        // 1. Streaming SHA-256 + size over the temp file
+        let (hash, size) = hash_file_sha256(temp_path).await?;
+
+        // 2. Deduplicate
+        let create_file = CreateFile {
+            hash_sha256: hash.clone(),
+            size,
+            content_type: content_type.to_string(),
+        };
+        let (file, is_new) = File::create_or_find(&self.pool, &create_file).await?;
+
+        // 3. Storages + primary + content-addressed path
+        let storages = Storage::list_for_project(&self.pool, project_id).await?;
+        if storages.is_empty() {
+            return Err(AppError::BadRequest(
+                "No enabled storages available for this project".to_string(),
+            ));
+        }
+        let primary_storage = self.find_primary_storage(&storages).await?;
+        let storage_path = content_addressed_path(&hash);
+
+        // 3b. Stream the temp file into primary storage for new files
+        if is_new {
+            let backend = self.get_project_backend(&primary_storage, project_id).await?;
+            backend
+                .upload_from_file(&storage_path, temp_path, size as u64)
+                .await?;
+            self.create_primary_location(file.id, primary_storage.id, &storage_path).await?;
+        }
+
+        // 4 & 5. Link to project and schedule sync
+        self.record_references_and_sync(
+            project_id,
+            &file,
+            is_new,
+            &primary_storage,
+            original_name,
+            metadata,
+            &storages,
+        )
+        .await
+    }
+
+    /// Create the primary file_location, tolerating concurrent duplicate uploads.
+    async fn create_primary_location(
+        &self,
+        file_id: Uuid,
+        storage_id: Uuid,
+        storage_path: &str,
+    ) -> AppResult<()> {
+        let create_location = CreateFileLocation {
+            file_id,
+            storage_id,
+            storage_path: storage_path.to_string(),
+            status: "synced".to_string(),
+        };
+        match FileLocation::create(&self.pool, &create_location).await {
+            Ok(_) => Ok(()),
+            Err(AppError::Database(ref e)) if is_unique_violation(e) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Create the project file_reference and schedule sync tasks to the remaining
+    /// storages. Shared by both the in-memory and chunked upload paths.
+    #[allow(clippy::too_many_arguments)]
+    async fn record_references_and_sync(
+        &self,
+        project_id: Uuid,
+        file: &File,
+        is_new: bool,
+        primary_storage: &Storage,
+        original_name: &str,
+        metadata: serde_json::Value,
+        storages: &[Storage],
+    ) -> AppResult<UploadResult> {
         // 4. Create file_reference linking file to project with original filename
         let create_ref = CreateFileReference {
             file_id: file.id,
@@ -133,12 +220,11 @@ impl FileService {
         let file_reference = FileReference::create(&self.pool, &create_ref).await?;
 
         // 5. Create sync_tasks for storages that don't have this file yet.
-        // For new files: all storages except primary need sync.
-        // For duplicates: check which project storages are missing the file.
         // Sync task creation failures are non-fatal — the file is already
         // safely stored on at least one storage and can be synced later.
         let mut sync_tasks_created = 0;
-        let existing_locations = FileLocation::find_all_for_file(&self.pool, file.id).await
+        let existing_locations = FileLocation::find_all_for_file(&self.pool, file.id)
+            .await
             .unwrap_or_default();
         let existing_storage_ids: std::collections::HashSet<Uuid> = existing_locations
             .iter()
@@ -146,8 +232,6 @@ impl FileService {
             .collect();
 
         // Find a source storage that has the file and is accessible (registered backend).
-        // For new files: primary storage. For duplicates: any synced location with a
-        // registered backend, preferring storages assigned to this project.
         let source_storage_id = if is_new {
             primary_storage.id
         } else {
@@ -170,20 +254,16 @@ impl FileService {
                     fallback_source = Some(loc.storage_id);
                 }
             }
-            best_source
-                .or(fallback_source)
-                .unwrap_or(primary_storage.id)
+            best_source.or(fallback_source).unwrap_or(primary_storage.id)
         };
 
-        for storage in &storages {
+        for storage in storages {
             if storage.id == source_storage_id {
                 continue;
             }
-            // Skip if file already exists on this storage
             if existing_storage_ids.contains(&storage.id) {
                 continue;
             }
-            // Only create sync task if the backend is registered
             if !self.registry.contains(&storage.id).await {
                 continue;
             }
@@ -207,7 +287,7 @@ impl FileService {
         }
 
         Ok(UploadResult {
-            file,
+            file: file.clone(),
             file_reference,
             is_duplicate: !is_new,
             sync_tasks_created,
@@ -500,6 +580,30 @@ pub fn compute_sha256(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hex::encode(hasher.finalize())
+}
+
+/// Compute the SHA-256 hex digest and byte length of a file by streaming it in
+/// 8 MB blocks, so arbitrarily large files never need to be resident in memory.
+pub async fn hash_file_sha256(path: &std::path::Path) -> AppResult<(String, i64)> {
+    use tokio::io::AsyncReadExt;
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to open temp file for hashing: {}", e)))?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 8 * 1024 * 1024];
+    let mut total: i64 = 0;
+    loop {
+        let n = file
+            .read(&mut buf)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to read temp file: {}", e)))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        total += n as i64;
+    }
+    Ok((hex::encode(hasher.finalize()), total))
 }
 
 /// Build a content-addressable storage path from a SHA-256 hex hash.

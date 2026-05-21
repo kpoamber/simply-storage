@@ -27,7 +27,7 @@ futures = "0.3"
 aws-sdk-s3 = "1"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-credential-types = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 base64 = "0.22"
 rsa = { version = "0.9", features = ["pem", "std"] }
 urlencoding = "2"
@@ -35,7 +35,7 @@ suppaftp = { version = "8", features = ["tokio"] }
 russh = "0.57"
 russh-sftp = "2"
 pavao = { version = "0.2", optional = true }
-tokio-util = { version = "0.7", features = ["rt"] }
+tokio-util = { version = "0.7", features = ["rt", "io"] }
 flate2 = "1"
 tar = "0.4"
 jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }

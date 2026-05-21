@@ -187,7 +187,7 @@ async fn check_file_access(
 }
 
 /// Check that the user has write access to a project (admin, owner, or writer member).
-async fn require_project_write_access(
+pub(crate) async fn require_project_write_access(
     pool: &PgPool,
     user: &AuthenticatedUser,
     project: &Project,
@@ -240,7 +240,7 @@ async fn check_file_write_access(
 
 /// Validate that metadata is a flat JSON object: keys are strings, values are strings/numbers/booleans.
 /// Rejects nested objects and arrays.
-fn validate_flat_metadata(value: &serde_json::Value) -> Result<(), AppError> {
+pub(crate) fn validate_flat_metadata(value: &serde_json::Value) -> Result<(), AppError> {
     let obj = value.as_object().ok_or_else(|| {
         AppError::BadRequest("Metadata must be a JSON object".to_string())
     })?;
@@ -1027,7 +1027,7 @@ mod tests {
             "env": "production",
             "version": 42,
             "active": true,
-            "score": 3.14,
+            "score": 2.5,
             "optional": null
         });
         assert!(validate_flat_metadata(&meta).is_ok());

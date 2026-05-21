@@ -2439,6 +2439,132 @@ impl SharedLink {
     }
 }
 
+// ─── UploadSession (resumable chunked uploads) ──────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct UploadSession {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub user_id: Uuid,
+    pub original_name: String,
+    pub content_type: String,
+    pub total_size: i64,
+    pub offset_bytes: i64,
+    pub temp_path: String,
+    pub metadata: serde_json::Value,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+pub struct CreateUploadSession {
+    pub project_id: Uuid,
+    pub user_id: Uuid,
+    pub original_name: String,
+    pub content_type: String,
+    pub total_size: i64,
+    pub temp_path: String,
+    pub metadata: serde_json::Value,
+    pub expires_at: DateTime<Utc>,
+}
+
+impl UploadSession {
+    pub async fn create(pool: &PgPool, input: &CreateUploadSession) -> AppResult<UploadSession> {
+        let row = sqlx::query_as::<_, UploadSession>(
+            r#"INSERT INTO upload_sessions
+                 (project_id, user_id, original_name, content_type, total_size, temp_path, metadata, expires_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               RETURNING *"#,
+        )
+        .bind(input.project_id)
+        .bind(input.user_id)
+        .bind(&input.original_name)
+        .bind(&input.content_type)
+        .bind(input.total_size)
+        .bind(&input.temp_path)
+        .bind(&input.metadata)
+        .bind(input.expires_at)
+        .fetch_one(pool)
+        .await?;
+        Ok(row)
+    }
+
+    pub async fn find_by_id(pool: &PgPool, id: Uuid) -> AppResult<UploadSession> {
+        sqlx::query_as::<_, UploadSession>("SELECT * FROM upload_sessions WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Upload session {} not found", id)))
+    }
+
+    /// Advance the recorded offset after a chunk is appended. Guards against
+    /// out-of-order/duplicate chunks: only updates when the stored offset still
+    /// matches `expected_offset`. Returns the updated row, or None on mismatch.
+    pub async fn advance_offset(
+        pool: &PgPool,
+        id: Uuid,
+        expected_offset: i64,
+        new_offset: i64,
+    ) -> AppResult<Option<UploadSession>> {
+        let row = sqlx::query_as::<_, UploadSession>(
+            r#"UPDATE upload_sessions
+                  SET offset_bytes = $3, updated_at = NOW()
+                WHERE id = $1 AND offset_bytes = $2 AND status = 'in_progress'
+              RETURNING *"#,
+        )
+        .bind(id)
+        .bind(expected_offset)
+        .bind(new_offset)
+        .fetch_optional(pool)
+        .await?;
+        Ok(row)
+    }
+
+    pub async fn mark_status(pool: &PgPool, id: Uuid, status: &str) -> AppResult<()> {
+        sqlx::query("UPDATE upload_sessions SET status = $2, updated_at = NOW() WHERE id = $1")
+            .bind(id)
+            .bind(status)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete(pool: &PgPool, id: Uuid) -> AppResult<()> {
+        sqlx::query("DELETE FROM upload_sessions WHERE id = $1")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Sessions that are past their expiry and still in progress (candidates for cleanup).
+    pub async fn find_expired(pool: &PgPool, limit: i64) -> AppResult<Vec<UploadSession>> {
+        let rows = sqlx::query_as::<_, UploadSession>(
+            r#"SELECT * FROM upload_sessions
+                WHERE expires_at < NOW() AND status = 'in_progress'
+                ORDER BY expires_at ASC
+                LIMIT $1"#,
+        )
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Prune completed/aborted session rows older than the given cutoff.
+    pub async fn prune_terminal(pool: &PgPool, older_than: DateTime<Utc>) -> AppResult<u64> {
+        let res = sqlx::query(
+            r#"DELETE FROM upload_sessions
+                WHERE status IN ('completed', 'aborted') AND updated_at < $1"#,
+        )
+        .bind(older_than)
+        .execute(pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+}
+
 // ─── BackupConfig ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

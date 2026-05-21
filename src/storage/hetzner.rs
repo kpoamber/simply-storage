@@ -143,6 +143,17 @@ impl HetznerStorageBoxBackend {
     }
 }
 
+impl HetznerStorageBoxBackend {
+    /// Build a streaming reqwest body from a local file (no full read into memory).
+    async fn file_body(src: &std::path::Path) -> AppResult<reqwest::Body> {
+        let file = tokio::fs::File::open(src)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to open temp file: {}", e)))?;
+        let stream = tokio_util::io::ReaderStream::new(file);
+        Ok(reqwest::Body::wrap_stream(stream))
+    }
+}
+
 #[async_trait]
 impl StorageBackend for HetznerStorageBoxBackend {
     async fn upload(&self, path: &str, data: Bytes) -> AppResult<()> {
@@ -184,6 +195,51 @@ impl StorageBackend for HetznerStorageBoxBackend {
                 return Err(AppError::Internal(format!(
                     "Hetzner upload retry returned {}: {}",
                     retry_status, body
+                )));
+            }
+        } else if !status.is_success() && status.as_u16() != 201 && status.as_u16() != 204 {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Internal(format!(
+                "Hetzner upload returned {}: {}",
+                status, body
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Stream-upload from a local file via chunked WebDAV PUT (no full read into memory).
+    /// A streaming body is single-use, so the 409 retry reopens the file.
+    async fn upload_from_file(&self, path: &str, src: &std::path::Path, _size: u64) -> AppResult<()> {
+        self.ensure_parent_dirs(path).await?;
+        let url = self.webdav_url(path);
+
+        let resp = self
+            .client
+            .put(&url)
+            .basic_auth(self.config.effective_username(), Some(&self.config.password))
+            .body(Self::file_body(src).await?)
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("Hetzner upload failed: {}", e)))?;
+
+        let status = resp.status();
+        if status.as_u16() == 409 {
+            self.ensure_parent_dirs(path).await?;
+            let retry_resp = self
+                .client
+                .put(&url)
+                .basic_auth(self.config.effective_username(), Some(&self.config.password))
+                .body(Self::file_body(src).await?)
+                .send()
+                .await
+                .map_err(|e| AppError::Internal(format!("Hetzner upload retry failed: {}", e)))?;
+            let rs = retry_resp.status();
+            if !rs.is_success() && rs.as_u16() != 201 && rs.as_u16() != 204 {
+                let body = retry_resp.text().await.unwrap_or_default();
+                return Err(AppError::Internal(format!(
+                    "Hetzner upload retry returned {}: {}",
+                    rs, body
                 )));
             }
         } else if !status.is_success() && status.as_u16() != 201 && status.as_u16() != 204 {

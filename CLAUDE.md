@@ -32,6 +32,7 @@ docker-compose up --build --scale app=3  # Scale app instances
 - `src/api/auth_routes.rs` - Auth API endpoints (login, refresh, me, logout, admin user CRUD, user detail with assignments)
 - `src/api/shared_links.rs` - Shared link management API + public proxy endpoints for file access via token
 - `src/api/backups.rs` - Backup config and history management API (admin-only CRUD, manual trigger, delete)
+- `src/api/uploads.rs` - Resumable chunked uploads (tus 1.0.0 subset: creation + termination); assembles chunks on the shared temp volume and finalizes via FileService
 - `src/db/models.rs` - Database models with sqlx FromRow, all CRUD functions; includes MetadataFilter DSL compiler, search_by_metadata/search_summary queries, bulk delete queries, SharedLink model and CRUD, BackupConfig and BackupRecord models
 - `src/services/` - Business logic layer (FileService, BulkService, TierService, AuthService, SharedLinkService, BackupService)
 - `src/services/auth_service.rs` - AuthService (JWT token generation/validation, argon2 password hashing)
@@ -39,7 +40,8 @@ docker-compose up --build --scale app=3  # Scale app instances
 - `src/services/backup_service.rs` - BackupService (pg_dump execution, gzip compression, upload to storage, retention cleanup)
 - `src/storage/` - StorageBackend trait implementations, one file per backend type
 - `src/storage/registry.rs` - Factory that instantiates backends from storage_type + JSON config
-- `src/workers/` - Background tokio tasks (SyncWorker, TierWorker, BackupWorker, heartbeat)
+- `src/workers/` - Background tokio tasks (SyncWorker, TierWorker, BackupWorker, UploadCleanupWorker, heartbeat)
+- `src/workers/upload_cleanup_worker.rs` - Advisory-locked sweep of abandoned upload sessions (expired temp files, orphan `.part` reconciliation)
 - `src/config.rs` - AppConfig loaded from config/default.toml + APP_ env vars
 - `src/error.rs` - AppError enum with thiserror, implements actix-web ResponseError
 - `src/lib.rs` - AppState struct, app configuration, health check endpoint
@@ -73,10 +75,11 @@ docker-compose up --build --scale app=3  # Scale app instances
 - User-resource assignments: many-to-many via `user_projects` (with role: member/writer) and `user_storages` junction tables; members get read access, writers/owners/admins get write access
 - Shared links: proxy-based file sharing via unique tokens. Public endpoints at `/s/{token}` (info, verify password, download). Password-protected links use argon2 hashing and short-lived download tokens (JWT, 5-min TTL). Downloads are proxied through the server - clients never receive direct storage URLs. Supports optional expiration, max download limits, and view statistics
 - Database backups: scheduled pg_dump via BackupWorker (cron-based), compressed with gzip, uploaded to any StorageBackend. BackupConfig defines schedule/retention, BackupRecord tracks history. Admin-only API at `/api/backup-configs` and `/api/backups`
+- Resumable uploads: large files (frontend routes >90 MB) bypass the Cloudflare 100 MB request-body limit via a tus 1.0.0 subset. `POST /projects/{id}/uploads` creates a session; `PATCH /uploads/{id}` appends chunks (Upload-Offset) to a temp file on the shared volume; on completion FileService::finalize_upload hashes (streaming), dedups, and stores it. Small files keep the legacy single-request `POST /projects/{id}/files`. StorageBackend::upload_from_file streams from disk (default reads to memory; local renames, S3/Hetzner stream). Frontend uses Uppy + @uppy/tus
 
 ## Database
 
-- Tables: projects, storages, files, file_references, file_locations, sync_tasks, nodes, users, refresh_tokens, user_projects, user_storages, shared_links, backup_configs, backup_history
+- Tables: projects, storages, files, file_references, file_locations, sync_tasks, nodes, users, refresh_tokens, user_projects, user_storages, shared_links, backup_configs, backup_history, upload_sessions
 - file_references.metadata: JSONB column (default `{}`) with GIN index (jsonb_path_ops) for fast key/value search
 - Citus distribution: files and file_locations by file_id, file_references by project_id
 - UUIDs as primary keys (uuid v4)
@@ -98,6 +101,13 @@ Backup-related:
 - `APP_BACKUP__ENABLED` - Enable backup worker (default: `true`)
 - `APP_BACKUP__CHECK_INTERVAL_SECS` - How often to check for due backups in seconds (default: 60)
 - `APP_BACKUP__TEMP_DIR` - Directory for temporary backup files (default: OS temp dir)
+
+Upload-related (resumable/tus):
+- `APP_UPLOAD__CHUNK_SIZE` - Suggested client chunk size in bytes (default: 50331648 = 48 MB)
+- `APP_UPLOAD__SESSION_TTL_SECS` - In-progress session lifetime before cleanup (default: 86400 = 24h)
+- `APP_UPLOAD__MAX_FILE_SIZE` - Max total size of one resumable upload in bytes (default: 0 = unlimited)
+- `APP_UPLOAD__CLEANUP_INTERVAL_SECS` - Cleanup worker sweep interval in seconds (default: 3600)
+- Chunks are assembled under `storage.local_temp_path`/uploads — must be a shared volume across app replicas
 
 ## CI/CD & Deployment
 
