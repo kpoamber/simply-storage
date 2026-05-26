@@ -140,7 +140,7 @@ export interface ExportStatus {
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
-export type DashboardPeriod = '7d' | '30d' | '90d' | '1y';
+export type DashboardPeriod = 'today' | '7d' | '30d' | '90d' | '1y' | 'all';
 
 export interface DashboardTotals {
   files: number;
