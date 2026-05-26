@@ -12,8 +12,8 @@ use uuid::Uuid;
 
 use crate::config::AppConfig;
 use crate::db::models::{
-    BulkDeleteFilters, CreateSyncTask, File, FileLocation, FileReference, MetadataFilter, Project,
-    SearchExtras, Storage, SyncTask, UserProject,
+    BulkDeleteFilters, CreateSyncTask, File, FileAccessEvent, FileLocation, FileReference,
+    MetadataFilter, Project, RecordAccessEvent, SearchExtras, Storage, SyncTask, UserProject,
 };
 use crate::error::AppError;
 use crate::services::{FileService, TierService};
@@ -407,6 +407,28 @@ async fn download_file(
 
     let result = file_service.download_file(file_id).await?;
 
+    // Resolve a project context for the access record (first matching ref).
+    let project_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT project_id FROM file_references WHERE file_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(file_id)
+    .fetch_optional(pool.get_ref())
+    .await
+    .ok()
+    .flatten();
+
+    FileAccessEvent::spawn_record(
+        pool.get_ref().clone(),
+        RecordAccessEvent {
+            file_id,
+            project_id,
+            storage_id: None,
+            access_kind: "download".to_string(),
+            user_id: Some(user.user_id),
+            bytes: Some(result.file.size),
+        },
+    );
+
     let mut response = HttpResponse::Ok();
     response.content_type(result.content_type);
     if let Some(ref name) = result.original_name {
@@ -706,6 +728,18 @@ async fn bulk_download(
             }
         };
 
+        FileAccessEvent::spawn_record(
+            pool.get_ref().clone(),
+            RecordAccessEvent {
+                file_id: fref.file_id,
+                project_id: Some(project_id),
+                storage_id: None,
+                access_kind: "bulk_download".to_string(),
+                user_id: Some(user.user_id),
+                bytes: Some(download.file.size),
+            },
+        );
+
         // De-duplicate names within the archive: foo.txt, foo (1).txt, ...
         let entry_name = {
             let base = fref.original_name.clone();
@@ -873,6 +907,18 @@ pub async fn download_local_temp(
 
     // Update last_accessed_at
     let _ = FileLocation::touch_accessed(pool.get_ref(), location.id).await;
+
+    FileAccessEvent::spawn_record(
+        pool.get_ref().clone(),
+        RecordAccessEvent {
+            file_id: location.file_id,
+            project_id: None,
+            storage_id: Some(location.storage_id),
+            access_kind: "download".to_string(),
+            user_id: None,
+            bytes: Some(file.size),
+        },
+    );
 
     Ok(HttpResponse::Ok()
         .content_type(file.content_type.as_str())

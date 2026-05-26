@@ -16,6 +16,8 @@ pub struct AppConfig {
     pub backup: BackupWorkerConfig,
     #[serde(default = "default_upload")]
     pub upload: UploadConfig,
+    #[serde(default = "default_dashboard")]
+    pub dashboard: DashboardConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -76,6 +78,14 @@ pub struct BackupWorkerConfig {
     pub check_interval_secs: u64,
     #[serde(default = "default_backup_temp_dir")]
     pub temp_dir: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DashboardConfig {
+    /// Retention for entries in file_access_events (days). Older rows are
+    /// pruned by the UploadCleanupWorker on each sweep. 0 = keep forever.
+    #[serde(default = "default_dashboard_events_retention_days")]
+    pub events_retention_days: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -141,6 +151,16 @@ fn default_backup() -> BackupWorkerConfig {
         check_interval_secs: default_backup_check_interval_secs(),
         temp_dir: default_backup_temp_dir(),
     }
+}
+
+fn default_dashboard() -> DashboardConfig {
+    DashboardConfig {
+        events_retention_days: default_dashboard_events_retention_days(),
+    }
+}
+
+fn default_dashboard_events_retention_days() -> u32 {
+    365
 }
 
 fn default_upload() -> UploadConfig {

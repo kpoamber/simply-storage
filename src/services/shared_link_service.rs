@@ -30,6 +30,10 @@ pub struct SharedLinkDownloadResult {
     pub data: Bytes,
     pub content_type: String,
     pub file_name: String,
+    pub file_id: Uuid,
+    pub project_id: Uuid,
+    pub storage_id: Uuid,
+    pub file_size: i64,
 }
 
 /// Claims for short-lived download tokens (password-protected links).
@@ -226,6 +230,10 @@ impl SharedLinkService {
                             data,
                             content_type: file.content_type.clone(),
                             file_name: link.original_name,
+                            file_id: link.file_id,
+                            project_id: link.project_id,
+                            storage_id: location.storage_id,
+                            file_size: file.size,
                         });
                     }
                     Err(e) => {

@@ -137,6 +137,14 @@ export async function getMetadataKeys(projectId: string) {
   return apiClient.get<string[]>(`/projects/${projectId}/files/metadata-keys`);
 }
 
+export async function getDashboard(params: {
+  period: import('./types').DashboardPeriod;
+  project_id?: string;
+  storage_id?: string;
+}) {
+  return apiClient.get<import('./types').DashboardResponse>('/system/dashboard', { params });
+}
+
 export async function downloadFileBlob(fileId: string) {
   return apiClient.get<Blob>(`/files/${fileId}/download`, { responseType: 'blob' });
 }
