@@ -2690,27 +2690,45 @@ pub struct DashboardFilter {
 pub struct DashboardStats;
 
 impl DashboardStats {
-    /// Headline counters.
+    /// Headline counters — all filtered by project / storage when set.
     pub async fn totals(pool: &PgPool, f: DashboardFilter) -> AppResult<DashboardTotals> {
-        // Global files+bytes (always project/storage-aware would require deeper
-        // joins; we keep this view of "all stored files" simple and let the
-        // in-period counters reflect the filter).
-        let (files, bytes): (i64, i64) =
-            sqlx::query_as("SELECT COUNT(*)::bigint, COALESCE(SUM(size), 0)::bigint FROM files")
-                .fetch_one(pool)
-                .await?;
+        // Total files + bytes scoped to project (via file_references) and/or
+        // storage (via file_locations with status='synced'). Each row in files
+        // is unique, so a plain COUNT(*) / SUM(size) is safe.
+        let (files, bytes): (i64, i64) = sqlx::query_as(
+            r#"SELECT COUNT(*)::bigint, COALESCE(SUM(size), 0)::bigint
+                 FROM files f
+                WHERE ($1::uuid IS NULL OR EXISTS (
+                          SELECT 1 FROM file_references fr
+                           WHERE fr.file_id = f.id AND fr.project_id = $1))
+                  AND ($2::uuid IS NULL OR EXISTS (
+                          SELECT 1 FROM file_locations fl
+                           WHERE fl.file_id = f.id AND fl.storage_id = $2 AND fl.status = 'synced'))"#,
+        )
+        .bind(f.project_id)
+        .bind(f.storage_id)
+        .fetch_one(pool)
+        .await?;
 
-        // Uploads in period (respecting project filter via file_references).
+        // Uploads in period — distinct files (a file referenced by multiple
+        // projects counts once); bytes summed via subquery to avoid the
+        // DISTINCT-size collision when two files happen to be the same size.
         let (uploads, uploaded_bytes): (i64, i64) = sqlx::query_as(
-            r#"SELECT COUNT(DISTINCT fr.file_id)::bigint,
-                      COALESCE(SUM(f.size), 0)::bigint
-                 FROM file_references fr
-                 JOIN files f ON f.id = fr.file_id
-                WHERE fr.created_at >= $1
-                  AND ($2::uuid IS NULL OR fr.project_id = $2)"#,
+            r#"SELECT COUNT(*)::bigint, COALESCE(SUM(size), 0)::bigint
+                 FROM (
+                     SELECT DISTINCT f.id, f.size
+                       FROM file_references fr
+                       JOIN files f ON f.id = fr.file_id
+                      WHERE fr.created_at >= $1
+                        AND ($2::uuid IS NULL OR fr.project_id = $2)
+                        AND ($3::uuid IS NULL OR EXISTS (
+                                SELECT 1 FROM file_locations fl
+                                 WHERE fl.file_id = fr.file_id AND fl.storage_id = $3))
+                 ) u"#,
         )
         .bind(f.start)
         .bind(f.project_id)
+        .bind(f.storage_id)
         .fetch_one(pool)
         .await?;
 
@@ -2728,16 +2746,28 @@ impl DashboardStats {
         .fetch_one(pool)
         .await?;
 
-        // Sync task counters.
-        let pending_syncs: (i64,) =
-            sqlx::query_as("SELECT COUNT(*)::bigint FROM sync_tasks WHERE status = 'pending'")
-                .fetch_one(pool)
-                .await?;
+        // Sync task counters (filtered by project + storage when set).
+        let pending_syncs: (i64,) = sqlx::query_as(
+            r#"SELECT COUNT(*)::bigint FROM sync_tasks
+                WHERE status = 'pending'
+                  AND ($1::uuid IS NULL OR project_id = $1)
+                  AND ($2::uuid IS NULL OR source_storage_id = $2 OR target_storage_id = $2)"#,
+        )
+        .bind(f.project_id)
+        .bind(f.storage_id)
+        .fetch_one(pool)
+        .await?;
 
         let failed_in_period: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*)::bigint FROM sync_tasks WHERE status = 'failed' AND created_at >= $1",
+            r#"SELECT COUNT(*)::bigint FROM sync_tasks
+                WHERE status = 'failed'
+                  AND created_at >= $1
+                  AND ($2::uuid IS NULL OR project_id = $2)
+                  AND ($3::uuid IS NULL OR source_storage_id = $3 OR target_storage_id = $3)"#,
         )
         .bind(f.start)
+        .bind(f.project_id)
+        .bind(f.storage_id)
         .fetch_one(pool)
         .await?;
 
@@ -2760,21 +2790,29 @@ impl DashboardStats {
         f: DashboardFilter,
         bucket: &str,
     ) -> AppResult<Vec<TimelinePoint>> {
+        // Inner SELECT DISTINCT (bucket, file_id, size) collapses duplicate
+        // references in the same bucket without losing byte accuracy.
         let sql = format!(
-            r#"SELECT date_trunc('{bucket}', fr.created_at)::date AS date,
-                      COUNT(DISTINCT fr.file_id)::bigint        AS count,
-                      COALESCE(SUM(f.size), 0)::bigint           AS size
-                 FROM file_references fr
-                 JOIN files f ON f.id = fr.file_id
-                WHERE fr.created_at >= $1
-                  AND ($2::uuid IS NULL OR fr.project_id = $2)
-                GROUP BY date_trunc('{bucket}', fr.created_at)
+            r#"SELECT date, COUNT(*)::bigint AS count, COALESCE(SUM(size), 0)::bigint AS size
+                 FROM (
+                     SELECT DISTINCT date_trunc('{bucket}', fr.created_at)::date AS date,
+                                     f.id, f.size
+                       FROM file_references fr
+                       JOIN files f ON f.id = fr.file_id
+                      WHERE fr.created_at >= $1
+                        AND ($2::uuid IS NULL OR fr.project_id = $2)
+                        AND ($3::uuid IS NULL OR EXISTS (
+                                SELECT 1 FROM file_locations fl
+                                 WHERE fl.file_id = fr.file_id AND fl.storage_id = $3))
+                 ) u
+                GROUP BY date
                 ORDER BY date ASC"#,
             bucket = bucket
         );
         Ok(sqlx::query_as::<_, TimelinePoint>(&sql)
             .bind(f.start)
             .bind(f.project_id)
+            .bind(f.storage_id)
             .fetch_all(pool)
             .await?)
     }
@@ -2805,60 +2843,58 @@ impl DashboardStats {
             .await?)
     }
 
-    /// Top N content-type breakdown. With a project filter, the breakdown is
-    /// computed from file_references (so duplicates in different projects don't
-    /// collapse), else directly from files.
+    /// Top N content-type breakdown — honours project and storage filters.
     pub async fn by_content_type(
         pool: &PgPool,
         f: DashboardFilter,
         top_n: i64,
     ) -> AppResult<Vec<ContentTypeBreakdown>> {
-        let rows = if let Some(pid) = f.project_id {
-            sqlx::query_as::<_, ContentTypeBreakdown>(
-                r#"SELECT f.content_type,
-                          COUNT(DISTINCT f.id)::bigint AS count,
-                          COALESCE(SUM(f.size), 0)::bigint AS size
-                     FROM file_references fr
-                     JOIN files f ON f.id = fr.file_id
-                    WHERE fr.project_id = $1
-                    GROUP BY f.content_type
-                    ORDER BY size DESC
-                    LIMIT $2"#,
-            )
-            .bind(pid)
-            .bind(top_n)
-            .fetch_all(pool)
-            .await?
-        } else {
-            sqlx::query_as::<_, ContentTypeBreakdown>(
-                r#"SELECT content_type,
-                          COUNT(*)::bigint AS count,
-                          COALESCE(SUM(size), 0)::bigint AS size
-                     FROM files
-                    GROUP BY content_type
-                    ORDER BY size DESC
-                    LIMIT $1"#,
-            )
-            .bind(top_n)
-            .fetch_all(pool)
-            .await?
-        };
-        Ok(rows)
+        Ok(sqlx::query_as::<_, ContentTypeBreakdown>(
+            r#"SELECT f.content_type,
+                      COUNT(*)::bigint AS count,
+                      COALESCE(SUM(f.size), 0)::bigint AS size
+                 FROM files f
+                WHERE ($1::uuid IS NULL OR EXISTS (
+                          SELECT 1 FROM file_references fr
+                           WHERE fr.file_id = f.id AND fr.project_id = $1))
+                  AND ($2::uuid IS NULL OR EXISTS (
+                          SELECT 1 FROM file_locations fl
+                           WHERE fl.file_id = f.id AND fl.storage_id = $2 AND fl.status = 'synced'))
+                GROUP BY f.content_type
+                ORDER BY size DESC
+                LIMIT $3"#,
+        )
+        .bind(f.project_id)
+        .bind(f.storage_id)
+        .bind(top_n)
+        .fetch_all(pool)
+        .await?)
     }
 
+    /// Per-storage breakdown — honours both filters: rows for the chosen
+    /// storage (or all when unset), counts restricted to project when set.
     pub async fn by_storage(pool: &PgPool, f: DashboardFilter) -> AppResult<Vec<StorageBreakdown>> {
+        // Inner DISTINCT (storage_id, file_id, size) prevents SUM-by-DISTINCT
+        // collapse when two files share a size.
         Ok(sqlx::query_as::<_, StorageBreakdown>(
             r#"SELECT s.id AS storage_id, s.name,
-                      COUNT(DISTINCT fl.file_id)::bigint AS count,
-                      COALESCE(SUM(f.size), 0)::bigint   AS size
+                      COUNT(u.file_id)::bigint           AS count,
+                      COALESCE(SUM(u.size), 0)::bigint   AS size
                  FROM storages s
-            LEFT JOIN file_locations fl
-                   ON fl.storage_id = s.id AND fl.status = 'synced'
-            LEFT JOIN files f ON f.id = fl.file_id
-                WHERE ($1::uuid IS NULL OR s.id = $1)
+            LEFT JOIN (
+                SELECT DISTINCT fl.storage_id, fl.file_id, f.size
+                  FROM file_locations fl
+                  JOIN files f ON f.id = fl.file_id
+                 WHERE fl.status = 'synced'
+                   AND ($1::uuid IS NULL OR EXISTS (
+                           SELECT 1 FROM file_references fr
+                            WHERE fr.file_id = fl.file_id AND fr.project_id = $1))
+            ) u ON u.storage_id = s.id
+                WHERE ($2::uuid IS NULL OR s.id = $2)
                 GROUP BY s.id, s.name
                 ORDER BY size DESC NULLS LAST"#,
         )
+        .bind(f.project_id)
         .bind(f.storage_id)
         .fetch_all(pool)
         .await?)
@@ -2869,6 +2905,8 @@ impl DashboardStats {
         f: DashboardFilter,
         bucket: &str,
     ) -> AppResult<Vec<SyncStatusPoint>> {
+        // Storage filter matches either source or target — a sync task
+        // involving the selected storage on either side stays visible.
         let sql = format!(
             r#"SELECT date_trunc('{bucket}', created_at)::date AS date,
                       SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END)::bigint AS completed,
@@ -2876,12 +2914,16 @@ impl DashboardStats {
                       SUM(CASE WHEN status='pending'   THEN 1 ELSE 0 END)::bigint AS pending
                  FROM sync_tasks
                 WHERE created_at >= $1
+                  AND ($2::uuid IS NULL OR project_id = $2)
+                  AND ($3::uuid IS NULL OR source_storage_id = $3 OR target_storage_id = $3)
                 GROUP BY date_trunc('{bucket}', created_at)
                 ORDER BY date ASC"#,
             bucket = bucket
         );
         Ok(sqlx::query_as::<_, SyncStatusPoint>(&sql)
             .bind(f.start)
+            .bind(f.project_id)
+            .bind(f.storage_id)
             .fetch_all(pool)
             .await?)
     }
