@@ -138,6 +138,74 @@ export interface ExportStatus {
   error: string | null;
 }
 
+// ─── Dashboard ───────────────────────────────────────────────────────────────
+
+export type DashboardPeriod = '7d' | '30d' | '90d' | '1y';
+
+export interface DashboardTotals {
+  files: number;
+  bytes: number;
+  uploads_in_period: number;
+  bytes_uploaded_in_period: number;
+  accesses_in_period: number;
+  bytes_accessed_in_period: number;
+  pending_syncs: number;
+  failed_syncs_in_period: number;
+}
+
+export interface UploadTimelinePoint {
+  date: string;  // YYYY-MM-DD
+  count: number;
+  size: number;
+}
+
+export interface AccessTimelinePoint {
+  date: string;
+  count: number;
+  bytes: number;
+}
+
+export interface ContentTypeBreakdown {
+  content_type: string;
+  count: number;
+  size: number;
+}
+
+export interface StorageBreakdownEntry {
+  storage_id: string;
+  name: string;
+  count: number;
+  size: number;
+}
+
+export interface SyncStatusPoint {
+  date: string;
+  completed: number;
+  failed: number;
+  pending: number;
+}
+
+export interface TopAccessedFile {
+  file_id: string;
+  original_name: string;
+  content_type: string;
+  access_count: number;
+  last_accessed: string;
+}
+
+export interface DashboardResponse {
+  period: string;
+  start: string;
+  bucket: string;
+  totals: DashboardTotals;
+  upload_timeline: UploadTimelinePoint[];
+  access_timeline: AccessTimelinePoint[];
+  by_content_type: ContentTypeBreakdown[];
+  by_storage: StorageBreakdownEntry[];
+  sync_status_trend: SyncStatusPoint[];
+  top_accessed_files: TopAccessedFile[];
+}
+
 export interface AuthUser {
   id: string;
   username: string;

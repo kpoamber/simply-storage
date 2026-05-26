@@ -5,7 +5,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::api::auth::AuthenticatedUser;
-use crate::db::models::{Project, SharedLink, UserProject};
+use crate::db::models::{FileAccessEvent, Project, RecordAccessEvent, SharedLink, UserProject};
 use crate::error::AppError;
 use crate::services::SharedLinkService;
 
@@ -187,6 +187,7 @@ async fn public_verify_password(
 
 async fn public_download(
     path: web::Path<String>,
+    pool: web::Data<PgPool>,
     service: web::Data<SharedLinkService>,
     query: web::Query<DownloadQuery>,
 ) -> Result<HttpResponse, AppError> {
@@ -194,6 +195,18 @@ async fn public_download(
     let result = service
         .download_via_link(&token, query.dl_token.as_deref())
         .await?;
+
+    FileAccessEvent::spawn_record(
+        pool.get_ref().clone(),
+        RecordAccessEvent {
+            file_id: result.file_id,
+            project_id: Some(result.project_id),
+            storage_id: Some(result.storage_id),
+            access_kind: "shared_link_download".to_string(),
+            user_id: None,
+            bytes: Some(result.file_size),
+        },
+    );
 
     // Sanitize filename to prevent header injection (same as files.rs download)
     let safe_name: String = result

@@ -158,6 +158,7 @@ async fn main() -> std::io::Result<()> {
         cancel_token.clone(),
         config.upload.cleanup_interval_secs,
         config.upload.session_ttl_secs,
+        config.dashboard.events_retention_days,
     );
     tracing::info!(
         cleanup_interval_secs = config.upload.cleanup_interval_secs,

@@ -2565,6 +2565,371 @@ impl UploadSession {
     }
 }
 
+// ─── FileAccessEvent + Dashboard ────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct RecordAccessEvent {
+    pub file_id: Uuid,
+    pub project_id: Option<Uuid>,
+    pub storage_id: Option<Uuid>,
+    pub access_kind: String,
+    pub user_id: Option<Uuid>,
+    pub bytes: Option<i64>,
+}
+
+pub struct FileAccessEvent;
+
+impl FileAccessEvent {
+    /// Insert an access event. Errors are logged and swallowed — access logging
+    /// must never break a download. Designed to be called from a fire-and-forget
+    /// `tokio::spawn` so the request path stays off any DB latency.
+    pub async fn record(pool: &PgPool, ev: RecordAccessEvent) {
+        let res = sqlx::query(
+            r#"INSERT INTO file_access_events
+                 (file_id, project_id, storage_id, access_kind, user_id, bytes)
+               VALUES ($1, $2, $3, $4, $5, $6)"#,
+        )
+        .bind(ev.file_id)
+        .bind(ev.project_id)
+        .bind(ev.storage_id)
+        .bind(&ev.access_kind)
+        .bind(ev.user_id)
+        .bind(ev.bytes)
+        .execute(pool)
+        .await;
+        if let Err(e) = res {
+            tracing::warn!(error = %e, "Failed to record file access event");
+        }
+    }
+
+    /// Best-effort: schedule the insert on the runtime so the caller never waits.
+    pub fn spawn_record(pool: PgPool, ev: RecordAccessEvent) {
+        tokio::spawn(async move {
+            Self::record(&pool, ev).await;
+        });
+    }
+
+    /// Prune events older than the given cutoff. Returns deleted row count.
+    pub async fn prune_older_than(pool: &PgPool, cutoff: DateTime<Utc>) -> AppResult<u64> {
+        let res = sqlx::query("DELETE FROM file_access_events WHERE created_at < $1")
+            .bind(cutoff)
+            .execute(pool)
+            .await?;
+        Ok(res.rows_affected())
+    }
+}
+
+// ─── Dashboard aggregates ────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct TimelinePoint {
+    pub date: chrono::NaiveDate,
+    pub count: i64,
+    pub size: i64,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct AccessTimelinePoint {
+    pub date: chrono::NaiveDate,
+    pub count: i64,
+    pub bytes: i64,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct ContentTypeBreakdown {
+    pub content_type: String,
+    pub count: i64,
+    pub size: i64,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct StorageBreakdown {
+    pub storage_id: Uuid,
+    pub name: String,
+    pub count: i64,
+    pub size: i64,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct SyncStatusPoint {
+    pub date: chrono::NaiveDate,
+    pub completed: i64,
+    pub failed: i64,
+    pub pending: i64,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct TopAccessedFile {
+    pub file_id: Uuid,
+    pub original_name: String,
+    pub content_type: String,
+    pub access_count: i64,
+    pub last_accessed: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DashboardTotals {
+    pub files: i64,
+    pub bytes: i64,
+    pub uploads_in_period: i64,
+    pub bytes_uploaded_in_period: i64,
+    pub accesses_in_period: i64,
+    pub bytes_accessed_in_period: i64,
+    pub pending_syncs: i64,
+    pub failed_syncs_in_period: i64,
+}
+
+/// Filter parameters shared by every dashboard query.
+#[derive(Debug, Clone, Copy)]
+pub struct DashboardFilter {
+    pub start: DateTime<Utc>,
+    pub project_id: Option<Uuid>,
+    pub storage_id: Option<Uuid>,
+}
+
+pub struct DashboardStats;
+
+impl DashboardStats {
+    /// Headline counters.
+    pub async fn totals(pool: &PgPool, f: DashboardFilter) -> AppResult<DashboardTotals> {
+        // Global files+bytes (always project/storage-aware would require deeper
+        // joins; we keep this view of "all stored files" simple and let the
+        // in-period counters reflect the filter).
+        let (files, bytes): (i64, i64) =
+            sqlx::query_as("SELECT COUNT(*)::bigint, COALESCE(SUM(size), 0)::bigint FROM files")
+                .fetch_one(pool)
+                .await?;
+
+        // Uploads in period (respecting project filter via file_references).
+        let (uploads, uploaded_bytes): (i64, i64) = sqlx::query_as(
+            r#"SELECT COUNT(DISTINCT fr.file_id)::bigint,
+                      COALESCE(SUM(f.size), 0)::bigint
+                 FROM file_references fr
+                 JOIN files f ON f.id = fr.file_id
+                WHERE fr.created_at >= $1
+                  AND ($2::uuid IS NULL OR fr.project_id = $2)"#,
+        )
+        .bind(f.start)
+        .bind(f.project_id)
+        .fetch_one(pool)
+        .await?;
+
+        // Accesses in period.
+        let (accesses, accessed_bytes): (i64, i64) = sqlx::query_as(
+            r#"SELECT COUNT(*)::bigint, COALESCE(SUM(bytes), 0)::bigint
+                 FROM file_access_events
+                WHERE created_at >= $1
+                  AND ($2::uuid IS NULL OR project_id = $2)
+                  AND ($3::uuid IS NULL OR storage_id = $3)"#,
+        )
+        .bind(f.start)
+        .bind(f.project_id)
+        .bind(f.storage_id)
+        .fetch_one(pool)
+        .await?;
+
+        // Sync task counters.
+        let pending_syncs: (i64,) =
+            sqlx::query_as("SELECT COUNT(*)::bigint FROM sync_tasks WHERE status = 'pending'")
+                .fetch_one(pool)
+                .await?;
+
+        let failed_in_period: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*)::bigint FROM sync_tasks WHERE status = 'failed' AND created_at >= $1",
+        )
+        .bind(f.start)
+        .fetch_one(pool)
+        .await?;
+
+        Ok(DashboardTotals {
+            files,
+            bytes,
+            uploads_in_period: uploads,
+            bytes_uploaded_in_period: uploaded_bytes,
+            accesses_in_period: accesses,
+            bytes_accessed_in_period: accessed_bytes,
+            pending_syncs: pending_syncs.0,
+            failed_syncs_in_period: failed_in_period.0,
+        })
+    }
+
+    /// Per-bucket upload activity, joined with files to sum bytes.
+    /// `bucket` is `'day'` or `'week'` (chosen by handler from the period).
+    pub async fn upload_timeline(
+        pool: &PgPool,
+        f: DashboardFilter,
+        bucket: &str,
+    ) -> AppResult<Vec<TimelinePoint>> {
+        let sql = format!(
+            r#"SELECT date_trunc('{bucket}', fr.created_at)::date AS date,
+                      COUNT(DISTINCT fr.file_id)::bigint        AS count,
+                      COALESCE(SUM(f.size), 0)::bigint           AS size
+                 FROM file_references fr
+                 JOIN files f ON f.id = fr.file_id
+                WHERE fr.created_at >= $1
+                  AND ($2::uuid IS NULL OR fr.project_id = $2)
+                GROUP BY date_trunc('{bucket}', fr.created_at)
+                ORDER BY date ASC"#,
+            bucket = bucket
+        );
+        Ok(sqlx::query_as::<_, TimelinePoint>(&sql)
+            .bind(f.start)
+            .bind(f.project_id)
+            .fetch_all(pool)
+            .await?)
+    }
+
+    /// Per-bucket access activity.
+    pub async fn access_timeline(
+        pool: &PgPool,
+        f: DashboardFilter,
+        bucket: &str,
+    ) -> AppResult<Vec<AccessTimelinePoint>> {
+        let sql = format!(
+            r#"SELECT date_trunc('{bucket}', created_at)::date AS date,
+                      COUNT(*)::bigint                          AS count,
+                      COALESCE(SUM(bytes), 0)::bigint           AS bytes
+                 FROM file_access_events
+                WHERE created_at >= $1
+                  AND ($2::uuid IS NULL OR project_id = $2)
+                  AND ($3::uuid IS NULL OR storage_id = $3)
+                GROUP BY date_trunc('{bucket}', created_at)
+                ORDER BY date ASC"#,
+            bucket = bucket
+        );
+        Ok(sqlx::query_as::<_, AccessTimelinePoint>(&sql)
+            .bind(f.start)
+            .bind(f.project_id)
+            .bind(f.storage_id)
+            .fetch_all(pool)
+            .await?)
+    }
+
+    /// Top N content-type breakdown. With a project filter, the breakdown is
+    /// computed from file_references (so duplicates in different projects don't
+    /// collapse), else directly from files.
+    pub async fn by_content_type(
+        pool: &PgPool,
+        f: DashboardFilter,
+        top_n: i64,
+    ) -> AppResult<Vec<ContentTypeBreakdown>> {
+        let rows = if let Some(pid) = f.project_id {
+            sqlx::query_as::<_, ContentTypeBreakdown>(
+                r#"SELECT f.content_type,
+                          COUNT(DISTINCT f.id)::bigint AS count,
+                          COALESCE(SUM(f.size), 0)::bigint AS size
+                     FROM file_references fr
+                     JOIN files f ON f.id = fr.file_id
+                    WHERE fr.project_id = $1
+                    GROUP BY f.content_type
+                    ORDER BY size DESC
+                    LIMIT $2"#,
+            )
+            .bind(pid)
+            .bind(top_n)
+            .fetch_all(pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, ContentTypeBreakdown>(
+                r#"SELECT content_type,
+                          COUNT(*)::bigint AS count,
+                          COALESCE(SUM(size), 0)::bigint AS size
+                     FROM files
+                    GROUP BY content_type
+                    ORDER BY size DESC
+                    LIMIT $1"#,
+            )
+            .bind(top_n)
+            .fetch_all(pool)
+            .await?
+        };
+        Ok(rows)
+    }
+
+    pub async fn by_storage(pool: &PgPool, f: DashboardFilter) -> AppResult<Vec<StorageBreakdown>> {
+        Ok(sqlx::query_as::<_, StorageBreakdown>(
+            r#"SELECT s.id AS storage_id, s.name,
+                      COUNT(DISTINCT fl.file_id)::bigint AS count,
+                      COALESCE(SUM(f.size), 0)::bigint   AS size
+                 FROM storages s
+            LEFT JOIN file_locations fl
+                   ON fl.storage_id = s.id AND fl.status = 'synced'
+            LEFT JOIN files f ON f.id = fl.file_id
+                WHERE ($1::uuid IS NULL OR s.id = $1)
+                GROUP BY s.id, s.name
+                ORDER BY size DESC NULLS LAST"#,
+        )
+        .bind(f.storage_id)
+        .fetch_all(pool)
+        .await?)
+    }
+
+    pub async fn sync_status_trend(
+        pool: &PgPool,
+        f: DashboardFilter,
+        bucket: &str,
+    ) -> AppResult<Vec<SyncStatusPoint>> {
+        let sql = format!(
+            r#"SELECT date_trunc('{bucket}', created_at)::date AS date,
+                      SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END)::bigint AS completed,
+                      SUM(CASE WHEN status='failed'    THEN 1 ELSE 0 END)::bigint AS failed,
+                      SUM(CASE WHEN status='pending'   THEN 1 ELSE 0 END)::bigint AS pending
+                 FROM sync_tasks
+                WHERE created_at >= $1
+                GROUP BY date_trunc('{bucket}', created_at)
+                ORDER BY date ASC"#,
+            bucket = bucket
+        );
+        Ok(sqlx::query_as::<_, SyncStatusPoint>(&sql)
+            .bind(f.start)
+            .fetch_all(pool)
+            .await?)
+    }
+
+    pub async fn top_accessed_files(
+        pool: &PgPool,
+        f: DashboardFilter,
+        top_n: i64,
+    ) -> AppResult<Vec<TopAccessedFile>> {
+        // Aggregate events first, then join files (for content_type) and pick
+        // the most recent original_name from any matching file_reference.
+        Ok(sqlx::query_as::<_, TopAccessedFile>(
+            r#"WITH agg AS (
+                  SELECT file_id, COUNT(*)::bigint AS access_count, MAX(created_at) AS last_accessed
+                    FROM file_access_events
+                   WHERE created_at >= $1
+                     AND ($2::uuid IS NULL OR project_id = $2)
+                     AND ($3::uuid IS NULL OR storage_id = $3)
+                   GROUP BY file_id
+                   ORDER BY access_count DESC
+                   LIMIT $4
+               )
+               SELECT a.file_id,
+                      COALESCE(
+                          (SELECT fr.original_name
+                             FROM file_references fr
+                            WHERE fr.file_id = a.file_id
+                              AND ($2::uuid IS NULL OR fr.project_id = $2)
+                            ORDER BY fr.created_at DESC
+                            LIMIT 1),
+                          ''
+                      ) AS original_name,
+                      f.content_type,
+                      a.access_count,
+                      a.last_accessed
+                 FROM agg a
+                 JOIN files f ON f.id = a.file_id
+                ORDER BY a.access_count DESC"#,
+        )
+        .bind(f.start)
+        .bind(f.project_id)
+        .bind(f.storage_id)
+        .bind(top_n)
+        .fetch_all(pool)
+        .await?)
+    }
+}
+
 // ─── BackupConfig ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

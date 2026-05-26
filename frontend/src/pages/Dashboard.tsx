@@ -1,8 +1,24 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Files, HardDrive, RefreshCw, Server } from 'lucide-react';
-import apiClient from '../api/client';
-import { SystemStats, StorageBackend, formatBytes } from '../api/types';
+import {
+  Files, HardDrive, RefreshCw, Server, Download, Upload, AlertTriangle,
+} from 'lucide-react';
+import {
+  AreaChart, Area, LineChart, Line, BarChart, Bar,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+} from 'recharts';
+import apiClient, { getDashboard } from '../api/client';
+import {
+  DashboardPeriod, DashboardResponse, Project, StorageBackend, formatBytes,
+} from '../api/types';
 import { useAuth } from '../contexts/AuthContext';
+
+const PERIODS: { value: DashboardPeriod; label: string }[] = [
+  { value: '7d', label: '7 days' },
+  { value: '30d', label: '30 days' },
+  { value: '90d', label: '90 days' },
+  { value: '1y', label: '1 year' },
+];
 
 interface Node {
   id: string;
@@ -17,122 +33,342 @@ export default function Dashboard() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
 
-  const { data: stats, isLoading: statsLoading } = useQuery<SystemStats>({
-    queryKey: ['system-stats'],
-    queryFn: () => apiClient.get('/system/stats').then(r => r.data),
+  const [period, setPeriod] = useState<DashboardPeriod>('30d');
+  const [projectId, setProjectId] = useState<string>('');
+  const [storageId, setStorageId] = useState<string>('');
+
+  const { data: projects } = useQuery<Project[]>({
+    queryKey: ['projects'],
+    queryFn: () => apiClient.get('/projects').then(r => r.data),
     enabled: isAdmin,
+    staleTime: 60_000,
   });
 
-  const { data: storages, isLoading: storagesLoading } = useQuery<StorageBackend[]>({
+  const { data: storages } = useQuery<StorageBackend[]>({
     queryKey: ['storages'],
     queryFn: () => apiClient.get('/storages').then(r => r.data),
     enabled: isAdmin,
+    staleTime: 60_000,
   });
 
-  const { data: nodes, isLoading: nodesLoading } = useQuery<Node[]>({
+  const { data: nodes } = useQuery<Node[]>({
     queryKey: ['nodes'],
     queryFn: () => apiClient.get('/system/nodes').then(r => r.data),
-    refetchInterval: 30000,
+    refetchInterval: 30_000,
     enabled: isAdmin,
   });
 
-  return (
-    <div>
-      <h2 className="text-2xl font-semibold text-gray-800">Dashboard</h2>
-      <p className="mt-1 text-gray-500">
-        {isAdmin ? 'System overview and statistics.' : 'Welcome to Innovare Storage.'}
-      </p>
+  const { data: dashboard, isFetching } = useQuery<DashboardResponse>({
+    queryKey: ['dashboard', period, projectId, storageId],
+    queryFn: () =>
+      getDashboard({
+        period,
+        project_id: projectId || undefined,
+        storage_id: storageId || undefined,
+      }).then(r => r.data),
+    refetchInterval: 60_000,
+    enabled: isAdmin,
+  });
 
-      {!isAdmin && (
+  if (!isAdmin) {
+    return (
+      <div>
+        <h2 className="text-2xl font-semibold text-gray-800">Dashboard</h2>
+        <p className="mt-1 text-gray-500">Welcome to Innovare Storage.</p>
         <div className="mt-6 rounded-lg border border-gray-200 bg-white p-6">
           <p className="text-gray-600">Navigate to <strong>Projects</strong> to manage your files.</p>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {isAdmin && (
-        <>
-          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard
-              icon={<Files className="h-6 w-6 text-blue-600" />}
-              label="Total Files"
-              value={statsLoading ? '...' : String(stats?.total_files ?? 0)}
-            />
-            <StatCard
-              icon={<HardDrive className="h-6 w-6 text-green-600" />}
-              label="Storage Used"
-              value={statsLoading ? '...' : formatBytes(stats?.total_storage_used ?? 0)}
-            />
-            <StatCard
-              icon={<RefreshCw className="h-6 w-6 text-orange-600" />}
-              label="Pending Sync Tasks"
-              value={statsLoading ? '...' : String(stats?.pending_sync_tasks ?? 0)}
-            />
-            <StatCard
-              icon={<Server className="h-6 w-6 text-purple-600" />}
-              label="Active Nodes"
-              value={nodesLoading ? '...' : String(nodes?.length ?? 0)}
-            />
-          </div>
-        </>
-      )}
+  const totals = dashboard?.totals;
 
-      {isAdmin && <div className="mt-8">
-        <h3 className="text-lg font-medium text-gray-700">Storage Health</h3>
-        {storagesLoading ? (
-          <p className="mt-2 text-gray-400">Loading storages...</p>
-        ) : !storages?.length ? (
-          <p className="mt-2 text-gray-400">No storages configured.</p>
-        ) : (
-          <div className="mt-3 overflow-hidden rounded-lg border border-gray-200">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Name</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Type</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Tier</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Status</th>
-                  <th className="px-4 py-2 text-right text-xs font-medium uppercase text-gray-500">Files</th>
-                  <th className="px-4 py-2 text-right text-xs font-medium uppercase text-gray-500">Used</th>
-                </tr>
+  return (
+    <div>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-semibold text-gray-800">Dashboard</h2>
+          <p className="mt-1 text-gray-500">
+            System metrics{isFetching ? ' · refreshing…' : ''}
+          </p>
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div className="mt-4 flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-white p-3">
+        <div className="inline-flex rounded-md border border-gray-300" role="group">
+          {PERIODS.map(p => (
+            <button
+              key={p.value}
+              onClick={() => setPeriod(p.value)}
+              className={`px-3 py-1.5 text-sm font-medium first:rounded-l-md last:rounded-r-md ${
+                period === p.value
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+              data-testid={`period-${p.value}`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        <select
+          value={projectId}
+          onChange={e => setProjectId(e.target.value)}
+          className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+          data-testid="project-filter"
+        >
+          <option value="">All projects</option>
+          {projects?.map(p => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+
+        <select
+          value={storageId}
+          onChange={e => setStorageId(e.target.value)}
+          className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+          data-testid="storage-filter"
+        >
+          <option value="">All storages</option>
+          {storages?.map(s => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Stat cards */}
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <StatCard
+          icon={<Files className="h-5 w-5 text-blue-600" />}
+          label="Total Files"
+          value={totals ? totals.files.toLocaleString() : '—'}
+        />
+        <StatCard
+          icon={<HardDrive className="h-5 w-5 text-green-600" />}
+          label="Storage Used"
+          value={totals ? formatBytes(totals.bytes) : '—'}
+        />
+        <StatCard
+          icon={<Upload className="h-5 w-5 text-blue-500" />}
+          label={`Uploads · ${period}`}
+          value={totals ? `${totals.uploads_in_period}` : '—'}
+          sub={totals ? formatBytes(totals.bytes_uploaded_in_period) : undefined}
+        />
+        <StatCard
+          icon={<Download className="h-5 w-5 text-purple-500" />}
+          label={`Accesses · ${period}`}
+          value={totals ? `${totals.accesses_in_period}` : '—'}
+          sub={totals ? formatBytes(totals.bytes_accessed_in_period) : undefined}
+        />
+        <StatCard
+          icon={<RefreshCw className="h-5 w-5 text-orange-500" />}
+          label="Pending Syncs"
+          value={totals ? `${totals.pending_syncs}` : '—'}
+          sub={totals ? `${totals.failed_syncs_in_period} failed` : undefined}
+        />
+        <StatCard
+          icon={<Server className="h-5 w-5 text-purple-600" />}
+          label="Active Nodes"
+          value={String(nodes?.length ?? 0)}
+        />
+      </div>
+
+      {/* Charts row */}
+      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <ChartCard title="Uploads over time" subtitle="Bytes uploaded per bucket">
+          {dashboard && dashboard.upload_timeline.length > 0 ? (
+            <ResponsiveContainer width="100%" height={220}>
+              <AreaChart data={dashboard.upload_timeline}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => formatBytes(v)} />
+                <Tooltip formatter={(v) => formatBytes(Number(v ?? 0))} />
+                <Area type="monotone" dataKey="size" stroke="#3b82f6" fill="#bfdbfe" />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <EmptyChart />
+          )}
+        </ChartCard>
+
+        <ChartCard title="Accesses over time" subtitle="File downloads per bucket">
+          {dashboard && dashboard.access_timeline.length > 0 ? (
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={dashboard.access_timeline}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <Tooltip />
+                <Line type="monotone" dataKey="count" stroke="#8b5cf6" strokeWidth={2} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <EmptyChart message="No accesses recorded in this period" />
+          )}
+        </ChartCard>
+      </div>
+
+      {/* Sync trend */}
+      <div className="mt-6">
+        <ChartCard title="Sync task status trend">
+          {dashboard && dashboard.sync_status_trend.length > 0 ? (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={dashboard.sync_status_trend}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="completed" stackId="s" fill="#10b981" />
+                <Bar dataKey="pending"   stackId="s" fill="#f59e0b" />
+                <Bar dataKey="failed"    stackId="s" fill="#ef4444" />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <EmptyChart message="No sync activity in this period" />
+          )}
+        </ChartCard>
+      </div>
+
+      {/* Breakdown tables */}
+      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <BreakdownCard title="By content type">
+          {dashboard && dashboard.by_content_type.length > 0 ? (
+            <table className="min-w-full text-sm">
+              <thead className="text-left text-xs uppercase text-gray-500">
+                <tr><th className="py-1">Type</th><th className="py-1 text-right">Files</th><th className="py-1 text-right">Size</th></tr>
               </thead>
-              <tbody className="divide-y divide-gray-200 bg-white">
-                {storages.map(s => (
-                  <tr key={s.id}>
-                    <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-900">{s.name}</td>
-                    <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-500">{s.storage_type}</td>
-                    <td className="whitespace-nowrap px-4 py-2 text-sm">
-                      <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${s.is_hot ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
-                        {s.is_hot ? 'Hot' : 'Cold'}
-                      </span>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-2 text-sm">
-                      <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${s.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                        {s.enabled ? 'Enabled' : 'Disabled'}
-                      </span>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-gray-900">{s.file_count}</td>
-                    <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-gray-900">{formatBytes(s.used_space)}</td>
+              <tbody className="divide-y divide-gray-100">
+                {dashboard.by_content_type.map(ct => (
+                  <tr key={ct.content_type}>
+                    <td className="py-1 text-gray-800">{ct.content_type || '—'}</td>
+                    <td className="py-1 text-right text-gray-700">{ct.count.toLocaleString()}</td>
+                    <td className="py-1 text-right text-gray-700">{formatBytes(ct.size)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
-        )}
-      </div>}
+          ) : (
+            <EmptyTable />
+          )}
+        </BreakdownCard>
+
+        <BreakdownCard title="Top accessed files" subtitle={`Top 10 · ${period}`}>
+          {dashboard && dashboard.top_accessed_files.length > 0 ? (
+            <table className="min-w-full text-sm">
+              <thead className="text-left text-xs uppercase text-gray-500">
+                <tr>
+                  <th className="py-1">Name</th>
+                  <th className="py-1 text-right">Accesses</th>
+                  <th className="py-1 text-right">Last access</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {dashboard.top_accessed_files.map(f => (
+                  <tr key={f.file_id}>
+                    <td className="py-1 text-gray-800">
+                      <span className="font-medium">{f.original_name || f.file_id}</span>
+                      <span className="ml-2 text-xs text-gray-400">{f.content_type}</span>
+                    </td>
+                    <td className="py-1 text-right text-gray-700">{f.access_count.toLocaleString()}</td>
+                    <td className="py-1 text-right text-gray-500">
+                      {new Date(f.last_accessed).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <EmptyTable message="No accesses yet — accesses are tracked from now on." />
+          )}
+        </BreakdownCard>
+      </div>
+
+      {/* Storage breakdown */}
+      <div className="mt-6">
+        <BreakdownCard title="Storage breakdown">
+          {dashboard && dashboard.by_storage.length > 0 ? (
+            <table className="min-w-full text-sm">
+              <thead className="text-left text-xs uppercase text-gray-500">
+                <tr>
+                  <th className="py-1">Storage</th>
+                  <th className="py-1 text-right">Files</th>
+                  <th className="py-1 text-right">Size</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {dashboard.by_storage.map(s => (
+                  <tr key={s.storage_id}>
+                    <td className="py-1 text-gray-800">{s.name}</td>
+                    <td className="py-1 text-right text-gray-700">{s.count.toLocaleString()}</td>
+                    <td className="py-1 text-right text-gray-700">{formatBytes(s.size)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <EmptyTable />
+          )}
+        </BreakdownCard>
+      </div>
     </div>
   );
 }
 
-function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+function StatCard({
+  icon, label, value, sub,
+}: { icon: React.ReactNode; label: string; value: string; sub?: string }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="flex items-center gap-3">
+    <div className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+      <div className="flex items-center gap-2">
         {icon}
-        <div>
-          <p className="text-sm text-gray-500">{label}</p>
-          <p className="text-2xl font-semibold text-gray-900">{value}</p>
-        </div>
+        <p className="text-xs text-gray-500">{label}</p>
       </div>
+      <p className="mt-1 text-xl font-semibold text-gray-900">{value}</p>
+      {sub && <p className="text-xs text-gray-500">{sub}</p>}
     </div>
   );
+}
+
+function ChartCard({
+  title, subtitle, children,
+}: { title: string; subtitle?: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-4">
+      <div className="flex items-baseline justify-between">
+        <h3 className="text-sm font-medium text-gray-700">{title}</h3>
+        {subtitle && <span className="text-xs text-gray-400">{subtitle}</span>}
+      </div>
+      <div className="mt-2">{children}</div>
+    </div>
+  );
+}
+
+function BreakdownCard({
+  title, subtitle, children,
+}: { title: string; subtitle?: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-4">
+      <div className="flex items-baseline justify-between">
+        <h3 className="text-sm font-medium text-gray-700">{title}</h3>
+        {subtitle && <span className="text-xs text-gray-400">{subtitle}</span>}
+      </div>
+      <div className="mt-2 overflow-x-auto">{children}</div>
+    </div>
+  );
+}
+
+function EmptyChart({ message }: { message?: string } = {}) {
+  return (
+    <div className="flex h-[220px] items-center justify-center text-sm text-gray-400">
+      <AlertTriangle className="mr-2 h-4 w-4" /> {message || 'No data for this period'}
+    </div>
+  );
+}
+
+function EmptyTable({ message }: { message?: string } = {}) {
+  return <p className="py-2 text-sm text-gray-400">{message || 'No data'}</p>;
 }

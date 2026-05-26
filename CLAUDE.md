@@ -33,6 +33,7 @@ docker-compose up --build --scale app=3  # Scale app instances
 - `src/api/shared_links.rs` - Shared link management API + public proxy endpoints for file access via token
 - `src/api/backups.rs` - Backup config and history management API (admin-only CRUD, manual trigger, delete)
 - `src/api/uploads.rs` - Resumable chunked uploads (tus 1.0.0 subset: creation + termination); assembles chunks on the shared temp volume and finalizes via FileService
+- `src/api/dashboard.rs` - Admin dashboard endpoint: totals, timelines, content-type/storage breakdowns, sync trend, top-accessed files; filters by period + project + storage
 - `src/db/models.rs` - Database models with sqlx FromRow, all CRUD functions; includes MetadataFilter DSL compiler, search_by_metadata/search_summary queries, bulk delete queries, SharedLink model and CRUD, BackupConfig and BackupRecord models
 - `src/services/` - Business logic layer (FileService, BulkService, TierService, AuthService, SharedLinkService, BackupService)
 - `src/services/auth_service.rs` - AuthService (JWT token generation/validation, argon2 password hashing)
@@ -79,7 +80,7 @@ docker-compose up --build --scale app=3  # Scale app instances
 
 ## Database
 
-- Tables: projects, storages, files, file_references, file_locations, sync_tasks, nodes, users, refresh_tokens, user_projects, user_storages, shared_links, backup_configs, backup_history, upload_sessions
+- Tables: projects, storages, files, file_references, file_locations, sync_tasks, nodes, users, refresh_tokens, user_projects, user_storages, shared_links, backup_configs, backup_history, upload_sessions, file_access_events
 - file_references.metadata: JSONB column (default `{}`) with GIN index (jsonb_path_ops) for fast key/value search
 - Citus distribution: files and file_locations by file_id, file_references by project_id
 - UUIDs as primary keys (uuid v4)
@@ -108,6 +109,9 @@ Upload-related (resumable/tus):
 - `APP_UPLOAD__MAX_FILE_SIZE` - Max total size of one resumable upload in bytes (default: 0 = unlimited)
 - `APP_UPLOAD__CLEANUP_INTERVAL_SECS` - Cleanup worker sweep interval in seconds (default: 3600)
 - Chunks are assembled under `storage.local_temp_path`/uploads — must be a shared volume across app replicas
+
+Dashboard-related:
+- `APP_DASHBOARD__EVENTS_RETENTION_DAYS` - How long file_access_events rows are kept before pruning (default: 365, 0 = keep forever). Pruned by the UploadCleanupWorker sweep.
 
 ## CI/CD & Deployment
 

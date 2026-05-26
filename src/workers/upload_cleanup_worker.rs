@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::db::models::UploadSession;
+use crate::db::models::{FileAccessEvent, UploadSession};
 
 /// Advisory-lock keys (classid, objid) so only one replica sweeps at a time.
 const LOCK_CLASS: i32 = 0x5550; // "UP"
@@ -23,6 +23,7 @@ pub struct UploadCleanupWorker {
     cancel_token: CancellationToken,
     interval: Duration,
     ttl: ChronoDuration,
+    access_events_retention: Option<ChronoDuration>,
 }
 
 impl UploadCleanupWorker {
@@ -32,13 +33,20 @@ impl UploadCleanupWorker {
         cancel_token: CancellationToken,
         interval_secs: u64,
         ttl_secs: u64,
+        access_events_retention_days: u32,
     ) -> Self {
+        let access_events_retention = if access_events_retention_days == 0 {
+            None
+        } else {
+            Some(ChronoDuration::days(access_events_retention_days as i64))
+        };
         Self {
             pool,
             uploads_dir: PathBuf::from(local_temp_path).join("uploads"),
             cancel_token,
             interval: Duration::from_secs(interval_secs.max(60)),
             ttl: ChronoDuration::seconds(ttl_secs.max(60) as i64),
+            access_events_retention,
         }
     }
 
@@ -48,8 +56,16 @@ impl UploadCleanupWorker {
         cancel_token: CancellationToken,
         interval_secs: u64,
         ttl_secs: u64,
+        access_events_retention_days: u32,
     ) -> tokio::task::JoinHandle<()> {
-        let worker = Self::new(pool, local_temp_path, cancel_token, interval_secs, ttl_secs);
+        let worker = Self::new(
+            pool,
+            local_temp_path,
+            cancel_token,
+            interval_secs,
+            ttl_secs,
+            access_events_retention_days,
+        );
         tokio::spawn(async move {
             tracing::info!("Upload cleanup worker started");
             worker.run().await;
@@ -89,6 +105,7 @@ impl UploadCleanupWorker {
         self.sweep_expired().await;
         self.prune_terminal().await;
         self.reconcile_orphans().await;
+        self.prune_access_events().await;
 
         let _ = sqlx::query("SELECT pg_advisory_unlock($1, $2)")
             .bind(LOCK_CLASS)
@@ -119,6 +136,17 @@ impl UploadCleanupWorker {
             Ok(n) if n > 0 => tracing::info!(pruned = n, "Upload cleanup: pruned terminal sessions"),
             Ok(_) => {}
             Err(e) => tracing::warn!(error = %e, "Upload cleanup: prune failed"),
+        }
+    }
+
+    /// Drop file_access_events rows older than the configured retention.
+    async fn prune_access_events(&self) {
+        let Some(retention) = self.access_events_retention else { return; };
+        let cutoff = Utc::now() - retention;
+        match FileAccessEvent::prune_older_than(&self.pool, cutoff).await {
+            Ok(n) if n > 0 => tracing::info!(pruned = n, "Pruned old file_access_events"),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "Failed to prune file_access_events"),
         }
     }
 
