@@ -103,11 +103,10 @@ describe('Dashboard', () => {
 
   it('renders stat card labels for admin', () => {
     renderDashboard();
-    expect(screen.getByText('Total Files')).toBeInTheDocument();
-    expect(screen.getByText('Storage Used')).toBeInTheDocument();
+    expect(screen.getByText(/Files · /)).toBeInTheDocument();
+    expect(screen.getByText(/Bytes uploaded · /)).toBeInTheDocument();
     expect(screen.getByText('Pending Syncs')).toBeInTheDocument();
     expect(screen.getByText('Active Nodes')).toBeInTheDocument();
-    expect(screen.getByText(/Uploads · /)).toBeInTheDocument();
     expect(screen.getByText(/Accesses · /)).toBeInTheDocument();
   });
 
@@ -119,7 +118,7 @@ describe('Dashboard', () => {
     renderDashboard();
     expect(screen.getByText('Dashboard')).toBeInTheDocument();
     expect(screen.getByText(/Welcome to Innovare Storage/)).toBeInTheDocument();
-    expect(screen.queryByText('Total Files')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Files · /)).not.toBeInTheDocument();
   });
 
   it('shows stat values after dashboard data loads', async () => {
