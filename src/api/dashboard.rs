@@ -38,15 +38,29 @@ pub struct DashboardResponse {
     pub top_accessed_files: Vec<TopAccessedFile>,
 }
 
-/// Resolve a period label to (now - duration, bucket name).
-/// Buckets: daily for short windows, weekly for the year view so the chart
-/// stays under ~52 points.
-fn parse_period(label: &str) -> (ChronoDuration, &'static str, &'static str) {
+/// Resolve a period label to (start timestamp, bucket name, canonical label).
+/// Buckets are chosen so the timeline stays under ~60 points: day for ≤90d,
+/// week for 1y, month for the all-time view.
+fn resolve_period(label: &str) -> (DateTime<Utc>, &'static str, &'static str) {
+    let now = Utc::now();
     match label {
-        "7d" => (ChronoDuration::days(7), "day", "7d"),
-        "90d" => (ChronoDuration::days(90), "day", "90d"),
-        "1y" => (ChronoDuration::days(365), "week", "1y"),
-        _ => (ChronoDuration::days(30), "day", "30d"), // default + "30d"
+        "today" => {
+            let start = now
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .map(|dt| dt.and_utc())
+                .unwrap_or(now);
+            (start, "day", "today")
+        }
+        "7d" => (now - ChronoDuration::days(7), "day", "7d"),
+        "90d" => (now - ChronoDuration::days(90), "day", "90d"),
+        "1y" => (now - ChronoDuration::days(365), "week", "1y"),
+        "all" => (
+            DateTime::<Utc>::from_timestamp(0, 0).unwrap_or(now),
+            "month",
+            "all",
+        ),
+        _ => (now - ChronoDuration::days(30), "day", "30d"), // default + "30d"
     }
 }
 
@@ -56,8 +70,7 @@ async fn dashboard(
     query: web::Query<DashboardQuery>,
 ) -> Result<HttpResponse, AppError> {
     let label = query.period.as_deref().unwrap_or("30d");
-    let (duration, bucket, period_out) = parse_period(label);
-    let start = Utc::now() - duration;
+    let (start, bucket, period_out) = resolve_period(label);
     let filter = DashboardFilter {
         start,
         project_id: query.project_id,
