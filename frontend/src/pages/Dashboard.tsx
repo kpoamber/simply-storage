@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Files, HardDrive, RefreshCw, Server, Download, Upload, AlertTriangle,
+  Files, HardDrive, RefreshCw, Server, Download, AlertTriangle,
 } from 'lucide-react';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar,
@@ -139,23 +139,13 @@ export default function Dashboard() {
         </select>
       </div>
 
-      {/* Stat cards */}
-      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      {/* Stat cards (all scoped to the selected period + filters) */}
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <StatCard
           icon={<Files className="h-5 w-5 text-blue-600" />}
-          label="Total Files"
+          label={`Files · ${period}`}
           value={totals ? totals.files.toLocaleString() : '—'}
-        />
-        <StatCard
-          icon={<HardDrive className="h-5 w-5 text-green-600" />}
-          label="Storage Used"
-          value={totals ? formatBytes(totals.bytes) : '—'}
-        />
-        <StatCard
-          icon={<Upload className="h-5 w-5 text-blue-500" />}
-          label={`Uploads · ${period}`}
-          value={totals ? `${totals.uploads_in_period}` : '—'}
-          sub={totals ? formatBytes(totals.bytes_uploaded_in_period) : undefined}
+          sub={totals ? formatBytes(totals.bytes) : undefined}
         />
         <StatCard
           icon={<Download className="h-5 w-5 text-purple-500" />}
@@ -167,7 +157,13 @@ export default function Dashboard() {
           icon={<RefreshCw className="h-5 w-5 text-orange-500" />}
           label="Pending Syncs"
           value={totals ? `${totals.pending_syncs}` : '—'}
-          sub={totals ? `${totals.failed_syncs_in_period} failed` : undefined}
+          sub={totals ? `${totals.failed_syncs_in_period} failed in period` : undefined}
+        />
+        <StatCard
+          icon={<HardDrive className="h-5 w-5 text-green-600" />}
+          label={`Bytes uploaded · ${period}`}
+          value={totals ? formatBytes(totals.bytes_uploaded_in_period) : '—'}
+          sub={totals ? `${totals.uploads_in_period} files` : undefined}
         />
         <StatCard
           icon={<Server className="h-5 w-5 text-purple-600" />}

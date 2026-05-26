@@ -2690,21 +2690,24 @@ pub struct DashboardFilter {
 pub struct DashboardStats;
 
 impl DashboardStats {
-    /// Headline counters — all filtered by project / storage when set.
+    /// Headline counters — all filtered by project / storage / period when set.
     pub async fn totals(pool: &PgPool, f: DashboardFilter) -> AppResult<DashboardTotals> {
-        // Total files + bytes scoped to project (via file_references) and/or
-        // storage (via file_locations with status='synced'). Each row in files
-        // is unique, so a plain COUNT(*) / SUM(size) is safe.
+        // Files added in the period that match the project/storage filter.
+        // "In period" means the file has at least one file_reference (an upload
+        // event into a project) created at or after `start`.
         let (files, bytes): (i64, i64) = sqlx::query_as(
             r#"SELECT COUNT(*)::bigint, COALESCE(SUM(size), 0)::bigint
                  FROM files f
-                WHERE ($1::uuid IS NULL OR EXISTS (
+                WHERE EXISTS (
                           SELECT 1 FROM file_references fr
-                           WHERE fr.file_id = f.id AND fr.project_id = $1))
-                  AND ($2::uuid IS NULL OR EXISTS (
+                           WHERE fr.file_id = f.id
+                             AND fr.created_at >= $1
+                             AND ($2::uuid IS NULL OR fr.project_id = $2))
+                  AND ($3::uuid IS NULL OR EXISTS (
                           SELECT 1 FROM file_locations fl
-                           WHERE fl.file_id = f.id AND fl.storage_id = $2 AND fl.status = 'synced'))"#,
+                           WHERE fl.file_id = f.id AND fl.storage_id = $3 AND fl.status = 'synced'))"#,
         )
+        .bind(f.start)
         .bind(f.project_id)
         .bind(f.storage_id)
         .fetch_one(pool)
