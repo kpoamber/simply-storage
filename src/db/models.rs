@@ -2846,7 +2846,8 @@ impl DashboardStats {
             .await?)
     }
 
-    /// Top N content-type breakdown — honours project and storage filters.
+    /// Top N content-type breakdown — honours period + project + storage filters.
+    /// A file is "in period" if it has any reference created at/after start.
     pub async fn by_content_type(
         pool: &PgPool,
         f: DashboardFilter,
@@ -2857,16 +2858,19 @@ impl DashboardStats {
                       COUNT(*)::bigint AS count,
                       COALESCE(SUM(f.size), 0)::bigint AS size
                  FROM files f
-                WHERE ($1::uuid IS NULL OR EXISTS (
+                WHERE EXISTS (
                           SELECT 1 FROM file_references fr
-                           WHERE fr.file_id = f.id AND fr.project_id = $1))
-                  AND ($2::uuid IS NULL OR EXISTS (
+                           WHERE fr.file_id = f.id
+                             AND fr.created_at >= $1
+                             AND ($2::uuid IS NULL OR fr.project_id = $2))
+                  AND ($3::uuid IS NULL OR EXISTS (
                           SELECT 1 FROM file_locations fl
-                           WHERE fl.file_id = f.id AND fl.storage_id = $2 AND fl.status = 'synced'))
+                           WHERE fl.file_id = f.id AND fl.storage_id = $3 AND fl.status = 'synced'))
                 GROUP BY f.content_type
                 ORDER BY size DESC
-                LIMIT $3"#,
+                LIMIT $4"#,
         )
+        .bind(f.start)
         .bind(f.project_id)
         .bind(f.storage_id)
         .bind(top_n)
@@ -2874,11 +2878,10 @@ impl DashboardStats {
         .await?)
     }
 
-    /// Per-storage breakdown — honours both filters: rows for the chosen
-    /// storage (or all when unset), counts restricted to project when set.
+    /// Per-storage breakdown — honours period + project + storage filters.
+    /// Storage rows always include every storage (or just the selected one),
+    /// counts are restricted to files that match the active filters.
     pub async fn by_storage(pool: &PgPool, f: DashboardFilter) -> AppResult<Vec<StorageBreakdown>> {
-        // Inner DISTINCT (storage_id, file_id, size) prevents SUM-by-DISTINCT
-        // collapse when two files share a size.
         Ok(sqlx::query_as::<_, StorageBreakdown>(
             r#"SELECT s.id AS storage_id, s.name,
                       COUNT(u.file_id)::bigint           AS count,
@@ -2889,14 +2892,17 @@ impl DashboardStats {
                   FROM file_locations fl
                   JOIN files f ON f.id = fl.file_id
                  WHERE fl.status = 'synced'
-                   AND ($1::uuid IS NULL OR EXISTS (
+                   AND EXISTS (
                            SELECT 1 FROM file_references fr
-                            WHERE fr.file_id = fl.file_id AND fr.project_id = $1))
+                            WHERE fr.file_id = fl.file_id
+                              AND fr.created_at >= $1
+                              AND ($2::uuid IS NULL OR fr.project_id = $2))
             ) u ON u.storage_id = s.id
-                WHERE ($2::uuid IS NULL OR s.id = $2)
+                WHERE ($3::uuid IS NULL OR s.id = $3)
                 GROUP BY s.id, s.name
                 ORDER BY size DESC NULLS LAST"#,
         )
+        .bind(f.start)
         .bind(f.project_id)
         .bind(f.storage_id)
         .fetch_all(pool)
