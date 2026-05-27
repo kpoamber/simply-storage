@@ -17,7 +17,7 @@ COPY Cargo.toml Cargo.lock* ./
 RUN mkdir src && echo 'fn main() {}' > src/main.rs && echo '' > src/lib.rs
 RUN cargo build --release 2>/dev/null || true
 # Remove dummy binary and fingerprints so Cargo rebuilds with real source
-RUN rm -rf src target/release/innovare-storage target/release/deps/innovare_storage* target/release/.fingerprint/innovare-storage-*
+RUN rm -rf src target/release/simply-storage target/release/deps/simply_storage* target/release/.fingerprint/simply-storage-*
 
 # Copy actual source and migrations
 COPY src/ src/
@@ -48,7 +48,7 @@ RUN groupadd -r innovare && useradd -r -g innovare -m innovare
 WORKDIR /app
 
 # Copy binary from backend builder
-COPY --from=backend-builder /app/target/release/innovare-storage /app/innovare-storage
+COPY --from=backend-builder /app/target/release/simply-storage /app/simply-storage
 
 # Copy frontend build output
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
@@ -65,4 +65,4 @@ EXPOSE 8080
 
 ENV RUST_LOG=info
 
-CMD ["/app/innovare-storage"]
+CMD ["/app/simply-storage"]

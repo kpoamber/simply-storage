@@ -2603,52 +2603,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "innovare-storage"
-version = "0.1.0"
-dependencies = [
- "actix-files",
- "actix-multipart",
- "actix-rt",
- "actix-web",
- "argon2",
- "async-trait",
- "aws-config",
- "aws-credential-types",
- "aws-sdk-s3",
- "base64 0.22.1",
- "bytes",
- "chrono",
- "config",
- "cron",
- "flate2",
- "futures",
- "hex",
- "hmac",
- "jsonwebtoken",
- "pavao",
- "rand 0.8.5",
- "reqwest",
- "rsa 0.9.10",
- "russh",
- "russh-sftp",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sqlx",
- "suppaftp",
- "tar",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "url",
- "urlencoding",
- "uuid",
-]
-
-[[package]]
 name = "inout"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4457,6 +4411,52 @@ name = "simd-adler32"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e320a6c5ad31d271ad523dcf3ad13e2767ad8b1cb8f047f75a8aeaf8da139da2"
+
+[[package]]
+name = "simply-storage"
+version = "0.1.0"
+dependencies = [
+ "actix-files",
+ "actix-multipart",
+ "actix-rt",
+ "actix-web",
+ "argon2",
+ "async-trait",
+ "aws-config",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "config",
+ "cron",
+ "flate2",
+ "futures",
+ "hex",
+ "hmac",
+ "jsonwebtoken",
+ "pavao",
+ "rand 0.8.5",
+ "reqwest",
+ "rsa 0.9.10",
+ "russh",
+ "russh-sftp",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "suppaftp",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "urlencoding",
+ "uuid",
+]
 
 [[package]]
 name = "slab"

@@ -2,11 +2,104 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  margin: 0;
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@layer base {
+  /* Light theme — warm beige canvas, dark-ink text, blue-purple accent.
+     Values are RGB triplets so Tailwind's `<alpha-value>` works. */
+  :root {
+    --bg:        246 245 241;  /* #f6f5f1 */
+    --bg-elev:   255 255 255;  /* #ffffff */
+    --bg-sunk:   236 235 229;  /* #ecebe5 */
+
+    --ink:        27  27 24;   /* #1b1b18 */
+    --ink-2:      74  74 68;   /* #4a4a44 */
+    --ink-3:     135 134 125;  /* #87867d */
+    --ink-4:     179 177 168;  /* #b3b1a8 */
+
+    --line:        20  20 16 / 0.08;
+    --line-strong: 20  20 16 / 0.14;
+
+    --accent:      74  76 209; /* #4a4cd1 */
+    --accent-soft: 234 234 250; /* #eaeafa */
+    --accent-ink:  47  49 168;  /* #2f31a8 */
+
+    --good:        58 125  90; /* #3a7d5a */
+    --good-soft:  226 239 228; /* #e2efe4 */
+    --warn:       160 106  31; /* #a06a1f */
+    --warn-soft:  244 234 212; /* #f4ead4 */
+    --danger:     179  66  42; /* #b3422a */
+    --danger-soft: 247 230 223; /* #f7e6df */
+  }
+
+  /* Dark theme — flipped surfaces, brightened accent. */
+  .dark {
+    --bg:        22  22  26;  /* #16161a */
+    --bg-elev:   31  31  35;  /* #1f1f23 */
+    --bg-sunk:   40  40  44;  /* #28282c */
+
+    --ink:       236 235 229; /* #ecebe5 */
+    --ink-2:     189 188 180; /* #bdbcb4 */
+    --ink-3:     140 138 130; /* #8c8a82 */
+    --ink-4:      95  93  87; /* #5f5d57 */
+
+    --line:       236 235 229 / 0.08;
+    --line-strong: 236 235 229 / 0.14;
+
+    --accent:     133 135 238; /* #8587ee */
+    --accent-soft: 47  49  90; /* #2f315a */
+    --accent-ink: 205 206 246; /* #cdcef6 */
+
+    --good:        85 175 125;
+    --good-soft:   32  56  44;
+    --warn:       212 156  74;
+    --warn-soft:   68  52  28;
+    --danger:     220 110  84;
+    --danger-soft: 72  36  28;
+  }
+
+  html, body {
+    background-color: rgb(var(--bg));
+    color: rgb(var(--ink));
+  }
+
+  body {
+    margin: 0;
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3 {
+    font-family: 'Fraunces', 'Times New Roman', serif;
+    font-weight: 500;
+    letter-spacing: -0.015em;
+  }
+
+  ::selection {
+    background-color: rgb(var(--accent-soft));
+    color: rgb(var(--accent-ink));
+  }
+}
+
+/* Map Tailwind's default neutral utilities onto the semantic vars so existing
+   `bg-white`, `bg-gray-50`, `text-gray-*`, `border-gray-200` etc. across the
+   app inherit the new theme (and react to dark mode) without rewrites. */
+@layer base {
+  .bg-white          { background-color: rgb(var(--bg-elev)) !important; }
+  .bg-gray-50        { background-color: rgb(var(--bg)) !important; }
+  .bg-gray-100       { background-color: rgb(var(--bg-sunk)) !important; }
+  .bg-gray-200       { background-color: rgb(var(--bg-sunk)) !important; }
+
+  .text-gray-900     { color: rgb(var(--ink)) !important; }
+  .text-gray-800     { color: rgb(var(--ink)) !important; }
+  .text-gray-700     { color: rgb(var(--ink-2)) !important; }
+  .text-gray-600     { color: rgb(var(--ink-2)) !important; }
+  .text-gray-500     { color: rgb(var(--ink-3)) !important; }
+  .text-gray-400     { color: rgb(var(--ink-3)) !important; }
+  .text-gray-300     { color: rgb(var(--ink-4)) !important; }
+
+  .border-gray-200,
+  .border-gray-300   { border-color: rgb(var(--line-strong)) !important; }
+  .border-gray-100   { border-color: rgb(var(--line)) !important; }
+  .divide-gray-200 > * + *,
+  .divide-gray-100 > * + * { border-color: rgb(var(--line)) !important; }
 }

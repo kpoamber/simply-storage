@@ -30,7 +30,7 @@ function renderWithProviders(initialRoute = '/') {
   });
 
   // Clear localStorage so AuthProvider doesn't try to restore session
-  localStorage.removeItem('innovare_refresh_token');
+  localStorage.removeItem('simply_refresh_token');
 
   return render(
     <QueryClientProvider client={queryClient}>
@@ -47,7 +47,7 @@ function renderAsLoggedIn(initialRoute = '/', role: 'admin' | 'user' = 'admin') 
   });
 
   // Set refresh token so AuthProvider tries to restore
-  localStorage.setItem('innovare_refresh_token', 'test-refresh-token');
+  localStorage.setItem('simply_refresh_token', 'test-refresh-token');
 
   // Mock refresh and me endpoints
   mockPost.mockImplementation((url: string) => {
@@ -99,7 +99,7 @@ describe('App', () => {
   it('renders login page at /login route', async () => {
     renderWithProviders('/login');
     await waitFor(() => {
-      expect(screen.getByText('Innovare Storage')).toBeInTheDocument();
+      expect(screen.getByText('Simply Storage')).toBeInTheDocument();
     });
     expect(screen.getByText('Sign in to your account')).toBeInTheDocument();
   });

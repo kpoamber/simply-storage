@@ -117,7 +117,7 @@ describe('Dashboard', () => {
     });
     renderDashboard();
     expect(screen.getByText('Dashboard')).toBeInTheDocument();
-    expect(screen.getByText(/Welcome to Innovare Storage/)).toBeInTheDocument();
+    expect(screen.getByText(/Welcome to Simply Storage/)).toBeInTheDocument();
     expect(screen.queryByText(/Files · /)).not.toBeInTheDocument();
   });
 
