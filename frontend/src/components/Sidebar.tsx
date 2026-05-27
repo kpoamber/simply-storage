@@ -33,7 +33,7 @@ export default function Sidebar() {
     <aside className="flex w-[232px] min-h-screen flex-col border-r border-line bg-canvas text-ink">
       <div className="flex items-center justify-between px-4 py-4">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-ink">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent">
             <span className="font-serif italic text-white text-lg leading-none">S</span>
           </div>
           <div className="leading-tight">

@@ -38,7 +38,7 @@ export default function Login() {
       <div className="w-full max-w-[380px] px-6">
         <div className="rounded-xl border border-line bg-elev p-8 shadow-soft2">
           <div className="mb-6 flex flex-col items-center">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-ink">
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-accent">
               <span className="font-serif italic text-white text-2xl leading-none">S</span>
             </div>
             <h1 className="font-serif text-[28px] font-medium tracking-tight text-ink">
