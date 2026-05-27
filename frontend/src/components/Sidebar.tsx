@@ -9,6 +9,7 @@ import {
   DatabaseBackup,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import ThemeToggle from './ThemeToggle';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, adminOnly: false },
@@ -29,26 +30,35 @@ export default function Sidebar() {
   );
 
   return (
-    <aside className="w-64 bg-gray-900 text-white flex flex-col min-h-screen">
-      <div className="p-4 border-b border-gray-700">
-        <h1 className="text-lg font-bold tracking-tight">Innovare Storage</h1>
-        <p className="text-xs text-gray-400 mt-1">Admin Panel</p>
+    <aside className="flex w-[232px] min-h-screen flex-col border-r border-line bg-canvas text-ink">
+      <div className="flex items-center justify-between px-4 py-4">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-ink">
+            <span className="font-serif italic text-white text-lg leading-none">S</span>
+          </div>
+          <div className="leading-tight">
+            <p className="text-[15px] font-semibold text-ink">Simply Storage</p>
+            <p className="text-[11px] text-ink-3">Admin Panel</p>
+          </div>
+        </div>
+        <ThemeToggle />
       </div>
-      <nav className="flex-1 p-3 space-y-1">
+
+      <nav className="flex-1 space-y-0.5 px-2 py-2">
         {visibleItems.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}
             end={to === '/'}
             className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+              `flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${
                 isActive
-                  ? 'bg-gray-700 text-white'
-                  : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                  ? 'bg-elev text-ink shadow-soft1'
+                  : 'text-ink-2 hover:bg-sunk hover:text-ink'
               }`
             }
           >
-            <Icon size={18} />
+            <Icon size={17} />
             {label}
           </NavLink>
         ))}

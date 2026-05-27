@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "name": "Innovare Storage API",
+  "name": "Simply Storage API",
   "type": "collection",
   "ignore": ["node_modules", ".git"]
 }

@@ -1,4 +1,4 @@
-# Innovare Storage - Project Conventions
+# Simply Storage - Project Conventions
 
 ## Language & Framework
 

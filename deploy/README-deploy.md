@@ -1,4 +1,4 @@
-# Innovare Storage - Deployment Guide
+# Simply Storage - Deployment Guide
 
 ## Local Development with Docker Compose
 

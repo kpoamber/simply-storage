@@ -1,6 +1,8 @@
-# Innovare Storage
+# Simply Storage
 
 Distributed multi-storage file management system with content-addressable deduplication, container-per-project isolation, and hot/cold tiering. Built with Rust (Actix-Web) and PostgreSQL + Citus. Includes an admin web UI and multi-node clustering.
+
+Note: backend service / database / docker network names still use the legacy `innovare` prefix for backward-compatibility with running deployments. Only the user-facing branding has been rebranded to Simply Storage.
 
 ## Architecture
 

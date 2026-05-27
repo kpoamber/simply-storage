@@ -28,7 +28,7 @@ function renderLogin() {
     defaultOptions: { queries: { retry: false } },
   });
 
-  localStorage.removeItem('innovare_refresh_token');
+  localStorage.removeItem('simply_refresh_token');
 
   return render(
     <QueryClientProvider client={queryClient}>

@@ -18,9 +18,26 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const REFRESH_TOKEN_KEY = 'innovare_refresh_token';
+const REFRESH_TOKEN_KEY = 'simply_refresh_token';
+const LEGACY_REFRESH_TOKEN_KEY = 'innovare_refresh_token';
+
+/// One-time migration: when the app starts, copy a refresh token from the old
+/// localStorage key (pre-rebrand) to the new one and remove the old key. Lets
+/// existing sessions survive the rename.
+function migrateLegacyRefreshToken() {
+  if (typeof localStorage === 'undefined') return;
+  if (localStorage.getItem(REFRESH_TOKEN_KEY)) return;
+  const legacy = localStorage.getItem(LEGACY_REFRESH_TOKEN_KEY);
+  if (legacy) {
+    localStorage.setItem(REFRESH_TOKEN_KEY, legacy);
+    localStorage.removeItem(LEGACY_REFRESH_TOKEN_KEY);
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  // Run the legacy-key migration before any read of REFRESH_TOKEN_KEY happens.
+  migrateLegacyRefreshToken();
+
   const [user, setUser] = useState<AuthUser | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);

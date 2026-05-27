@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import ThemeToggle from '../components/ThemeToggle';
 
 export default function Login() {
   const { login } = useAuth();
@@ -30,18 +31,24 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="w-full max-w-sm">
-        <div className="bg-white rounded-lg shadow-md p-8">
-          <h1 className="text-2xl font-bold text-center text-gray-900 mb-2">
-            Innovare Storage
-          </h1>
-          <p className="text-sm text-gray-500 text-center mb-6">
-            Sign in to your account
-          </p>
+    <div className="relative min-h-screen flex items-center justify-center bg-canvas">
+      <div className="absolute right-4 top-4">
+        <ThemeToggle />
+      </div>
+      <div className="w-full max-w-[380px] px-6">
+        <div className="rounded-xl border border-line bg-elev p-8 shadow-soft2">
+          <div className="mb-6 flex flex-col items-center">
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-ink">
+              <span className="font-serif italic text-white text-2xl leading-none">S</span>
+            </div>
+            <h1 className="font-serif text-[28px] font-medium tracking-tight text-ink">
+              Simply Storage
+            </h1>
+            <p className="mt-1 text-sm text-ink-3">Sign in to your account</p>
+          </div>
 
           {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+            <div className="mb-4 rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">
               {error}
             </div>
           )}
@@ -50,7 +57,7 @@ export default function Login() {
             <div>
               <label
                 htmlFor="username"
-                className="block text-sm font-medium text-gray-700 mb-1"
+                className="mb-1 block text-sm font-medium text-ink-2"
               >
                 Username
               </label>
@@ -60,7 +67,7 @@ export default function Login() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full rounded-md border border-line-strong bg-elev px-3 py-2 text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
                 placeholder="Enter username"
               />
             </div>
@@ -68,7 +75,7 @@ export default function Login() {
             <div>
               <label
                 htmlFor="password"
-                className="block text-sm font-medium text-gray-700 mb-1"
+                className="mb-1 block text-sm font-medium text-ink-2"
               >
                 Password
               </label>
@@ -79,7 +86,7 @@ export default function Login() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 minLength={6}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full rounded-md border border-line-strong bg-elev px-3 py-2 text-ink placeholder:text-ink-4 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
                 placeholder="Enter password"
               />
             </div>
@@ -87,7 +94,7 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-2 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="w-full rounded-md bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? 'Please wait...' : 'Sign In'}
             </button>

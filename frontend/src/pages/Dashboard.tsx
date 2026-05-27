@@ -76,7 +76,7 @@ export default function Dashboard() {
     return (
       <div>
         <h2 className="text-2xl font-semibold text-gray-800">Dashboard</h2>
-        <p className="mt-1 text-gray-500">Welcome to Innovare Storage.</p>
+        <p className="mt-1 text-gray-500">Welcome to Simply Storage.</p>
         <div className="mt-6 rounded-lg border border-gray-200 bg-white p-6">
           <p className="text-gray-600">Navigate to <strong>Projects</strong> to manage your files.</p>
         </div>
@@ -106,8 +106,8 @@ export default function Dashboard() {
               onClick={() => setPeriod(p.value)}
               className={`px-3 py-1.5 text-sm font-medium first:rounded-l-md last:rounded-r-md ${
                 period === p.value
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-white text-gray-700 hover:bg-gray-50'
+                  ? 'bg-accent text-white'
+                  : 'bg-elev text-ink-2 hover:bg-sunk'
               }`}
               data-testid={`period-${p.value}`}
             >

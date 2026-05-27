@@ -1,9 +1,9 @@
 use actix_web::{App, HttpServer, web};
-use innovare_storage::config::AppConfig;
-use innovare_storage::db::models::{CreateUser, Node, RefreshToken, User};
-use innovare_storage::services::{AuthService, BackupService, BulkService, FileService, SharedLinkService, TierService};
-use innovare_storage::storage::StorageRegistry;
-use innovare_storage::workers::{BackupWorker, SyncWorker, TierWorker, UploadCleanupWorker};
+use simply_storage::config::AppConfig;
+use simply_storage::db::models::{CreateUser, Node, RefreshToken, User};
+use simply_storage::services::{AuthService, BackupService, BulkService, FileService, SharedLinkService, TierService};
+use simply_storage::storage::StorageRegistry;
+use simply_storage::workers::{BackupWorker, SyncWorker, TierWorker, UploadCleanupWorker};
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -11,7 +11,7 @@ use tokio_util::task::TaskTracker;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    innovare_storage::init_tracing();
+    simply_storage::init_tracing();
 
     let config = AppConfig::load().unwrap_or_else(|e| {
         tracing::warn!("Failed to load config file, using defaults: {}", e);
@@ -38,21 +38,21 @@ async fn main() -> std::io::Result<()> {
     );
 
     // Set up database connection pool
-    let pool = innovare_storage::db::create_pool(&config.database)
+    let pool = simply_storage::db::create_pool(&config.database)
         .await
         .expect("Failed to create database pool");
 
     // Run migrations
-    innovare_storage::db::run_migrations(&pool)
+    simply_storage::db::run_migrations(&pool)
         .await
         .expect("Failed to run database migrations");
 
     // Optionally configure Citus distribution
-    innovare_storage::db::configure_citus(&pool).await;
+    simply_storage::db::configure_citus(&pool).await;
 
     // Set up storage registry and load backends from database
     let registry = Arc::new(StorageRegistry::new());
-    if let Err(e) = innovare_storage::storage::registry::load_backends_from_db(
+    if let Err(e) = simply_storage::storage::registry::load_backends_from_db(
         &pool,
         &registry,
         &config.storage.hmac_secret,
@@ -205,7 +205,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(shared_link_service_data.clone())
             .app_data(backup_service_data.clone())
             .app_data(task_tracker_data.clone())
-            .configure(innovare_storage::configure_app)
+            .configure(simply_storage::configure_app)
     })
     .bind(&bind_addr)?
     .run();
