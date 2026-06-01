@@ -4,7 +4,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Upload, Download, Link2, ArchiveRestore, Trash2, Share2,
-  ChevronLeft, ChevronRight, Search, Plus, X, Pencil, ChevronDown, ChevronUp, AlertTriangle, Check, Copy,
+  ChevronLeft, ChevronRight, Search, Plus, X, Pencil, ChevronDown, ChevronUp, AlertTriangle, Check, Copy, Loader2,
 } from 'lucide-react';
 import apiClient, { uploadFile } from '../api/client';
 import { uploadViaTus, LARGE_FILE_THRESHOLD } from '../utils/tusUpload';
@@ -1042,6 +1042,7 @@ function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileRefer
   const [showSyncDetails, setShowSyncDetails] = useState(false);
   const [linkExpiry, setLinkExpiry] = useState('');
   const [generatedLinks, setGeneratedLinks] = useState<TempLinkEntry[]>([]);
+  const [generatingLinks, setGeneratingLinks] = useState(false);
 
   const metadataEntries = Object.entries(fileRef.metadata || {});
 
@@ -1083,6 +1084,8 @@ function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileRefer
   };
 
   const handleGenerateLink = async () => {
+    setGeneratingLinks(true);
+    setGeneratedLinks([]);
     try {
       const expiresIn = getExpiresInSecs();
       const res = await apiClient.get<TempLinkResponse>(`/files/${fileRef.file_id}/link`, {
@@ -1091,6 +1094,8 @@ function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileRefer
       setGeneratedLinks(res.data.links);
     } catch {
       // error handled by axios interceptor
+    } finally {
+      setGeneratingLinks(false);
     }
   };
 
@@ -1302,11 +1307,19 @@ function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileRefer
               </div>
               <button
                 onClick={handleGenerateLink}
-                className="mt-3 rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700"
+                disabled={generatingLinks}
+                className="mt-3 inline-flex items-center gap-2 rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Generate Links
+                {generatingLinks && <Loader2 className="h-4 w-4 animate-spin" />}
+                {generatingLinks ? 'Generating…' : 'Generate Links'}
               </button>
-              {generatedLinks.length > 0 && (
+              {generatingLinks && (
+                <div className="mt-3 flex items-center gap-2 text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Querying storages — this can take a few seconds for cloud backends.
+                </div>
+              )}
+              {!generatingLinks && generatedLinks.length > 0 && (
                 <div className="mt-3 space-y-2">
                   <label className="block text-xs text-gray-500">Generated URLs</label>
                   {generatedLinks.map((entry) => (
