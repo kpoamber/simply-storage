@@ -995,6 +995,7 @@ mod tests {
             links: vec![TempLinkEntry {
                 storage_name: "S3 Primary".to_string(),
                 storage_type: "s3".to_string(),
+                storage_path: "ab/cd/abcdef1234".to_string(),
                 url: "/download/local?path=abc&expires=123&sig=xyz".to_string(),
             }],
             expires_in_seconds: 3600,
@@ -1140,6 +1141,7 @@ mod tests {
                 status: "synced".to_string(),
                 storage_path: Some("ab/cd/abcdef1234".to_string()),
                 supports_direct_links: true,
+                is_hot: true,
                 synced_at: Some(now),
             }],
         };
