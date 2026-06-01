@@ -47,6 +47,7 @@ export interface StorageSyncDetail {
   status: string;
   storage_path: string | null;
   supports_direct_links: boolean;
+  is_hot: boolean;
   synced_at: string | null;
 }
 
@@ -92,6 +93,7 @@ export interface FileMetadata {
 export interface TempLinkEntry {
   storage_name: string;
   storage_type: string;
+  storage_path: string;
   url: string;
 }
 

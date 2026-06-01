@@ -192,8 +192,11 @@ describe('ProjectDetail', () => {
 
     expect(screen.getAllByTitle('Download').length).toBeGreaterThan(0);
     expect(screen.getAllByTitle('Get temp link').length).toBeGreaterThan(0);
-    expect(screen.getAllByTitle('Restore from cold').length).toBeGreaterThan(0);
     expect(screen.getAllByTitle('Delete').length).toBeGreaterThan(0);
+    // "Restore from cold" is conditional — only shown when the file has a
+    // synced cold-storage location with no hot copy. The test fixtures don't
+    // include sync_details, so it must NOT be rendered here.
+    expect(screen.queryAllByTitle('Restore from cold').length).toBe(0);
   });
 
   it('shows pagination controls', async () => {

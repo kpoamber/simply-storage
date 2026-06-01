@@ -28,6 +28,7 @@ pub struct UploadResult {
 pub struct TempLinkEntry {
     pub storage_name: String,
     pub storage_type: String,
+    pub storage_path: String,
     pub url: String,
 }
 
@@ -387,21 +388,42 @@ impl FileService {
                 .await;
 
             for backend in &backends {
-                match backend
-                    .generate_temp_url(&location.storage_path, expires_in, original_name.as_deref())
-                    .await
-                {
-                    Ok(Some(url)) => {
+                // Bound each backend call so a single slow/unreachable storage
+                // can't hang the whole request indefinitely.
+                let call = backend.generate_temp_url(
+                    &location.storage_path,
+                    expires_in,
+                    original_name.as_deref(),
+                );
+                match tokio::time::timeout(std::time::Duration::from_secs(5), call).await {
+                    Ok(Ok(Some(url))) => {
                         let _ = FileLocation::touch_accessed(&self.pool, location.id).await;
                         links.push(TempLinkEntry {
                             storage_name: storage.name.clone(),
                             storage_type: storage.storage_type.clone(),
+                            storage_path: location.storage_path.clone(),
                             url,
                         });
                         break; // one link per storage is enough
                     }
-                    Ok(None) => continue,
-                    Err(_) => continue,
+                    Ok(Ok(None)) => continue,
+                    Ok(Err(e)) => {
+                        tracing::warn!(
+                            storage_id = %location.storage_id,
+                            file_id = %file_id,
+                            error = %e,
+                            "temp URL generation failed, trying next backend"
+                        );
+                        continue;
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            storage_id = %location.storage_id,
+                            file_id = %file_id,
+                            "temp URL generation timed out after 5s, skipping"
+                        );
+                        continue;
+                    }
                 }
             }
         }
