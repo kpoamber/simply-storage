@@ -1259,11 +1259,19 @@ function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileRefer
           <button onClick={() => onShare(fileRef)} title="Create shared link" className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-blue-600" data-testid="share-file-button">
             <Share2 className="h-4 w-4" />
           </button>
-          {canWrite && (
-            <button onClick={handleRestore} title="Restore from cold" className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700">
-              <ArchiveRestore className="h-4 w-4" />
-            </button>
-          )}
+          {canWrite && (() => {
+            // Only show Restore when the file is sitting on a cold storage and
+            // is not already synced on any hot one (i.e. truly needs restoring).
+            const details = fileRef.sync_details ?? [];
+            const inCold = details.some(d => !d.is_hot && d.status === 'synced');
+            const onHot  = details.some(d =>  d.is_hot && d.status === 'synced');
+            if (!inCold || onHot) return null;
+            return (
+              <button onClick={handleRestore} title="Restore from cold" className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700">
+                <ArchiveRestore className="h-4 w-4" />
+              </button>
+            );
+          })()}
           {canWrite && (
             <button
               onClick={() => { if (window.confirm('Delete this file reference?')) deleteMutation.mutate(); }}
@@ -1306,6 +1314,9 @@ function FileRow({ fileRef, projectId, canWrite, onShare }: { fileRef: FileRefer
                       <div className="mb-1 flex items-center gap-2">
                         <span className="text-xs font-medium text-gray-700">{entry.storage_name}</span>
                         <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500">{entry.storage_type}</span>
+                      </div>
+                      <div className="mb-1 truncate font-mono text-[11px] text-gray-500" title={entry.storage_path}>
+                        {entry.storage_path}
                       </div>
                       <div className="flex gap-2">
                         <input

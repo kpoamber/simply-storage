@@ -41,6 +41,7 @@ pub struct StorageSyncDetail {
     pub status: String,
     pub storage_path: Option<String>,
     pub supports_direct_links: bool,
+    pub is_hot: bool,
     pub synced_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -105,6 +106,7 @@ async fn enrich_file_references(
                 status,
                 storage_path,
                 supports_direct_links: ps.supports_direct_links,
+                is_hot: ps.is_hot,
                 synced_at,
             });
         }
