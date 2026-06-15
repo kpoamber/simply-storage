@@ -294,6 +294,63 @@ impl StorageBackend for GcsBackend {
         Ok(())
     }
 
+    /// Stream a local file straight to GCS in a single media upload, so
+    /// multi-hundred-MB transfers don't have to be loaded into memory. The
+    /// body is built via `reqwest::Body::wrap_stream` over a `ReaderStream`;
+    /// the bucket auto-create + retry path reopens the file because a
+    /// streaming body is single-use.
+    async fn upload_from_file(&self, path: &str, src: &std::path::Path, size: u64) -> AppResult<()> {
+        let object = self.object_path(path);
+        let url = format!(
+            "{}/b/{}/o?uploadType=media&name={}",
+            GCS_UPLOAD_BASE,
+            urlencoding::encode(&self.bucket),
+            urlencoding::encode(&object),
+        );
+
+        let post_once = || async {
+            let token = self.get_access_token().await?;
+            let file = tokio::fs::File::open(src).await.map_err(|e| {
+                AppError::Internal(format!("Failed to open temp file for GCS upload: {}", e))
+            })?;
+            let stream = tokio_util::io::ReaderStream::new(file);
+            self.client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", token))
+                .header("Content-Type", "application/octet-stream")
+                .header("Content-Length", size.to_string())
+                .body(reqwest::Body::wrap_stream(stream))
+                .send()
+                .await
+                .map_err(|e| AppError::Internal(format!("GCS streaming upload failed: {}", e)))
+        };
+
+        let resp = post_once().await?;
+        if resp.status().is_success() {
+            return Ok(());
+        }
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if status == reqwest::StatusCode::NOT_FOUND && body.contains("notFound") {
+            tracing::info!(bucket = %self.bucket, "Bucket not found, creating automatically");
+            self.create_container(&self.bucket.clone()).await?;
+            let retry = post_once().await?;
+            if !retry.status().is_success() {
+                let rs = retry.status();
+                let rb = retry.text().await.unwrap_or_default();
+                return Err(AppError::Internal(format!(
+                    "GCS streaming upload failed with status {}: {}",
+                    rs, rb
+                )));
+            }
+            return Ok(());
+        }
+        Err(AppError::Internal(format!(
+            "GCS streaming upload failed with status {}: {}",
+            status, body
+        )))
+    }
+
     async fn download(&self, path: &str) -> AppResult<Bytes> {
         let object = self.object_path(path);
         let token = self.get_access_token().await?;
