@@ -1465,6 +1465,23 @@ impl SyncTask {
         limit: i64,
         max_retries: i32,
     ) -> AppResult<Vec<SyncTask>> {
+        // Recover orphaned tasks: anything stuck in 'in_progress' for more than
+        // 15 minutes is assumed to be a crashed/OOM-ed worker (status is never
+        // unstuck without explicit code), so flip it back to 'pending' and bump
+        // retries. Without this, an OOM mid-transfer would strand the task
+        // forever and the underlying file would never re-sync.
+        sqlx::query(
+            r#"UPDATE sync_tasks
+                  SET status = 'pending',
+                      retries = retries + 1,
+                      error_msg = 'Reclaimed from stuck in_progress',
+                      updated_at = NOW()
+                WHERE status = 'in_progress'
+                  AND updated_at < NOW() - INTERVAL '15 minutes'"#,
+        )
+        .execute(pool)
+        .await?;
+
         // Mark permanently failed tasks first
         sqlx::query(
             r#"UPDATE sync_tasks SET status = 'failed', error_msg = 'Max retries exceeded'

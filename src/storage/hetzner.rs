@@ -289,6 +289,53 @@ impl StorageBackend for HetznerStorageBoxBackend {
         Ok(bytes)
     }
 
+    /// Stream the WebDAV response chunk-by-chunk into `dst` instead of loading
+    /// the whole body in memory — required for multi-hundred-MB transfers.
+    async fn download_to_file(&self, path: &str, dst: &std::path::Path) -> AppResult<()> {
+        use futures::StreamExt;
+        use tokio::io::AsyncWriteExt;
+
+        let url = self.webdav_url(path);
+        let resp = self
+            .client
+            .get(&url)
+            .basic_auth(self.config.effective_username(), Some(&self.config.password))
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("Hetzner download failed: {}", e)))?;
+
+        let status = resp.status();
+        if status.as_u16() == 404 {
+            return Err(AppError::NotFound(format!(
+                "File not found on Hetzner StorageBox: {}",
+                path
+            )));
+        }
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Internal(format!(
+                "Hetzner download returned {}: {}",
+                status, body
+            )));
+        }
+
+        let mut file = tokio::fs::File::create(dst).await.map_err(|e| {
+            AppError::Internal(format!("Failed to create temp file {:?}: {}", dst, e))
+        })?;
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk
+                .map_err(|e| AppError::Internal(format!("Hetzner stream chunk error: {}", e)))?;
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| AppError::Internal(format!("Failed to write chunk to temp: {}", e)))?;
+        }
+        file.flush()
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to flush temp file: {}", e)))?;
+        Ok(())
+    }
+
     async fn delete(&self, path: &str) -> AppResult<()> {
         let url = self.webdav_url(path);
         let resp = self
