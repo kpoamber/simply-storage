@@ -232,11 +232,33 @@ impl SyncWorker {
 
         let storage_path = &source_location.storage_path;
 
-        // Download from source
-        let data = source_backend.download(storage_path).await?;
+        // Stream source -> temp file -> target, so a multi-hundred-MB transfer
+        // never holds the whole payload in memory at once. The temp dir is the
+        // OS default; a single tokio::fs read/write per chunk keeps peak RAM
+        // bounded by the stream chunk size (~8 KB) plus per-backend buffers.
+        let temp_dir = std::env::temp_dir().join("simply-storage-sync");
+        if let Err(e) = tokio::fs::create_dir_all(&temp_dir).await {
+            return Err(crate::error::AppError::Internal(format!(
+                "Failed to create sync temp dir {:?}: {}",
+                temp_dir, e
+            )));
+        }
+        let temp_path = temp_dir.join(format!("{}.part", task.id));
 
-        // Upload to target
-        target_backend.upload(storage_path, data).await?;
+        // Wrap the transfer so we always clean up the temp file, even on error.
+        let result = async {
+            source_backend.download_to_file(storage_path, &temp_path).await?;
+            let size = tokio::fs::metadata(&temp_path)
+                .await
+                .map_err(|e| crate::error::AppError::Internal(format!("temp stat: {}", e)))?
+                .len();
+            target_backend
+                .upload_from_file(storage_path, &temp_path, size)
+                .await
+        }
+        .await;
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        result?;
 
         // Create or update file_location for the target storage
         let create_location = CreateFileLocation {

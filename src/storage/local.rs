@@ -136,6 +136,24 @@ impl StorageBackend for LocalDiskBackend {
         Ok(Bytes::from(data))
     }
 
+    /// Copy on-disk file to destination — never loads bytes into memory.
+    async fn download_to_file(&self, path: &str, dst: &Path) -> AppResult<()> {
+        let src = self.resolve_path(path)?;
+        if !src.exists() {
+            return Err(AppError::NotFound(format!(
+                "File not found in local storage: {}",
+                path
+            )));
+        }
+        if let Some(parent) = dst.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::copy(&src, dst)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to copy {:?} -> {:?}: {}", src, dst, e)))?;
+        Ok(())
+    }
+
     async fn delete(&self, path: &str) -> AppResult<()> {
         let file_path = self.resolve_path(path)?;
         if file_path.exists() {

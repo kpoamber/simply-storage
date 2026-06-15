@@ -31,6 +31,20 @@ pub trait StorageBackend: Send + Sync {
     /// Download data from the given path within this storage.
     async fn download(&self, path: &str) -> AppResult<Bytes>;
 
+    /// Stream the contents of the remote object to a local file.
+    ///
+    /// Used by background sync / large-file proxy paths where loading the whole
+    /// payload into memory (`download`) would OOM the process. The default
+    /// falls back to `download` + write — backends where memory matters (local
+    /// disk copy, Hetzner WebDAV streaming, S3 streaming) override this with
+    /// a chunked implementation.
+    async fn download_to_file(&self, path: &str, dst: &Path) -> AppResult<()> {
+        let data = self.download(path).await?;
+        tokio::fs::write(dst, &data)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to write download to {:?}: {}", dst, e)))
+    }
+
     /// Delete the file at the given path within this storage.
     async fn delete(&self, path: &str) -> AppResult<()>;
 

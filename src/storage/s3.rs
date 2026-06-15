@@ -399,6 +399,48 @@ impl StorageBackend for S3StorageBackend {
         Ok(body.into_bytes())
     }
 
+    /// Stream the GetObject body chunk-by-chunk into `dst`. Avoids loading
+    /// multi-hundred-MB objects into memory the way `download` does.
+    async fn download_to_file(&self, path: &str, dst: &std::path::Path) -> AppResult<()> {
+        use tokio::io::AsyncWriteExt;
+
+        let key = self.object_key(path);
+        let resp = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .send()
+            .await
+            .map_err(|e| {
+                let err_str = format!("{}", e);
+                if err_str.contains("NoSuchKey") || err_str.contains("404") {
+                    AppError::NotFound(format!("File not found in S3: {}", path))
+                } else {
+                    AppError::Internal(format!("S3 download failed: {}", e))
+                }
+            })?;
+
+        let mut file = tokio::fs::File::create(dst).await.map_err(|e| {
+            AppError::Internal(format!("Failed to create temp file {:?}: {}", dst, e))
+        })?;
+        let mut body = resp.body;
+        while let Some(chunk) = body
+            .next()
+            .await
+            .transpose()
+            .map_err(|e| AppError::Internal(format!("S3 stream chunk error: {}", e)))?
+        {
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| AppError::Internal(format!("Failed to write S3 chunk: {}", e)))?;
+        }
+        file.flush()
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to flush temp file: {}", e)))?;
+        Ok(())
+    }
+
     async fn delete(&self, path: &str) -> AppResult<()> {
         let key = self.object_key(path);
 
