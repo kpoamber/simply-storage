@@ -325,12 +325,23 @@ impl StorageBackend for S3StorageBackend {
     }
 
     /// Stream-upload from a local file. Avoids holding the payload in memory:
-    /// small objects stream via put_object(ByteStream::from_path), large objects
-    /// use multipart reading parts from disk.
+    /// objects up to the S3 single-PUT limit (5 GB) stream via
+    /// put_object(ByteStream::from_path); anything beyond that falls back to
+    /// multipart reading parts from disk.
+    ///
+    /// The previous behaviour used multipart for anything above
+    /// `multipart_threshold` (default 100 MB), but the file-based multipart
+    /// path turned out fragile against S3-compatible providers (Hetzner
+    /// Object Storage in particular) — failing with confusing
+    /// "S3 read part from file failed: IO error" / "service error" messages.
+    /// A single streaming PUT works reliably for typical files and avoids
+    /// the per-part orchestration entirely.
     async fn upload_from_file(&self, path: &str, src: &std::path::Path, size: u64) -> AppResult<()> {
         let key = self.object_key(path);
 
-        if size >= self.multipart_threshold {
+        // S3 single-PUT max is 5 GiB. Only fall back to multipart above that.
+        const SINGLE_PUT_MAX: u64 = 5 * 1024 * 1024 * 1024;
+        if size > SINGLE_PUT_MAX {
             return self.multipart_upload_from_file(&key, src, size).await;
         }
 
