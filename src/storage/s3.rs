@@ -367,7 +367,13 @@ impl StorageBackend for S3StorageBackend {
                         .map_err(|e| AppError::Internal(format!("S3 upload failed: {}", e)))?;
                     Ok(())
                 } else {
-                    Err(AppError::Internal(format!("S3 upload from file failed: {}", e)))
+                    // SDK's Display is just "service error"; Debug carries the
+                    // HTTP status + response body which is what we actually
+                    // need to diagnose 5xx/redirect/region/CORS issues.
+                    Err(AppError::Internal(format!(
+                        "S3 upload from file failed (bucket={} key={} size={}): display={} debug={:?}",
+                        self.bucket, key, size, e, e
+                    )))
                 }
             }
         }
