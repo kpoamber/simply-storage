@@ -463,6 +463,57 @@ impl StorageBackend for AzureBlobBackend {
             .map_err(|e| AppError::Internal(format!("Azure download body read failed: {}", e)))
     }
 
+    /// Stream the blob response into `dst` chunk-by-chunk. Avoids loading
+    /// multi-hundred-MB blobs into memory the way `download` does.
+    async fn download_to_file(&self, path: &str, dst: &std::path::Path) -> AppResult<()> {
+        use futures::StreamExt;
+        use tokio::io::AsyncWriteExt;
+
+        let bp = self.blob_path(path);
+        let url = self.blob_url(&bp);
+        let date = Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        let resource_path = format!("{}/{}", self.container, bp);
+        let auth = self.shared_key_auth("GET", &resource_path, &date, None, "", &[], &[])?;
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", auth)
+            .header("x-ms-date", &date)
+            .header("x-ms-version", API_VERSION)
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("Azure download failed: {}", e)))?;
+
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(AppError::NotFound(format!("File not found in Azure: {}", path)));
+        }
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Internal(format!(
+                "Azure download failed with status {}: {}",
+                status, body
+            )));
+        }
+
+        let mut file = tokio::fs::File::create(dst).await.map_err(|e| {
+            AppError::Internal(format!("Failed to create temp file {:?}: {}", dst, e))
+        })?;
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk
+                .map_err(|e| AppError::Internal(format!("Azure stream chunk error: {}", e)))?;
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| AppError::Internal(format!("Failed to write chunk to temp: {}", e)))?;
+        }
+        file.flush()
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to flush temp file: {}", e)))?;
+        Ok(())
+    }
+
     async fn delete(&self, path: &str) -> AppResult<()> {
         let bp = self.blob_path(path);
         let url = self.blob_url(&bp);
