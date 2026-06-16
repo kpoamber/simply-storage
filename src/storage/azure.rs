@@ -356,6 +356,74 @@ impl StorageBackend for AzureBlobBackend {
         Ok(())
     }
 
+    /// Stream a local file straight to Azure as a single Block Blob PUT, so
+    /// multi-hundred-MB transfers don't have to be loaded into memory. The
+    /// shared-key signature uses the known file size for Content-Length; the
+    /// body is built via `reqwest::Body::wrap_stream` over a `ReaderStream`.
+    async fn upload_from_file(&self, path: &str, src: &std::path::Path, size: u64) -> AppResult<()> {
+        let bp = self.blob_path(path);
+        let url = self.blob_url(&bp);
+        let resource_path = format!("{}/{}", self.container, bp);
+
+        // The retry path reopens the file because a streaming body is single-use.
+        let put_once = || async {
+            let date = Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+            let auth = self.shared_key_auth(
+                "PUT",
+                &resource_path,
+                &date,
+                Some(size as usize),
+                "application/octet-stream",
+                &[("x-ms-blob-type", "BlockBlob")],
+                &[],
+            )?;
+            let file = tokio::fs::File::open(src).await.map_err(|e| {
+                AppError::Internal(format!("Failed to open temp file for Azure upload: {}", e))
+            })?;
+            let stream = tokio_util::io::ReaderStream::new(file);
+            self.client
+                .put(&url)
+                .header("Authorization", auth)
+                .header("x-ms-date", &date)
+                .header("x-ms-version", API_VERSION)
+                .header("x-ms-blob-type", "BlockBlob")
+                .header("Content-Type", "application/octet-stream")
+                .header("Content-Length", size.to_string())
+                .body(reqwest::Body::wrap_stream(stream))
+                .send()
+                .await
+                .map_err(|e| AppError::Internal(format!("Azure streaming upload failed: {}", e)))
+        };
+
+        let resp = put_once().await?;
+        if resp.status().is_success() {
+            return Ok(());
+        }
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+
+        // Auto-create container then retry once on ContainerNotFound.
+        if body.contains("ContainerNotFound") {
+            tracing::info!(container = %self.container, "Container not found, creating automatically");
+            self.create_account_container(&self.container.clone()).await?;
+            let retry = put_once().await?;
+            if !retry.status().is_success() {
+                let rs = retry.status();
+                let rb = retry.text().await.unwrap_or_default();
+                return Err(AppError::Internal(format!(
+                    "Azure streaming upload failed with status {}: {}",
+                    rs, rb
+                )));
+            }
+            return Ok(());
+        }
+
+        Err(AppError::Internal(format!(
+            "Azure streaming upload failed with status {}: {}",
+            status, body
+        )))
+    }
+
     async fn download(&self, path: &str) -> AppResult<Bytes> {
         let bp = self.blob_path(path);
         let url = self.blob_url(&bp);
@@ -393,6 +461,57 @@ impl StorageBackend for AzureBlobBackend {
         resp.bytes()
             .await
             .map_err(|e| AppError::Internal(format!("Azure download body read failed: {}", e)))
+    }
+
+    /// Stream the blob response into `dst` chunk-by-chunk. Avoids loading
+    /// multi-hundred-MB blobs into memory the way `download` does.
+    async fn download_to_file(&self, path: &str, dst: &std::path::Path) -> AppResult<()> {
+        use futures::StreamExt;
+        use tokio::io::AsyncWriteExt;
+
+        let bp = self.blob_path(path);
+        let url = self.blob_url(&bp);
+        let date = Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        let resource_path = format!("{}/{}", self.container, bp);
+        let auth = self.shared_key_auth("GET", &resource_path, &date, None, "", &[], &[])?;
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", auth)
+            .header("x-ms-date", &date)
+            .header("x-ms-version", API_VERSION)
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("Azure download failed: {}", e)))?;
+
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(AppError::NotFound(format!("File not found in Azure: {}", path)));
+        }
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AppError::Internal(format!(
+                "Azure download failed with status {}: {}",
+                status, body
+            )));
+        }
+
+        let mut file = tokio::fs::File::create(dst).await.map_err(|e| {
+            AppError::Internal(format!("Failed to create temp file {:?}: {}", dst, e))
+        })?;
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk
+                .map_err(|e| AppError::Internal(format!("Azure stream chunk error: {}", e)))?;
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| AppError::Internal(format!("Failed to write chunk to temp: {}", e)))?;
+        }
+        file.flush()
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to flush temp file: {}", e)))?;
+        Ok(())
     }
 
     async fn delete(&self, path: &str) -> AppResult<()> {

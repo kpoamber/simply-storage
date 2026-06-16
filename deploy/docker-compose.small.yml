@@ -6,13 +6,20 @@ services:
     deploy:
       replicas: 1
       resources:
+        # Raised from 512M because syncing multi-hundred-MB files (even with
+        # streaming download + upload) needs ~600–800 MB headroom for reqwest
+        # buffers, SDK clients, the tokio runtime and the DB pool. 512M caused
+        # cgroup OOM-kills mid-transfer on a real ~316 MB file in prod.
         limits:
-          memory: 512M
+          memory: 1024M
         reservations:
-          memory: 256M
+          memory: 384M
     environment:
       - APP_DATABASE__MAX_CONNECTIONS=5
-      - APP_SYNC__NUM_WORKERS=2
+      # Sequentialise sync work so we never pile up multiple multi-hundred-MB
+      # transfers in the same container. Throughput stays fine; peak memory
+      # stays bounded.
+      - APP_SYNC__NUM_WORKERS=1
 
   postgres:
     deploy:
