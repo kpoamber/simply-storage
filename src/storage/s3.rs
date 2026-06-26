@@ -345,16 +345,26 @@ impl StorageBackend for S3StorageBackend {
             return self.multipart_upload_from_file(&key, src, size).await;
         }
 
-        let stream = ByteStream::from_path(src)
-            .await
-            .map_err(|e| AppError::Internal(format!("S3 read file for upload failed: {}", e)))?;
+        // Pre-load the bytes ourselves so the request is sent as a single
+        // chunk with an explicit Content-Length. ByteStream::from_path defers
+        // reading and lets the SDK fall back to chunked transfer encoding,
+        // which AWS S3 then aborts after a few seconds with RequestTimeout
+        // ("Your socket connection to the server was not read from or written
+        // to within the timeout period.") — exactly the failure we kept
+        // hitting in prod even on tiny 95–150 KB files.
+        let data = tokio::fs::read(src).await.map_err(|e| {
+            AppError::Internal(format!("S3 read file for upload failed: {}", e))
+        })?;
+        let content_length = i64::try_from(data.len())
+            .map_err(|e| AppError::Internal(format!("S3 size exceeds i64::MAX: {}", e)))?;
 
         let result = self
             .client
             .put_object()
             .bucket(&self.bucket)
             .key(&key)
-            .body(stream)
+            .body(ByteStream::from(Bytes::from(data.clone())))
+            .content_length(content_length)
             .send()
             .await;
 
@@ -365,14 +375,12 @@ impl StorageBackend for S3StorageBackend {
                 let err_debug = format!("{:?}", e);
                 if err_display.contains("NoSuchBucket") || err_debug.contains("NoSuchBucket") {
                     self.create_container(&self.bucket.clone()).await?;
-                    let stream = ByteStream::from_path(src).await.map_err(|e| {
-                        AppError::Internal(format!("S3 read file for upload failed: {}", e))
-                    })?;
                     self.client
                         .put_object()
                         .bucket(&self.bucket)
                         .key(&key)
-                        .body(stream)
+                        .body(ByteStream::from(Bytes::from(data)))
+                        .content_length(content_length)
                         .send()
                         .await
                         .map_err(|e| AppError::Internal(format!("S3 upload failed: {}", e)))?;
