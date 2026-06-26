@@ -2,20 +2,22 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import apiClient from '../api/client';
-import { SyncTask, StorageBackend } from '../api/types';
+import { SyncTask, StorageBackend, Project } from '../api/types';
 
 const STATUS_OPTIONS = ['all', 'pending', 'in_progress', 'completed', 'failed'];
 
 export default function SyncTasks() {
   const [statusFilter, setStatusFilter] = useState('all');
+  const [projectFilter, setProjectFilter] = useState('all');
   const [page, setPage] = useState(1);
   const perPage = 20;
 
   const { data: syncTasks, isLoading } = useQuery<SyncTask[]>({
-    queryKey: ['sync-tasks', statusFilter, page],
+    queryKey: ['sync-tasks', statusFilter, projectFilter, page],
     queryFn: () => {
       const params: Record<string, string | number> = { page, per_page: perPage };
       if (statusFilter !== 'all') params.status = statusFilter;
+      if (projectFilter !== 'all') params.project_id = projectFilter;
       return apiClient.get('/sync-tasks', { params }).then(r => r.data);
     },
   });
@@ -23,6 +25,12 @@ export default function SyncTasks() {
   const { data: storages } = useQuery<StorageBackend[]>({
     queryKey: ['storages'],
     queryFn: () => apiClient.get('/storages').then(r => r.data),
+  });
+
+  const { data: projects } = useQuery<Project[]>({
+    queryKey: ['projects'],
+    queryFn: () => apiClient.get('/projects').then(r => r.data),
+    staleTime: 60_000,
   });
 
   const storageMap = new Map(storages?.map(s => [s.id, s.name]) ?? []);
@@ -33,18 +41,35 @@ export default function SyncTasks() {
       <h2 className="text-2xl font-semibold text-gray-800">Sync Tasks</h2>
       <p className="mt-1 text-gray-500">Monitor file synchronization tasks.</p>
 
-      <div className="mt-4 flex items-center gap-2">
-        <label className="text-sm text-gray-600">Filter by status:</label>
-        <select
-          value={statusFilter}
-          onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
-          className="rounded border border-gray-300 px-3 py-1.5 text-sm"
-          aria-label="Filter by status"
-        >
-          {STATUS_OPTIONS.map(s => (
-            <option key={s} value={s}>{s === 'all' ? 'All' : s.replace('_', ' ')}</option>
-          ))}
-        </select>
+      <div className="mt-4 flex flex-wrap items-center gap-4">
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-gray-600">Filter by status:</label>
+          <select
+            value={statusFilter}
+            onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
+            className="rounded border border-gray-300 px-3 py-1.5 text-sm"
+            aria-label="Filter by status"
+          >
+            {STATUS_OPTIONS.map(s => (
+              <option key={s} value={s}>{s === 'all' ? 'All' : s.replace('_', ' ')}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-gray-600">Filter by project:</label>
+          <select
+            value={projectFilter}
+            onChange={e => { setProjectFilter(e.target.value); setPage(1); }}
+            className="rounded border border-gray-300 px-3 py-1.5 text-sm"
+            aria-label="Filter by project"
+            data-testid="project-filter"
+          >
+            <option value="all">All projects</option>
+            {projects?.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {isLoading ? (
@@ -58,6 +83,7 @@ export default function SyncTasks() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">File</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Project</th>
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Source</th>
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Target</th>
                   <th className="px-4 py-2 text-left text-xs font-medium uppercase text-gray-500">Status</th>
@@ -71,6 +97,9 @@ export default function SyncTasks() {
                 {syncTasks.map(task => (
                   <tr key={task.id}>
                     <td className="whitespace-nowrap px-4 py-2 text-sm font-mono text-gray-900">{task.file_id.slice(0, 8)}...</td>
+                    <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-700">
+                      {task.project_name ?? <span className="text-gray-400">—</span>}
+                    </td>
                     <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-500">{getStorageName(task.source_storage_id)}</td>
                     <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-500">{getStorageName(task.target_storage_id)}</td>
                     <td className="whitespace-nowrap px-4 py-2 text-sm">
@@ -86,7 +115,7 @@ export default function SyncTasks() {
                     </td>
                     <td className="whitespace-nowrap px-4 py-2 text-right text-sm text-gray-500">{task.retries}</td>
                     <td className="max-w-xs truncate px-4 py-2 text-sm text-red-500" title={task.error_msg ?? undefined}>
-                      {task.error_msg ?? '\u2014'}
+                      {task.error_msg ?? '—'}
                     </td>
                     <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-500">
                       {new Date(task.created_at).toLocaleString()}

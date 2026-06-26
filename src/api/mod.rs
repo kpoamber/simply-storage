@@ -76,6 +76,7 @@ async fn system_stats(_admin: AdminUser, pool: web::Data<PgPool>) -> Result<Http
 pub struct SyncTaskFilter {
     pub status: Option<String>,
     pub storage_id: Option<Uuid>,
+    pub project_id: Option<Uuid>,
 }
 
 async fn list_sync_tasks(
@@ -83,10 +84,11 @@ async fn list_sync_tasks(
     pool: web::Data<PgPool>,
     query: web::Query<SyncTaskFilter>,
 ) -> Result<HttpResponse, AppError> {
-    let tasks = SyncTask::list_filtered(
+    let tasks = SyncTask::list_with_project(
         pool.get_ref(),
         query.status.as_deref(),
         query.storage_id,
+        query.project_id,
     )
     .await?;
     Ok(HttpResponse::Ok().json(tasks))
