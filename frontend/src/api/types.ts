@@ -156,6 +156,8 @@ export interface DashboardTotals {
   bytes_accessed_in_period: number;
   pending_syncs: number;
   failed_syncs_in_period: number;
+  failed_syncs_total: number;
+  synced_in_24h: number;
 }
 
 export interface UploadTimelinePoint {

@@ -2752,6 +2752,12 @@ pub struct DashboardTotals {
     pub bytes_accessed_in_period: i64,
     pub pending_syncs: i64,
     pub failed_syncs_in_period: i64,
+    /// Total `status='failed'` sync_tasks ever — not just in-period — so the
+    /// operator sees the whole queue health, not just a sliding window.
+    pub failed_syncs_total: i64,
+    /// Sync tasks completed in the last 24 hours (always 24 h, independent of
+    /// the dashboard `period` selector — this is a queue-throughput metric).
+    pub synced_in_24h: i64,
 }
 
 /// Filter parameters shared by every dashboard query.
@@ -2849,6 +2855,35 @@ impl DashboardStats {
         .fetch_one(pool)
         .await?;
 
+        // All-time failed count (independent of the period). Useful for
+        // operators because the "in period" view hides leftover failures
+        // accumulated before the active window.
+        let failed_total: (i64,) = sqlx::query_as(
+            r#"SELECT COUNT(*)::bigint FROM sync_tasks
+                WHERE status = 'failed'
+                  AND ($1::uuid IS NULL OR project_id = $1)
+                  AND ($2::uuid IS NULL OR source_storage_id = $2 OR target_storage_id = $2)"#,
+        )
+        .bind(f.project_id)
+        .bind(f.storage_id)
+        .fetch_one(pool)
+        .await?;
+
+        // Throughput indicator: tasks completed in the last 24 h. Always a
+        // 24 h window regardless of the dashboard period — it answers
+        // "is the sync queue moving?" at a glance.
+        let synced_in_24h: (i64,) = sqlx::query_as(
+            r#"SELECT COUNT(*)::bigint FROM sync_tasks
+                WHERE status = 'completed'
+                  AND updated_at >= NOW() - INTERVAL '24 hours'
+                  AND ($1::uuid IS NULL OR project_id = $1)
+                  AND ($2::uuid IS NULL OR source_storage_id = $2 OR target_storage_id = $2)"#,
+        )
+        .bind(f.project_id)
+        .bind(f.storage_id)
+        .fetch_one(pool)
+        .await?;
+
         Ok(DashboardTotals {
             files,
             bytes,
@@ -2858,6 +2893,8 @@ impl DashboardStats {
             bytes_accessed_in_period: accessed_bytes,
             pending_syncs: pending_syncs.0,
             failed_syncs_in_period: failed_in_period.0,
+            failed_syncs_total: failed_total.0,
+            synced_in_24h: synced_in_24h.0,
         })
     }
 
