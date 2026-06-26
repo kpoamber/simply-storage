@@ -64,6 +64,7 @@ const emptyDashboard = {
     uploads_in_period: 0, bytes_uploaded_in_period: 0,
     accesses_in_period: 0, bytes_accessed_in_period: 0,
     pending_syncs: 0, failed_syncs_in_period: 0,
+    failed_syncs_total: 0, synced_in_24h: 0,
   },
   upload_timeline: [],
   access_timeline: [],
@@ -105,9 +106,12 @@ describe('Dashboard', () => {
     renderDashboard();
     expect(screen.getByText(/Files · /)).toBeInTheDocument();
     expect(screen.getByText(/Bytes uploaded · /)).toBeInTheDocument();
-    expect(screen.getByText('Pending Syncs')).toBeInTheDocument();
     expect(screen.getByText('Active Nodes')).toBeInTheDocument();
     expect(screen.getByText(/Accesses · /)).toBeInTheDocument();
+    // Sync queue block (period-independent)
+    expect(screen.getByText('Pending')).toBeInTheDocument();
+    expect(screen.getByText(/Failed \(all-time\)/)).toBeInTheDocument();
+    expect(screen.getByText('Synced · 24h')).toBeInTheDocument();
   });
 
   it('shows user dashboard for non-admin', () => {
