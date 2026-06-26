@@ -1452,6 +1452,37 @@ impl SyncTask {
         Ok(row)
     }
 
+    /// Mark every earlier `failed` sync_task for the same (file_id, target)
+    /// as completed, with an explanatory note. Called right after a task
+    /// successfully syncs a file so the admin queue view doesn't keep
+    /// showing historical failures for a file that is now actually present
+    /// on the target. The supersede log entry preserves the audit trail.
+    ///
+    /// Returns the number of rows touched (0 in the common case).
+    pub async fn supersede_failed_for(
+        pool: &PgPool,
+        file_id: Uuid,
+        target_storage_id: Uuid,
+        winning_task_id: Uuid,
+    ) -> AppResult<u64> {
+        let res = sqlx::query(
+            r#"UPDATE sync_tasks
+                  SET status = 'completed',
+                      error_msg = 'Superseded by later successful sync (task ' || $3 || ')',
+                      updated_at = NOW()
+                WHERE status = 'failed'
+                  AND file_id = $1
+                  AND target_storage_id = $2
+                  AND id <> $3"#,
+        )
+        .bind(file_id)
+        .bind(target_storage_id)
+        .bind(winning_task_id)
+        .execute(pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
     /// Claim a batch of pending sync tasks using PostgreSQL advisory locks.
     /// Only returns tasks that this worker successfully locked.
     /// Tasks with retries >= max_retries are skipped and marked as 'failed'.

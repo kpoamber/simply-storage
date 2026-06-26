@@ -263,6 +263,25 @@ impl SyncWorker {
                 if let Err(e) = SyncTask::update_status(&self.pool, task.id, "completed", None).await {
                     tracing::error!(task_id = %task.id, error = %e, "Failed to mark completed");
                 }
+                // Any earlier 'failed' rows for the same (file, target) describe
+                // history that's no longer true — the file is now actually on
+                // the target. Mark them superseded so the admin queue view
+                // doesn't keep showing a red 'Max retries exceeded' for a file
+                // that's been successfully replicated.
+                if let Err(e) = SyncTask::supersede_failed_for(
+                    &self.pool,
+                    task.file_id,
+                    task.target_storage_id,
+                    task.id,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        task_id = %task.id,
+                        error = %e,
+                        "Failed to supersede stale failed sync tasks"
+                    );
+                }
             }
             Err(e) => {
                 let msg = format!("{}", e);
