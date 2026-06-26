@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Files, HardDrive, RefreshCw, Server, Download, AlertTriangle,
+  Files, HardDrive, RefreshCw, Server, Download, AlertTriangle, Check,
 } from 'lucide-react';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar,
@@ -141,8 +141,10 @@ export default function Dashboard() {
         </select>
       </div>
 
-      {/* Stat cards (all scoped to the selected period + filters) */}
-      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      {/* Stat cards (all scoped to the selected period + filters).
+          Sync-queue metrics moved to their own block below — they're
+          intentionally NOT bound to the period selector. */}
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           icon={<Files className="h-5 w-5 text-blue-600" />}
           label={`Files · ${period}`}
@@ -154,12 +156,6 @@ export default function Dashboard() {
           label={`Accesses · ${period}`}
           value={totals ? `${totals.accesses_in_period}` : '—'}
           sub={totals ? formatBytes(totals.bytes_accessed_in_period) : undefined}
-        />
-        <StatCard
-          icon={<RefreshCw className="h-5 w-5 text-orange-500" />}
-          label="Pending Syncs"
-          value={totals ? `${totals.pending_syncs}` : '—'}
-          sub={totals ? `${totals.failed_syncs_in_period} failed in period` : undefined}
         />
         <StatCard
           icon={<HardDrive className="h-5 w-5 text-green-600" />}
@@ -207,6 +203,36 @@ export default function Dashboard() {
             <EmptyChart message="No accesses recorded in this period" />
           )}
         </ChartCard>
+      </div>
+
+      {/* Sync queue health — independent of period filter */}
+      <div className="mt-6">
+        <div className="mb-2 flex items-baseline justify-between">
+          <h3 className="text-sm font-medium text-gray-700">Sync queue</h3>
+          <span className="text-xs text-gray-400">
+            Pending and failed are live totals; throughput is the last 24 h.
+          </span>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <StatCard
+            icon={<RefreshCw className="h-5 w-5 text-orange-500" />}
+            label="Pending"
+            value={totals ? totals.pending_syncs.toLocaleString() : '—'}
+            sub="awaiting worker"
+          />
+          <StatCard
+            icon={<AlertTriangle className="h-5 w-5 text-red-500" />}
+            label="Failed (all-time)"
+            value={totals ? totals.failed_syncs_total.toLocaleString() : '—'}
+            sub={totals ? `${totals.failed_syncs_in_period} in selected period` : undefined}
+          />
+          <StatCard
+            icon={<Check className="h-5 w-5 text-green-600" />}
+            label="Synced · 24h"
+            value={totals ? totals.synced_in_24h.toLocaleString() : '—'}
+            sub="completed in last 24 hours"
+          />
+        </div>
       </div>
 
       {/* Sync trend */}
