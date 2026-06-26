@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import apiClient from '../api/client';
@@ -7,10 +8,26 @@ import { SyncTask, StorageBackend, Project } from '../api/types';
 const STATUS_OPTIONS = ['all', 'pending', 'in_progress', 'completed', 'failed'];
 
 export default function SyncTasks() {
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [projectFilter, setProjectFilter] = useState('all');
+  // Allow other pages (e.g. the dashboard Sync queue cards) to deep-link here
+  // with `?status=&project_id=` prefilled. We mirror state back to the URL so
+  // the link is shareable and Back/Forward navigation works as expected.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlStatus = searchParams.get('status');
+  const urlProject = searchParams.get('project_id');
+  const initialStatus = urlStatus && STATUS_OPTIONS.includes(urlStatus) ? urlStatus : 'all';
+  const initialProject = urlProject ?? 'all';
+
+  const [statusFilter, setStatusFilter] = useState(initialStatus);
+  const [projectFilter, setProjectFilter] = useState(initialProject);
   const [page, setPage] = useState(1);
   const perPage = 20;
+
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (statusFilter !== 'all') next.set('status', statusFilter);
+    if (projectFilter !== 'all') next.set('project_id', projectFilter);
+    setSearchParams(next, { replace: true });
+  }, [statusFilter, projectFilter, setSearchParams]);
 
   const { data: syncTasks, isLoading } = useQuery<SyncTask[]>({
     queryKey: ['sync-tasks', statusFilter, projectFilter, page],
