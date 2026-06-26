@@ -345,29 +345,33 @@ impl StorageBackend for S3StorageBackend {
             return self.multipart_upload_from_file(&key, src, size).await;
         }
 
-        // Stream from disk WITH an explicit length so the SDK sets
-        // Content-Length and does NOT fall back to chunked transfer encoding
-        // (which AWS S3 rejects with RequestTimeout — see #16). Same shape as
-        // the per-part stream we already use in multipart_upload_from_file,
-        // so a multi-hundred-MB transfer never has to be resident in RAM.
-        let content_length = i64::try_from(size)
+        // AWS S3 specifically refuses streaming PUTs: both
+        // `ByteStream::from_path` (chunked encoding, no length) AND
+        // `ByteStream::read_from().path().length(Exact(...))` (streamed with
+        // explicit length) hit RequestTimeout ("Your socket connection to the
+        // server was not read from or written to within the timeout period.").
+        // The only shape that reliably works is sending the body as a single
+        // in-memory chunk with an explicit Content-Length. Pre-load the file
+        // and send `ByteStream::from(Bytes::from(data))`.
+        //
+        // Memory budget on the prod 1 GiB container: ~200 MB baseline (runtime,
+        // SDK clients, sqlx pool) + 1× file size. With NUM_WORKERS=1 we cap at
+        // one transfer in flight, so a 330 MB file peaks ~530 MB — well below
+        // the 1 GiB cgroup limit. Bumping NUM_WORKERS will need a corresponding
+        // memory limit bump or a per-target worker cap.
+        let data = tokio::fs::read(src).await.map_err(|e| {
+            AppError::Internal(format!("S3 read file for upload failed: {}", e))
+        })?;
+        let content_length = i64::try_from(data.len())
             .map_err(|e| AppError::Internal(format!("S3 size exceeds i64::MAX: {}", e)))?;
-
-        let make_stream = || async {
-            ByteStream::read_from()
-                .path(src)
-                .length(aws_sdk_s3::primitives::Length::Exact(size))
-                .build()
-                .await
-                .map_err(|e| AppError::Internal(format!("S3 read file for upload failed: {}", e)))
-        };
+        let _ = size; // signature parameter — actual size taken from the read
 
         let result = self
             .client
             .put_object()
             .bucket(&self.bucket)
             .key(&key)
-            .body(make_stream().await?)
+            .body(ByteStream::from(Bytes::from(data.clone())))
             .content_length(content_length)
             .send()
             .await;
@@ -379,12 +383,11 @@ impl StorageBackend for S3StorageBackend {
                 let err_debug = format!("{:?}", e);
                 if err_display.contains("NoSuchBucket") || err_debug.contains("NoSuchBucket") {
                     self.create_container(&self.bucket.clone()).await?;
-                    // Body is single-use — rebuild a fresh stream for the retry.
                     self.client
                         .put_object()
                         .bucket(&self.bucket)
                         .key(&key)
-                        .body(make_stream().await?)
+                        .body(ByteStream::from(Bytes::from(data)))
                         .content_length(content_length)
                         .send()
                         .await
