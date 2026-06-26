@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Files, HardDrive, RefreshCw, Server, Download, AlertTriangle, Check,
@@ -205,12 +206,15 @@ export default function Dashboard() {
         </ChartCard>
       </div>
 
-      {/* Sync queue health — independent of period filter */}
+      {/* Sync queue health — independent of period filter. Each card deep-links
+          into Sync Tasks with the matching status filter (and the current
+          project filter, if one is active) so the operator can drill from a
+          number straight into the rows behind it. */}
       <div className="mt-6">
         <div className="mb-2 flex items-baseline justify-between">
           <h3 className="text-sm font-medium text-gray-700">Sync queue</h3>
           <span className="text-xs text-gray-400">
-            Pending and failed are live totals; throughput is the last 24 h.
+            Click a card to see the underlying tasks.
           </span>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -219,18 +223,21 @@ export default function Dashboard() {
             label="Pending"
             value={totals ? totals.pending_syncs.toLocaleString() : '—'}
             sub="awaiting worker"
+            to={syncTasksHref('pending', projectId)}
           />
           <StatCard
             icon={<AlertTriangle className="h-5 w-5 text-red-500" />}
             label="Failed (all-time)"
             value={totals ? totals.failed_syncs_total.toLocaleString() : '—'}
             sub={totals ? `${totals.failed_syncs_in_period} in selected period` : undefined}
+            to={syncTasksHref('failed', projectId)}
           />
           <StatCard
             icon={<Check className="h-5 w-5 text-green-600" />}
             label="Synced · 24h"
             value={totals ? totals.synced_in_24h.toLocaleString() : '—'}
             sub="completed in last 24 hours"
+            to={syncTasksHref('completed', projectId)}
           />
         </div>
       </div>
@@ -342,19 +349,49 @@ export default function Dashboard() {
   );
 }
 
+/// Build a `/sync-tasks` URL preloaded with a status filter and (optionally)
+/// the project filter currently active on the dashboard. The Sync Tasks page
+/// reads `?status` and `?project_id` query params on mount.
+function syncTasksHref(status: 'pending' | 'failed' | 'completed', projectId: string): string {
+  const params = new URLSearchParams({ status });
+  if (projectId) params.set('project_id', projectId);
+  return `/sync-tasks?${params.toString()}`;
+}
+
 function StatCard({
-  icon, label, value, sub,
-}: { icon: React.ReactNode; label: string; value: string; sub?: string }) {
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+  icon, label, value, sub, to,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  sub?: string;
+  /// When set, the whole card becomes a router Link to this path. Used by the
+  /// Sync queue block to deep-link into the Sync Tasks page with the matching
+  /// status filter pre-applied.
+  to?: string;
+}) {
+  const body = (
+    <>
       <div className="flex items-center gap-2">
         {icon}
         <p className="text-xs text-gray-500">{label}</p>
       </div>
       <p className="mt-1 text-xl font-semibold text-gray-900">{value}</p>
       {sub && <p className="text-xs text-gray-500">{sub}</p>}
-    </div>
+    </>
   );
+  const base = 'rounded-lg border border-gray-200 bg-white p-3 shadow-sm';
+  if (to) {
+    return (
+      <Link
+        to={to}
+        className={`${base} block transition hover:border-gray-300 hover:shadow focus:outline-none focus:ring-2 focus:ring-accent`}
+      >
+        {body}
+      </Link>
+    );
+  }
+  return <div className={base}>{body}</div>;
 }
 
 function ChartCard({
