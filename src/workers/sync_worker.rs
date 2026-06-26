@@ -315,58 +315,6 @@ impl SyncWorker {
         }
     }
 
-    /// Process a single sync task: download from source, upload to target.
-    async fn process_task(&self, task: &SyncTask, worker_id: usize) {
-        tracing::info!(
-            worker_id,
-            task_id = %task.id,
-            file_id = %task.file_id,
-            source = %task.source_storage_id,
-            target = %task.target_storage_id,
-            "Processing sync task"
-        );
-
-        match self.execute_sync(task).await {
-            Ok(()) => {
-                tracing::info!(
-                    worker_id,
-                    task_id = %task.id,
-                    "Sync task completed successfully"
-                );
-
-                if let Err(e) =
-                    SyncTask::update_status(&self.pool, task.id, "completed", None).await
-                {
-                    tracing::error!(
-                        task_id = %task.id,
-                        error = %e,
-                        "Failed to mark sync task as completed"
-                    );
-                }
-            }
-            Err(e) => {
-                let error_msg = format!("{}", e);
-                tracing::warn!(
-                    worker_id,
-                    task_id = %task.id,
-                    retries = task.retries,
-                    error = %error_msg,
-                    "Sync task failed, requeuing for retry"
-                );
-
-                if let Err(requeue_err) =
-                    SyncTask::requeue_for_retry(&self.pool, task.id, &error_msg).await
-                {
-                    tracing::error!(
-                        task_id = %task.id,
-                        error = %requeue_err,
-                        "Failed to requeue sync task"
-                    );
-                }
-            }
-        }
-    }
-
     /// Resolve the backend for a storage, applying container/prefix from project slug.
     async fn resolve_backend(
         &self,
@@ -387,90 +335,6 @@ impl SyncWorker {
         self.registry.get(&storage_id).await
     }
 
-    /// Execute the actual sync: download from source storage, upload to target storage,
-    /// and create/update the file_location record.
-    async fn execute_sync(&self, task: &SyncTask) -> Result<(), crate::error::AppError> {
-        // Use the project_id stored on the sync task for correct container/prefix overrides
-        let project_id = task.project_id;
-
-        // Get source backend (with overrides if applicable)
-        let source_backend = self.resolve_backend(task.source_storage_id, project_id).await?;
-
-        // Get target backend (with overrides if applicable)
-        let target_backend = self.resolve_backend(task.target_storage_id, project_id).await?;
-
-        // Find the storage path from the source file_location.
-        // Use find_all_for_file (no status filter) because the source may be
-        // 'archived' (restore from cold) or 'synced' (normal sync).
-        let source_locations =
-            FileLocation::find_all_for_file(&self.pool, task.file_id).await?;
-        let source_location = source_locations
-            .iter()
-            .find(|loc| loc.storage_id == task.source_storage_id)
-            .ok_or_else(|| {
-                crate::error::AppError::NotFound(format!(
-                    "Source file location not found for file {} on storage {}",
-                    task.file_id, task.source_storage_id
-                ))
-            })?;
-
-        let storage_path = &source_location.storage_path;
-
-        // Stream source -> temp file -> target, so a multi-hundred-MB transfer
-        // never holds the whole payload in memory at once. The temp dir is the
-        // OS default; a single tokio::fs read/write per chunk keeps peak RAM
-        // bounded by the stream chunk size (~8 KB) plus per-backend buffers.
-        let temp_dir = std::env::temp_dir().join("simply-storage-sync");
-        if let Err(e) = tokio::fs::create_dir_all(&temp_dir).await {
-            return Err(crate::error::AppError::Internal(format!(
-                "Failed to create sync temp dir {:?}: {}",
-                temp_dir, e
-            )));
-        }
-        let temp_path = temp_dir.join(format!("{}.part", task.id));
-
-        // Wrap the transfer so we always clean up the temp file, even on error.
-        let result = async {
-            source_backend.download_to_file(storage_path, &temp_path).await?;
-            let size = tokio::fs::metadata(&temp_path)
-                .await
-                .map_err(|e| crate::error::AppError::Internal(format!("temp stat: {}", e)))?
-                .len();
-            target_backend
-                .upload_from_file(storage_path, &temp_path, size)
-                .await
-        }
-        .await;
-        let _ = tokio::fs::remove_file(&temp_path).await;
-        result?;
-
-        // Create or update file_location for the target storage
-        let create_location = CreateFileLocation {
-            file_id: task.file_id,
-            storage_id: task.target_storage_id,
-            storage_path: storage_path.clone(),
-            status: "synced".to_string(),
-        };
-
-        // Try to create; if it already exists, update the status
-        match FileLocation::create(&self.pool, &create_location).await {
-            Ok(_) => {}
-            Err(crate::error::AppError::Database(ref e)) if is_unique_violation(e) => {
-                // Location already exists (possibly with 'archived' or 'restoring' status),
-                // update it directly by file_id + storage_id to avoid status-filtered queries
-                FileLocation::update_status_by_file_and_storage(
-                    &self.pool,
-                    task.file_id,
-                    task.target_storage_id,
-                    "synced",
-                )
-                .await?;
-            }
-            Err(e) => return Err(e),
-        }
-
-        Ok(())
-    }
 }
 
 fn is_unique_violation(e: &sqlx::Error) -> bool {
@@ -710,7 +574,7 @@ mod tests {
         let config = test_sync_config();
         let cancel_token = CancellationToken::new();
         let worker = SyncWorker::new(pool.clone(), registry, config, "test-secret".to_string(), cancel_token);
-        worker.process_task(&claimed[0], 0).await;
+        worker.process_batch(claimed, 0).await;
 
         // Verify task is completed
         let updated = SyncTask::find_pending(&pool, 10).await.unwrap();
