@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use aws_config::Region;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{
-    config::{BehaviorVersion, Builder as S3ConfigBuilder},
+    config::{BehaviorVersion, Builder as S3ConfigBuilder, RequestChecksumCalculation},
     presigning::PresigningConfig,
     primitives::ByteStream,
     Client,
@@ -58,11 +58,21 @@ impl S3StorageBackend {
         );
 
         let region = config.region.clone();
+        // `BehaviorVersion::latest()` (since SDK 1.x mid-2024) defaults
+        // `request_checksum_calculation` to `WhenSupported`, which makes
+        // every PutObject add a CRC32 trailer + extra signing/flushing.
+        // On AWS S3 specifically this causes the SDK to keep the connection
+        // open while it streams the checksum trailer, and AWS aborts with
+        // HTTP 400 RequestTimeout ("socket idle"). Force `WhenRequired` so
+        // plain PUTs go out as a single signed body, the way aws-cli sends
+        // them. (aws-cli is the proven baseline — same creds + bucket from
+        // the same server uploads fine while our SDK 100% RequestTimeouts.)
         let mut s3_config_builder = S3ConfigBuilder::new()
             .behavior_version(BehaviorVersion::latest())
             .region(Region::new(config.region))
             .credentials_provider(credentials)
-            .force_path_style(config.force_path_style);
+            .force_path_style(config.force_path_style)
+            .request_checksum_calculation(RequestChecksumCalculation::WhenRequired);
 
         if let Some(endpoint) = &config.endpoint_url {
             s3_config_builder = s3_config_builder.endpoint_url(endpoint);
