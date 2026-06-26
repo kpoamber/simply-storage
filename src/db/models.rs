@@ -1618,6 +1618,64 @@ impl SyncTask {
         let rows = query.fetch_all(pool).await?;
         Ok(rows)
     }
+
+    /// Same as `list_filtered` but joins the projects table so the response
+    /// can show a human-readable project name in the admin UI. Also accepts
+    /// an optional `project_id` filter for narrowing the list to one project.
+    pub async fn list_with_project(
+        pool: &PgPool,
+        status: Option<&str>,
+        storage_id: Option<Uuid>,
+        project_id: Option<Uuid>,
+    ) -> AppResult<Vec<SyncTaskWithProject>> {
+        let mut sql = String::from(
+            "SELECT st.*, p.name AS project_name
+               FROM sync_tasks st
+          LEFT JOIN projects p ON p.id = st.project_id
+              WHERE 1=1",
+        );
+        let mut param_idx = 1u32;
+
+        if status.is_some() {
+            sql.push_str(&format!(" AND st.status = ${}", param_idx));
+            param_idx += 1;
+        }
+        if storage_id.is_some() {
+            sql.push_str(&format!(
+                " AND (st.source_storage_id = ${p} OR st.target_storage_id = ${p})",
+                p = param_idx
+            ));
+            param_idx += 1;
+        }
+        if project_id.is_some() {
+            sql.push_str(&format!(" AND st.project_id = ${}", param_idx));
+        }
+        sql.push_str(" ORDER BY st.created_at DESC LIMIT 1000");
+
+        let mut query = sqlx::query_as::<_, SyncTaskWithProject>(&sql);
+        if let Some(s) = status {
+            query = query.bind(s);
+        }
+        if let Some(sid) = storage_id {
+            query = query.bind(sid);
+        }
+        if let Some(pid) = project_id {
+            query = query.bind(pid);
+        }
+
+        Ok(query.fetch_all(pool).await?)
+    }
+}
+
+/// SyncTask augmented with the parent project name (null for legacy rows
+/// where project_id was never recorded). Used by the admin UI to label tasks
+/// with a project instead of an opaque UUID.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SyncTaskWithProject {
+    #[serde(flatten)]
+    #[sqlx(flatten)]
+    pub task: SyncTask,
+    pub project_name: Option<String>,
 }
 
 // ─── Node ───────────────────────────────────────────────────────────────────

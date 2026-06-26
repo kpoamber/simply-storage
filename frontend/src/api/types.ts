@@ -128,6 +128,9 @@ export interface SyncTask {
   project_id: string | null;
   created_at: string;
   updated_at: string;
+  /// Joined from projects table; null when project_id is null
+  /// (legacy rows that pre-date sync_tasks.project_id).
+  project_name?: string | null;
 }
 
 export interface ExportStatus {
